@@ -1,0 +1,23 @@
+[package]
+name = "okx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+ai_core = { path = "../core" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+base64 = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+clap = { workspace = true }
+
+[[bin]]
+name = "okx-cli"
+path = "src/bin/okx_cli.rs"
