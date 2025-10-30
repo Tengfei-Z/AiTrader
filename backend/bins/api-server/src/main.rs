@@ -232,14 +232,16 @@ async fn get_ticker(
     if let Some(client) = state.okx.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
+                tracing::info!(symbol = %symbol, "okx ticker hit");
                 let mut ticker = Ticker::from(remote);
                 ticker.symbol = symbol.clone();
                 return Json(ApiResponse::ok(ticker));
             }
-            Err(err) => tracing::warn!("failed to fetch ticker from OKX for {symbol}: {err:?}"),
+            Err(err) => tracing::warn!(symbol = %symbol, error = ?err, "okx ticker fetch failed"),
         }
     }
 
+    tracing::info!(symbol = %symbol, "using mock ticker");
     let store = state.inner.read().await;
     let response = store
         .tickers

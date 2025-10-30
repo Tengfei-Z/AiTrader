@@ -121,6 +121,7 @@ dependencies = [
  "axum",
  "chrono",
  "config",
+ "okx",
  "serde",
  "serde_json",
  "thiserror",
