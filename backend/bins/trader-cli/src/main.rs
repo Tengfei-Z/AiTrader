@@ -152,7 +152,7 @@ async fn handle_okx(cmd: OkxCommand) -> Result<()> {
 
 #[cfg(feature = "deepseek")]
 async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
-    use deepseek::{DeepSeekClient, FunctionCaller, FunctionCallRequest};
+    use deepseek::{DeepSeekClient, FunctionCallRequest, FunctionCaller};
 
     let config: &AppConfig = &CONFIG;
     let client = DeepSeekClient::from_app_config(config)?;
@@ -165,8 +165,7 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
         } => {
             let request = FunctionCallRequest {
                 function,
-                arguments: serde_json::from_str(&arguments)
-                    .context("arguments 不是合法 JSON")?,
+                arguments: serde_json::from_str(&arguments).context("arguments 不是合法 JSON")?,
                 metadata: serde_json::from_str(&metadata).context("metadata 不是合法 JSON")?,
             };
 

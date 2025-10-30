@@ -1,12 +1,16 @@
 use ai_core::config::{AppConfig, CONFIG};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use deepseek::{DeepSeekClient, FunctionCaller, FunctionCallRequest};
+use deepseek::{DeepSeekClient, FunctionCallRequest, FunctionCaller};
 use serde_json::Value;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "deepseek-cli", about = "DeepSeek Function Call 测试工具", version)]
+#[command(
+    name = "deepseek-cli",
+    about = "DeepSeek Function Call 测试工具",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

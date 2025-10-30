@@ -108,8 +108,14 @@ impl OkxRestClient {
         )?;
 
         let mut headers = HeaderMap::new();
-        headers.insert("OK-ACCESS-KEY", HeaderValue::from_str(&self.credentials.api_key)?);
-        headers.insert("OK-ACCESS-PASSPHRASE", HeaderValue::from_str(&self.credentials.passphrase)?);
+        headers.insert(
+            "OK-ACCESS-KEY",
+            HeaderValue::from_str(&self.credentials.api_key)?,
+        );
+        headers.insert(
+            "OK-ACCESS-PASSPHRASE",
+            HeaderValue::from_str(&self.credentials.passphrase)?,
+        );
         headers.insert("OK-ACCESS-TIMESTAMP", HeaderValue::from_str(&timestamp)?);
         headers.insert("OK-ACCESS-SIGN", HeaderValue::from_str(&sign)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

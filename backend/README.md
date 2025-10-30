@@ -19,9 +19,10 @@ cargo run -p trader-cli -- okx ticker --symbol BTC-USDT
 cargo run -p trader-cli -- deepseek chat
 cargo run -p trader-cli -- deepseek call --function demo --arguments '{"foo":"bar"}'
 cargo run -p trader-cli -- mcp send --tool echo --payload '{"text":"hello"}'
+cargo run -p api-server
 ```
 
-前两个命令演示 OKX API，需要在对应目录配置 `OKX_*` 凭证；中间两个演示 DeepSeek，需配置 `DEEPSEEK_*`；最后一个命令演示 MCP 进程交互，需要配置 `MCP_*`。
+前两个命令演示 OKX API，需要在对应目录配置 `OKX_*` 凭证；中间两个演示 DeepSeek，需配置 `DEEPSEEK_*`；最后一个命令演示 MCP 进程交互，需要配置 `MCP_*`；`api-server` 提供统一 REST API，供前端调用。
 
 ## 下一步建议
 

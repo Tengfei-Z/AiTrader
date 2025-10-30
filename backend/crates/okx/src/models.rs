@@ -36,9 +36,7 @@ pub fn sign_request(
         mac.update(payload.as_bytes());
     }
 
-    let signature = mac
-        .finalize()
-        .into_bytes();
+    let signature = mac.finalize().into_bytes();
 
     Ok(BASE64_STANDARD.encode(signature))
 }

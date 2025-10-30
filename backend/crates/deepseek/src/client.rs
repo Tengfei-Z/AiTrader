@@ -35,7 +35,10 @@ impl DeepSeekClient {
 impl FunctionCaller for DeepSeekClient {
     #[instrument(skip(self, request), fields(model = %self.config.model))]
     async fn call_function(&self, request: FunctionCallRequest) -> Result<FunctionCallResponse> {
-        let url = format!("{}/v1/function-call", self.config.endpoint.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/function-call",
+            self.config.endpoint.trim_end_matches('/')
+        );
         let payload = ApiRequest {
             model: &self.config.model,
             function_call: &request,
@@ -65,20 +68,14 @@ impl FunctionCaller for DeepSeekClient {
             ));
         }
 
-        let raw: serde_json::Value = response
-            .json()
-            .await
-            .context("DeepSeek 返回内容解析失败")?;
+        let raw: serde_json::Value = response.json().await.context("DeepSeek 返回内容解析失败")?;
 
         if let Some(data) = raw.get("data") {
-            let parsed: FunctionCallResponse = serde_json::from_value(data.clone())
-                .context("DeepSeek data 字段解析失败")?;
+            let parsed: FunctionCallResponse =
+                serde_json::from_value(data.clone()).context("DeepSeek data 字段解析失败")?;
             Ok(parsed)
         } else {
-            Err(anyhow!(
-                "DeepSeek 返回结果不包含 data 字段：{}",
-                raw
-            ))
+            Err(anyhow!("DeepSeek 返回结果不包含 data 字段：{}", raw))
         }
     }
 }

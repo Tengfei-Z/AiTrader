@@ -5,6 +5,7 @@ members = [
     "crates/deepseek",
     "crates/mcp",
     "bins/trader-cli",
+    "bins/api-server",
 ]
 resolver = "2"
 
@@ -27,3 +28,6 @@ base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
 dotenvy = "0.15"
+axum = { version = "0.7", features = ["macros", "json"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
