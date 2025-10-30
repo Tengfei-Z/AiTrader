@@ -14,11 +14,12 @@ const formatNumber = (value?: string) => {
 
 const TickerCard = ({ ticker, loading }: Props) => {
   const last = ticker ? Number(ticker.last) : undefined;
-  const high = ticker ? Number(ticker.high24h) : undefined;
-  const low = ticker ? Number(ticker.low24h) : undefined;
-  const vol = ticker ? Number(ticker.vol24h) : undefined;
+  const high = ticker?.high24h ? Number(ticker.high24h) : undefined;
+  const low = ticker?.low24h ? Number(ticker.low24h) : undefined;
+  const vol = ticker?.vol24h ? Number(ticker.vol24h) : undefined;
 
-  const isBull = ticker ? Number(ticker.last) >= Number(ticker.bidPx) : false;
+  const bid = ticker?.bidPx ? Number(ticker.bidPx) : undefined;
+  const isBull = bid !== undefined && last !== undefined ? last >= bid : false;
 
   return (
     <Card loading={loading} bordered={false} className="ticker-card">

@@ -7,11 +7,11 @@ export interface ApiResponse<T> {
 export interface Ticker {
   symbol: string;
   last: string;
-  bidPx: string;
-  askPx: string;
-  high24h: string;
-  low24h: string;
-  vol24h: string;
+  bidPx?: string;
+  askPx?: string;
+  high24h?: string;
+  low24h?: string;
+  vol24h?: string;
   timestamp: string;
 }
 

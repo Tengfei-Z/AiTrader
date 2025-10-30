@@ -13,6 +13,9 @@ const MultiTickerCard = () => {
         {symbols.map((symbol) => {
           const ticker = data?.[symbol];
           const price = ticker ? Number(ticker.last) : undefined;
+          const low = ticker?.low24h ? Number(ticker.low24h) : undefined;
+          const change = ticker && low && low !== 0 ? ((Number(ticker.last) - low) / low) * 100 : undefined;
+          const bid = ticker?.bidPx ? Number(ticker.bidPx) : undefined;
           return (
             <Col key={symbol} xs={24} sm={12} md={6}>
               <div className="multi-ticker-item">
@@ -22,10 +25,10 @@ const MultiTickerCard = () => {
                 </Typography.Title>
                 <Statistic
                   title="24h 涨跌"
-                  value={ticker ? (Number(ticker.last) - Number(ticker.low24h)) / Number(ticker.low24h) * 100 : undefined}
+                  value={change}
                   precision={2}
                   suffix="%"
-                  valueStyle={{ color: price && ticker ? (Number(ticker.last) >= Number(ticker.bidPx) ? '#16a34a' : '#dc2626') : undefined }}
+                  valueStyle={{ color: price && bid ? (price >= bid ? '#16a34a' : '#dc2626') : undefined }}
                 />
                 <Typography.Text type="secondary">
                   更新时间：

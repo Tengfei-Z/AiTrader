@@ -15,10 +15,12 @@ use tracing_subscriber::EnvFilter;
 
 mod config;
 use config::load_app_config;
+use okx::OkxRestClient;
 
 #[derive(Clone)]
 struct AppState {
     inner: Arc<RwLock<MockDataStore>>,
+    okx: Option<OkxRestClient>,
 }
 
 #[derive(Debug)]
@@ -61,12 +63,27 @@ impl<T> ApiResponse<T> {
 struct Ticker {
     symbol: String,
     last: String,
-    bid_px: String,
-    ask_px: String,
-    high24h: String,
-    low24h: String,
-    vol24h: String,
+    bid_px: Option<String>,
+    ask_px: Option<String>,
+    high24h: Option<String>,
+    low24h: Option<String>,
+    vol24h: Option<String>,
     timestamp: String,
+}
+
+impl From<okx::models::Ticker> for Ticker {
+    fn from(value: okx::models::Ticker) -> Self {
+        Self {
+            symbol: value.inst_id,
+            last: value.last,
+            bid_px: value.bid_px,
+            ask_px: value.ask_px,
+            high24h: value.high_24h,
+            low24h: value.low_24h,
+            vol24h: value.vol_24h,
+            timestamp: value.ts,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = &CONFIG.okx_rest_endpoint;
     let app_state = AppState {
         inner: Arc::new(RwLock::new(MockDataStore::new())),
+        okx: OkxRestClient::from_config(&CONFIG).ok(),
     };
 
     let settings = load_app_config().unwrap_or_else(|err| {
@@ -211,6 +229,17 @@ async fn get_ticker(
     State(state): State<AppState>,
     Query(SymbolQuery { symbol, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
+    if let Some(client) = state.okx.clone() {
+        match client.get_ticker(&symbol).await {
+            Ok(remote) => {
+                let mut ticker = Ticker::from(remote);
+                ticker.symbol = symbol.clone();
+                return Json(ApiResponse::ok(ticker));
+            }
+            Err(err) => tracing::warn!("failed to fetch ticker from OKX for {symbol}: {err:?}"),
+        }
+    }
+
     let store = state.inner.read().await;
     let response = store
         .tickers
@@ -384,11 +413,11 @@ impl MockDataStore {
             Ticker {
                 symbol: "BTC-USDT".into(),
                 last: "112391.1".into(),
-                bid_px: "112391.0".into(),
-                ask_px: "112391.2".into(),
-                high24h: "115590".into(),
-                low24h: "112084.7".into(),
-                vol24h: "8637.6433954".into(),
+                bid_px: Some("112391.0".into()),
+                ask_px: Some("112391.2".into()),
+                high24h: Some("115590".into()),
+                low24h: Some("112084.7".into()),
+                vol24h: Some("8637.6433954".into()),
                 timestamp: current_timestamp(),
             },
         );
