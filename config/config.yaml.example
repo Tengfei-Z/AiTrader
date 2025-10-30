@@ -1,0 +1,44 @@
+deployment:
+  app_user: "deployuser"
+  domain: "example.com"
+  public_api_base_url: "https://example.com:444/api"
+  domain_aliases:
+    - "localhost"
+  ssl:
+    cert_path: "/path/to/ssl/fullchain.cer"
+    key_path: "/path/to/ssl/privkey.key"
+
+  paths:
+    repo_root: "/opt/aitrader"
+    backend_dir: "/opt/aitrader/backend"
+    frontend_dir: "/opt/aitrader/frontend"
+    config_file: "/opt/aitrader/config/config.yaml"
+
+  backend:
+    binary: "/opt/aitrader/backend/target/release/api-server"
+    bind_addr: "127.0.0.1:3000"
+
+  static:
+    root: "/var/www/aitrader/frontend"
+    owner: "www-data"
+    group: "www-data"
+
+  nginx:
+    site_name: "aitrader"
+    https_port: 446
+    conf_path: "/etc/nginx/sites-available/aitrader.conf"
+    enabled_path: "/etc/nginx/sites-enabled/aitrader.conf"
+
+  systemd:
+    service_name: "aitrader-backend.service"
+    unit_path: "/etc/systemd/system/aitrader-backend.service"
+
+  runtime_env:
+    database_url: "postgres://user:password@127.0.0.1:5432/aitrader"
+
+server:
+  bind: "127.0.0.1:3000"
+
+db:
+  url: "postgres://user:password@127.0.0.1:5432/aitrader"
+  max_connections: 10

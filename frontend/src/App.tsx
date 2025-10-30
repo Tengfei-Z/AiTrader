@@ -1,5 +1,4 @@
 import { Layout, Menu } from 'antd';
-import { Content, Header, Sider } from 'antd/es/layout/layout';
 import { MenuProps } from 'antd';
 import { useMemo, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -13,6 +12,8 @@ const menuItems: MenuProps['items'] = [
   { key: '/trade', label: '交易下单' },
   { key: '/account', label: '账户中心' }
 ];
+
+const { Header, Sider, Content } = Layout;
 
 const App = () => {
   const location = useLocation();

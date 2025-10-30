@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use ai_core::config::CONFIG;
@@ -13,6 +12,9 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
+
+mod config;
+use config::load_app_config;
 
 #[derive(Clone)]
 struct AppState {
@@ -166,6 +168,14 @@ async fn main() -> anyhow::Result<()> {
         inner: Arc::new(RwLock::new(MockDataStore::new())),
     };
 
+    let settings = load_app_config().unwrap_or_else(|err| {
+        tracing::warn!("failed to load config: {err:?}, using defaults");
+        Default::default()
+    });
+    let bind_addr = settings
+        .bind_addr()
+        .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));
+
     let router = Router::new()
         .route("/api/market/ticker", get(get_ticker))
         .route("/api/market/orderbook", get(get_orderbook))
@@ -179,9 +189,8 @@ async fn main() -> anyhow::Result<()> {
         .with_state(app_state)
         .layer(CorsLayer::new().allow_methods(Any).allow_origin(Any));
 
-    let addr: SocketAddr = "0.0.0.0:3000".parse()?;
-    info!("Starting API server on {addr}");
-    axum::serve(tokio::net::TcpListener::bind(addr).await?, router).await?;
+    info!("Starting API server on {bind_addr}");
+    axum::serve(tokio::net::TcpListener::bind(bind_addr).await?, router).await?;
 
     Ok(())
 }
