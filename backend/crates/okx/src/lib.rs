@@ -2,5 +2,5 @@ pub mod client;
 pub mod error;
 pub mod models;
 
-pub use client::OkxRestClient;
+pub use client::{OkxRestClient, ProxyOptions};
 pub use error::OkxError;

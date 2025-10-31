@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use ::config::{Config, ConfigError as BuilderError, Environment, File};
 use serde::Deserialize;
+use std::path::Path;
 use thiserror::Error;
 
 const DEFAULT_CONFIG_PATH: &str = "config/config.yaml";
@@ -92,12 +93,27 @@ impl AppConfig {
             }
         }
     }
+
+    pub fn proxy_settings(&self) -> (Option<String>, Option<String>) {
+        if let Some(deployment) = &self.deployment {
+            if let Some(runtime) = &deployment.runtime_env {
+                return (runtime.http_proxy.clone(), runtime.https_proxy.clone());
+            }
+        }
+        (None, None)
+    }
 }
 
 pub fn load_app_config() -> Result<AppConfig, ConfigError> {
     let mut builder = Config::builder();
 
-    builder = builder.add_source(File::with_name(DEFAULT_CONFIG_PATH).required(false));
+    if let Ok(custom_path) = std::env::var("CONFIG_FILE") {
+        let path = Path::new(&custom_path);
+        builder = builder.add_source(File::from(path).required(false));
+    }
+
+    let default_path = Path::new(DEFAULT_CONFIG_PATH);
+    builder = builder.add_source(File::from(default_path).required(false));
 
     builder = builder.add_source(Environment::with_prefix("AITRADER").separator("__"));
 

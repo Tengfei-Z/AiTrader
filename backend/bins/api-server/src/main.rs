@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, Level};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
@@ -186,18 +186,24 @@ struct PlaceOrderResponse {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
-    // 触发配置加载，确保 .env 生效
-    let _ = &CONFIG.okx_rest_endpoint;
-    let app_state = AppState {
-        inner: Arc::new(RwLock::new(MockDataStore::new())),
-        okx: OkxRestClient::from_config(&CONFIG).ok(),
-    };
 
     let settings = load_app_config().unwrap_or_else(|err| {
         tracing::warn!("failed to load config: {err:?}, using defaults");
         Default::default()
     });
     settings.apply_runtime_env();
+    let (http_proxy, https_proxy) = settings.proxy_settings();
+
+    // 触发配置加载，确保 .env 生效
+    let _ = &CONFIG.okx_rest_endpoint;
+    let proxy_options = okx::ProxyOptions {
+        http: http_proxy,
+        https: https_proxy,
+    };
+    let app_state = AppState {
+        inner: Arc::new(RwLock::new(MockDataStore::new())),
+        okx: OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options).ok(),
+    };
     let bind_addr = settings
         .bind_addr()
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));

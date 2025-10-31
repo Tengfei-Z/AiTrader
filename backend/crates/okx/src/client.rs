@@ -17,17 +17,51 @@ pub struct OkxRestClient {
     credentials: OkxCredentials,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ProxyOptions {
+    pub http: Option<String>,
+    pub https: Option<String>,
+}
+
 impl OkxRestClient {
     pub fn from_config(config: &AppConfig) -> Result<Self> {
         let credentials = config.require_okx_credentials()?.clone();
-        Self::new(config.okx_rest_endpoint.clone(), credentials)
+        Self::new_with_proxy(
+            config.okx_rest_endpoint.clone(),
+            credentials,
+            ProxyOptions::default(),
+        )
+    }
+
+    pub fn from_config_with_proxy(config: &AppConfig, proxy: ProxyOptions) -> Result<Self> {
+        let credentials = config.require_okx_credentials()?.clone();
+        Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy)
     }
 
     pub fn new(base_url: impl Into<String>, credentials: OkxCredentials) -> Result<Self> {
-        let http = Client::builder()
-            .user_agent("ai-trader-backend/0.1")
-            .build()
-            .map_err(OkxError::from)?;
+        Self::new_with_proxy(base_url, credentials, ProxyOptions::default())
+    }
+
+    pub fn new_with_proxy(
+        base_url: impl Into<String>,
+        credentials: OkxCredentials,
+        proxy: ProxyOptions,
+    ) -> Result<Self> {
+        let mut builder = Client::builder().user_agent("ai-trader-backend/0.1");
+
+        if let Some(ref http_proxy) = proxy.http {
+            tracing::info!("configuring HTTP proxy {}", http_proxy);
+            let http = reqwest::Proxy::http(http_proxy)?;
+            builder = builder.proxy(http);
+        }
+
+        if let Some(ref https_proxy) = proxy.https {
+            tracing::info!("configuring HTTPS proxy {}", https_proxy);
+            let https = reqwest::Proxy::https(https_proxy)?;
+            builder = builder.proxy(https);
+        }
+
+        let http = builder.build().map_err(OkxError::from)?;
 
         Ok(Self {
             http,
@@ -81,6 +115,7 @@ impl OkxRestClient {
     where
         T: DeserializeOwned,
     {
+        tracing::info!("OKX GET {}", path_and_query);
         let builder = self.prepare_request(Method::GET, path_and_query, body)?;
         self.execute(builder).await
     }
