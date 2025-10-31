@@ -1,29 +1,25 @@
 # mcp_adapter
 
-面向进程的 MCP（Model Context Protocol）工具适配层，用于在 AiTrader 后端与外部 MCP 工具之间建立通信。当前重点在于启动外部进程、发送 JSON 请求以及异步读取响应。
+面向进程的 MCP（Model Context Protocol）工具适配层，用于在 AiTrader 后端与外部 MCP 工具之间建立通信。当前重点在于通过官方 [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) SDK 启动 MCP Server 并与外部工具交互。
 
 ## 主要特性
 
-- `McpProcessHandle` 管理带管道的子进程 stdin/stdout。
-- `McpRequest` / `McpResponse` 定义轻量级 JSON 消息格式。
+- `DemoArithmeticServer` 演示如何用 `rmcp` 注册工具（`one_plus_one`），方便本地联调。
 - 基于 `tokio` 实现，方便融入异步工作流。
 
 ## 使用方法
 
-1. 在当前目录准备 `.env`：
+1. 确保本机已安装 Rust toolchain 以及 Node.js（以便使用 `npx`）。
+2. 在 `backend/` 目录下运行 MCP Inspector，并让它替你启动 demo server：
 
    ```bash
-   cp .env.example .env
-   vim .env  # 写入 MCP_EXECUTABLE、MCP_ARGS
+   npx @modelcontextprotocol/inspector cargo run -p mcp_adapter --bin mcp-demo-server
    ```
 
-2. 运行 CLI 手动发送请求：
+   该命令会编译并运行 `mcp-demo-server`，随后在控制台输出一个本地调试页面（通常是 `http://localhost:3000` 一类的 URL）。
 
-   ```bash
-   cargo run -p mcp_adapter --bin mcp-cli -- send --tool echo --payload '{"text":"hello"}'
-   ```
-
-   如需仅发送不等待响应，可追加 `--no-wait-response`。
+3. 在浏览器中打开该 URL，Transport 选择 `STDIO`，点击 “Connect”。
+4. 连接成功后切换到 “Tools” 标签，选择 `one_plus_one` 并点击 “Call Tool”，Inspector 会展示返回结果 `2`，完成本地验证。
 
 ## 测试方式
 

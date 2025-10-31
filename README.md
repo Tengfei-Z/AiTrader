@@ -242,3 +242,20 @@
 4. **风控设计**：设定杠杆、风险敞口和现金储备的限制，确保系统的稳健性和风险控制。
 
 ---
+
+## 9. **MCP 本地调试流程**
+
+1. **准备环境**
+   - 确保已安装 Rust toolchain（`rustup` / `cargo`）。
+   - 确保已安装 Node.js（用于运行 `npx` 命令）。
+2. **启动演示服务器**
+   - 在项目根目录进入 `backend/`，执行：
+     ```bash
+     cd backend
+     npx @modelcontextprotocol/inspector cargo run -p mcp_adapter --bin mcp-demo-server
+     ```
+   - MCP Inspector 会编译并运行 demo server，同时在终端输出一个本地调试页面地址（如 `http://localhost:3000`）。
+3. **通过 Inspector 验证**
+   - 打开终端给出的 URL；
+   - 在页面中选择 Transport = `STDIO`，点击 “Connect”；
+   - 连接成功后切换到 “Tools” 标签，选择 `one_plus_one` 并点击 “Call Tool”，预期返回值为 `2`，即表明 `rmcp` 集成正常工作。
