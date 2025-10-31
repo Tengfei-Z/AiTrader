@@ -17,3 +17,4 @@ chrono = { workspace = true }
 config = { workspace = true }
 thiserror = { workspace = true }
 okx = { path = "../../crates/okx" }
+tracing-appender = { workspace = true }

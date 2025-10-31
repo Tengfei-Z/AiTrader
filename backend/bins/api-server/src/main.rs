@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use ai_core::config::CONFIG;
 use axum::extract::{Path, Query, State};
@@ -11,11 +13,16 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, Level};
-use tracing_subscriber::EnvFilter;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{EnvFilter, Registry};
 
 mod config;
 use config::load_app_config;
 use okx::OkxRestClient;
+
+static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 #[derive(Clone)]
 struct AppState {
@@ -190,6 +197,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("failed to load config: {err:?}, using defaults");
         Default::default()
     });
+    settings.apply_runtime_env();
     let bind_addr = settings
         .bind_addr()
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));
@@ -208,19 +216,37 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::new().allow_methods(Any).allow_origin(Any));
 
     info!("Starting API server on {bind_addr}");
-    axum::serve(tokio::net::TcpListener::bind(bind_addr).await?, router).await?;
+
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    axum::serve(listener, router).await?;
 
     Ok(())
 }
 
 fn init_tracing() {
-    if tracing::subscriber::set_global_default(
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(Level::INFO.into()))
-            .finish(),
-    )
-    .is_err()
-    {
+    let log_dir = std::path::Path::new("logs");
+    if let Err(err) = fs::create_dir_all(log_dir) {
+        eprintln!("failed to create log directory {log_dir:?}: {err}");
+    }
+
+    let file_appender: RollingFileAppender =
+        tracing_appender::rolling::daily(log_dir, "api-server.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    let _ = LOG_GUARD.set(guard);
+
+    let env_filter = EnvFilter::from_default_env().add_directive(Level::INFO.into());
+
+    let fmt_stdout = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
+    let fmt_file = tracing_subscriber::fmt::layer()
+        .with_writer(non_blocking)
+        .with_ansi(false);
+
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(fmt_stdout)
+        .with(fmt_file);
+
+    if tracing::subscriber::set_global_default(subscriber).is_err() {
         tracing::warn!("tracing already initialised");
     }
 }
@@ -229,6 +255,7 @@ async fn get_ticker(
     State(state): State<AppState>,
     Query(SymbolQuery { symbol, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
+    tracing::info!(symbol = %symbol, "received ticker request");
     if let Some(client) = state.okx.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
@@ -257,6 +284,7 @@ async fn get_orderbook(
     State(state): State<AppState>,
     Query(SymbolQuery { symbol, depth, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
+    tracing::info!(symbol = %symbol, "received orderbook request");
     let store = state.inner.read().await;
     let response = store
         .orderbooks
@@ -278,6 +306,7 @@ async fn get_trades(
     State(state): State<AppState>,
     Query(SymbolQuery { symbol, limit, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
+    tracing::info!(symbol = %symbol, "received trades request");
     let store = state.inner.read().await;
     let response = store
         .trades
@@ -295,6 +324,7 @@ async fn get_trades(
 }
 
 async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
+    tracing::info!("received balances request");
     let store = state.inner.read().await;
     Json(ApiResponse::ok(store.balances.clone()))
 }
@@ -303,6 +333,7 @@ async fn get_open_orders(
     State(state): State<AppState>,
     Query(SymbolOptionalQuery { symbol, .. }): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
+    tracing::info!(?symbol, "received open orders request");
     let store = state.inner.read().await;
     let mut orders: Vec<Order> = store
         .open_orders
@@ -322,6 +353,7 @@ async fn get_order_history(
     State(state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
+    tracing::info!(?params, "received order history request");
     let store = state.inner.read().await;
     let mut orders = store.open_orders.clone();
 

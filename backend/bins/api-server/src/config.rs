@@ -22,6 +22,8 @@ pub struct BackendConfig {
 pub struct DeploymentConfig {
     #[serde(default)]
     pub backend: Option<BackendConfig>,
+    #[serde(default)]
+    pub runtime_env: Option<RuntimeEnvConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -30,6 +32,14 @@ pub struct AppConfig {
     pub server: Option<ServerConfig>,
     #[serde(default)]
     pub deployment: Option<DeploymentConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct RuntimeEnvConfig {
+    #[serde(default)]
+    pub http_proxy: Option<String>,
+    #[serde(default)]
+    pub https_proxy: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -66,6 +76,21 @@ impl AppConfig {
         fallback
             .parse()
             .map_err(|_| ConfigError::InvalidAddr(fallback))
+    }
+
+    pub fn apply_runtime_env(&self) {
+        if let Some(deployment) = &self.deployment {
+            if let Some(runtime) = &deployment.runtime_env {
+                if let Some(proxy) = &runtime.http_proxy {
+                    std::env::set_var("HTTP_PROXY", proxy);
+                    std::env::set_var("http_proxy", proxy);
+                }
+                if let Some(proxy) = &runtime.https_proxy {
+                    std::env::set_var("HTTPS_PROXY", proxy);
+                    std::env::set_var("https_proxy", proxy);
+                }
+            }
+        }
     }
 }
 
