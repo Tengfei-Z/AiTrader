@@ -183,6 +183,19 @@ struct PlaceOrderResponse {
     status: OrderStatus,
 }
 
+fn api_routes() -> Router<AppState> {
+    Router::new()
+        .route("/market/ticker", get(get_ticker))
+        .route("/market/orderbook", get(get_orderbook))
+        .route("/market/trades", get(get_trades))
+        .route("/account/balances", get(get_balances))
+        .route("/account/orders/open", get(get_open_orders))
+        .route("/account/orders/history", get(get_order_history))
+        .route("/account/fills", get(get_fills))
+        .route("/orders", post(place_order))
+        .route("/orders/:order_id", delete(cancel_order))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing();
@@ -209,15 +222,8 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));
 
     let router = Router::new()
-        .route("/api/market/ticker", get(get_ticker))
-        .route("/api/market/orderbook", get(get_orderbook))
-        .route("/api/market/trades", get(get_trades))
-        .route("/api/account/balances", get(get_balances))
-        .route("/api/account/orders/open", get(get_open_orders))
-        .route("/api/account/orders/history", get(get_order_history))
-        .route("/api/account/fills", get(get_fills))
-        .route("/api/orders", post(place_order))
-        .route("/api/orders/:order_id", delete(cancel_order))
+        .merge(api_routes())
+        .nest("/api", api_routes())
         .with_state(app_state)
         .layer(CorsLayer::new().allow_methods(Any).allow_origin(Any));
 
