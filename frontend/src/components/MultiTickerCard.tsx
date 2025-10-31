@@ -8,7 +8,7 @@ const MultiTickerCard = () => {
   const { data, isLoading } = useMultipleTickers(symbols);
 
   return (
-    <Card bordered={false} loading={isLoading} title="核心币种行情">
+    <Card bordered={false} loading={isLoading}>
       <Row gutter={[16, 16]}>
         {symbols.map((symbol) => {
           const ticker = data?.[symbol];

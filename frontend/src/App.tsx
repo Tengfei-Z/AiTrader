@@ -5,7 +5,6 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import DashboardPage from '@pages/Dashboard';
 import TradePage from '@pages/Trade';
 import AccountPage from '@pages/Account';
-import SymbolSelector from '@components/SymbolSelector';
 
 const menuItems: MenuProps['items'] = [
   { key: '/dashboard', label: '行情概览' },
@@ -32,16 +31,13 @@ const App = () => {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} breakpoint="lg">
+      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} breakpoint="lg" theme="light">
         <div className="logo">AiTrader</div>
-        <Menu theme="dark" mode="inline" items={menuItems} selectedKeys={selectedKeys} onClick={onMenuClick} />
+        <Menu theme="light" mode="inline" items={menuItems} selectedKeys={selectedKeys} onClick={onMenuClick} />
       </Sider>
       <Layout>
         <Header className="header">
           <span>AiTrader 控制台</span>
-          <div style={{ marginLeft: 'auto' }}>
-            <SymbolSelector />
-          </div>
         </Header>
         <Content className="content">
           <Routes>
