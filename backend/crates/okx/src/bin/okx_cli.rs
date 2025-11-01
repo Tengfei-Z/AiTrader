@@ -21,6 +21,8 @@ enum Command {
         #[arg(long, short = 's')]
         symbol: String,
     },
+    /// 查询账户权益与可用余额
+    Balance,
 }
 
 #[tokio::main]
@@ -39,6 +41,10 @@ async fn main() -> Result<()> {
         Command::Ticker { symbol } => {
             let ticker = client.get_ticker(&symbol).await?;
             println!("{}", serde_json::to_string_pretty(&ticker)?);
+        }
+        Command::Balance => {
+            let balance = client.get_account_balance().await?;
+            println!("{}", serde_json::to_string_pretty(&balance)?);
         }
     }
 

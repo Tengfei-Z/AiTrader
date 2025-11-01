@@ -7,6 +7,8 @@ pub enum OkxError {
     HttpClient(#[from] reqwest::Error),
     #[error("unexpected http status: {0}")]
     HttpStatus(StatusCode),
+    #[error("unexpected http status: {status}, body: {body}")]
+    HttpStatusWithBody { status: StatusCode, body: String },
     #[error("failed to serialize or deserialize payload: {0}")]
     Deserialize(#[from] anyhow::Error),
     #[error("failed to serialize request payload: {0}")]

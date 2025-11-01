@@ -1,11 +1,11 @@
 use crate::error::OkxError;
 use ai_core::config::{AppConfig, OkxCredentials};
 use anyhow::Result;
+use chrono::{SecondsFormat, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::{Client, Method, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{self, Value};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::instrument;
 
 const API_PREFIX: &str = "/api/v5";
@@ -47,7 +47,9 @@ impl OkxRestClient {
         credentials: OkxCredentials,
         proxy: ProxyOptions,
     ) -> Result<Self> {
-        let mut builder = Client::builder().user_agent("ai-trader-backend/0.1");
+        let mut builder = Client::builder()
+            .user_agent("ai-trader-backend/0.1")
+            .danger_accept_invalid_certs(true);
 
         if let Some(ref http_proxy) = proxy.http {
             tracing::info!("configuring HTTP proxy {}", http_proxy);
@@ -111,6 +113,32 @@ impl OkxRestClient {
             .ok_or_else(|| OkxError::EmptyResponse("market/ticker".into()).into())
     }
 
+    #[instrument(skip(self))]
+    pub async fn get_account_balance(&self) -> Result<crate::models::AccountBalanceResponse> {
+        let path = format!("{API_PREFIX}/account/balance");
+        let response: crate::models::AccountBalanceResponse = self.get(&path, None).await?;
+        Ok(response)
+    }
+
+    #[instrument(skip(self), fields(inst_type = inst_type.unwrap_or("all")))]
+    pub async fn get_positions(
+        &self,
+        inst_type: Option<&str>,
+    ) -> Result<Vec<crate::models::PositionDetail>> {
+        #[derive(serde::Deserialize)]
+        struct ResponseWrapper {
+            data: Vec<crate::models::PositionDetail>,
+        }
+
+        let mut path = format!("{API_PREFIX}/account/positions");
+        if let Some(inst_type) = inst_type {
+            path.push_str(&format!("?instType={}", inst_type));
+        }
+
+        let response: ResponseWrapper = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
         T: DeserializeOwned,
@@ -127,7 +155,7 @@ impl OkxRestClient {
         body: Option<Value>,
     ) -> Result<RequestBuilder> {
         let url = format!("{}{}", self.base_url, path_and_query);
-        let timestamp = timestamp_ms().to_string();
+        let timestamp = current_timestamp_iso();
         let payload_json = body
             .as_ref()
             .map(|payload| serde_json::to_string(payload))
@@ -167,8 +195,14 @@ impl OkxRestClient {
         T: DeserializeOwned,
     {
         let response = builder.send().await.map_err(OkxError::from)?;
-        if !response.status().is_success() {
-            return Err(OkxError::HttpStatus(response.status()).into());
+        let status = response.status();
+
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read body>".to_string());
+            return Err(OkxError::HttpStatusWithBody { status, body }.into());
         }
 
         response
@@ -178,9 +212,6 @@ impl OkxRestClient {
     }
 }
 
-fn timestamp_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before UNIX_EPOCH")
-        .as_millis()
+fn current_timestamp_iso() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }

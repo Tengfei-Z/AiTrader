@@ -40,3 +40,64 @@ pub fn sign_request(
 
     Ok(BASE64_STANDARD.encode(signature))
 }
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountBalanceResponse {
+    pub data: Vec<AccountBalance>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountBalance {
+    #[serde(default)]
+    pub total_eq: Option<String>,
+    #[serde(default)]
+    pub details: Vec<AccountBalanceDetail>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountBalanceDetail {
+    pub ccy: String,
+    #[serde(default)]
+    pub cash_bal: Option<String>,
+    #[serde(default)]
+    pub avail_bal: Option<String>,
+    #[serde(default)]
+    pub eq: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionsResponse {
+    pub data: Vec<PositionDetail>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionDetail {
+    pub inst_id: String,
+    #[serde(default)]
+    pub inst_type: Option<String>,
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    #[serde(default)]
+    pub avg_px: Option<String>,
+    #[serde(default)]
+    pub pos: Option<String>,
+    #[serde(default)]
+    pub lever: Option<String>,
+    #[serde(default)]
+    pub liq_px: Option<String>,
+    #[serde(default)]
+    pub margin: Option<String>,
+    #[serde(default)]
+    pub upl: Option<String>,
+    #[serde(default)]
+    pub mark_px: Option<String>,
+    #[serde(default)]
+    pub last: Option<String>,
+    #[serde(default)]
+    pub c_time: Option<String>,
+}

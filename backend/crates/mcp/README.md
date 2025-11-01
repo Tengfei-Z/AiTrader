@@ -4,7 +4,7 @@
 
 ## 主要特性
 
-- `DemoArithmeticServer` 演示如何用 `rmcp` 注册工具（`one_plus_one`），方便本地联调。
+- `DemoArithmeticServer` 演示如何用 `rmcp` 注册工具（`one_plus_one`、`get_account_state`），方便本地联调。
 - 基于 `tokio` 实现，方便融入异步工作流。
 
 ## 使用方法
@@ -19,7 +19,9 @@
    该命令会编译并运行 `mcp-demo-server`，随后在控制台输出一个本地调试页面（通常是 `http://localhost:3000` 一类的 URL）。
 
 3. 在浏览器中打开该 URL，Transport 选择 `STDIO`，点击 “Connect”。
-4. 连接成功后切换到 “Tools” 标签，选择 `one_plus_one` 并点击 “Call Tool”，Inspector 会展示返回结果 `2`，完成本地验证。
+4. 连接成功后切换到 “Tools” 标签：
+   - 调用 `one_plus_one` 验证基础通信是否畅通（预期返回 `2`）。
+   - 调用 `get_account_state` 可获取当前 OKX 账户聚合信息，需确保 `.env` 中已配置 OKX API 凭证。
 
 ## 测试方式
 

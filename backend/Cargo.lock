@@ -1183,11 +1183,14 @@ dependencies = [
  "ai_core",
  "anyhow",
  "async-trait",
+ "chrono",
+ "okx",
  "rmcp",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
 ]
 
@@ -1271,6 +1274,7 @@ dependencies = [
  "ai_core",
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "clap",
  "hmac",
  "reqwest",

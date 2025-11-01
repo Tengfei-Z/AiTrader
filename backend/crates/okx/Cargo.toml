@@ -17,6 +17,7 @@ base64 = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 clap = { workspace = true }
+chrono = { workspace = true }
 
 [[bin]]
 name = "okx-cli"

@@ -13,6 +13,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", tag = "rmcp-v0.8.3", default-features = false, features = ["server", "macros", "transport-io", "base64"] }
+okx = { path = "../okx" }
+chrono = { workspace = true }
+tracing-appender = { workspace = true }
 
 [[bin]]
 name = "mcp-demo-server"

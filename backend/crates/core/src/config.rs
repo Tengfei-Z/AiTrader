@@ -3,6 +3,7 @@ use dotenvy::dotenv;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::path::PathBuf;
 
 /// Global configuration accessor to keep the rest of the application stateless.
 pub static CONFIG: Lazy<AppConfig> = Lazy::new(|| {
@@ -43,8 +44,7 @@ pub struct AppConfig {
 impl AppConfig {
     /// Build configuration from well-known environment variables.
     pub fn load_from_env() -> Result<Self> {
-        // 自动加载当前目录或上层目录中的 .env 文件（如果存在）
-        let _ = dotenv();
+        preload_env_files();
 
         let okx_credentials = match (
             env_var_non_empty("OKX_API_KEY"),
@@ -172,4 +172,21 @@ fn default_okx_rest_endpoint() -> String {
 
 fn default_model() -> String {
     "deepseek-chat".to_string()
+}
+
+fn preload_env_files() {
+    // 自动加载当前目录或上层目录中的 .env 文件（如果存在）
+    let _ = dotenv();
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidate_files = [
+        manifest_dir.join("../../.env"),
+        manifest_dir.join("../okx/.env"),
+    ];
+
+    for path in candidate_files {
+        if path.exists() {
+            let _ = dotenvy::from_path(path);
+        }
+    }
 }
