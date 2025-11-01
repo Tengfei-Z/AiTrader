@@ -1,10 +1,10 @@
 # deepseek
 
-AiTrader 后端与 DeepSeek Function Call API 对接的封装，目前提供调用所需的数据结构与异步客户端骨架。
+ AiTrader 后端与 DeepSeek (OpenAI 兼容接口) 对接的封装，目前提供调用所需的数据结构与基于 `async-openai` 的异步客户端骨架。
 
 ## 主要内容
 
-- `DeepSeekClient` 实现 `FunctionCaller` trait，可向 DeepSeek 发送函数调用请求。
+- `DeepSeekClient` 基于 `async-openai` 的 Chat Completions 接口，实现 `FunctionCaller` trait，可向 DeepSeek 发送函数调用请求。
 - `FunctionCallRequest`/`FunctionCallResponse` 统一了序列化结构。
 - 通过 `ai_core::config::AppConfig` 读取配置，避免在代码中写死密钥。
 
@@ -26,8 +26,8 @@ AiTrader 后端与 DeepSeek Function Call API 对接的封装，目前提供调�
     # 指定自定义提示词
    cargo run -p deepseek --bin deepseek-cli -- chat --prompt "分析 BTC 与 ETH 的相关性"
 
-   # 如果需要调用函数接口
-   cargo run -p deepseek --bin deepseek-cli -- call --function test --arguments '{"foo":"bar"}'
+   # 调用函数接口并附带元数据（描述、参数 Schema 等）
+   cargo run -p deepseek --bin deepseek-cli -- call --function test --arguments '{"foo":"bar"}' --metadata '{"description":"demo","parameters":{"type":"object"}}'
    ```
 
    `chat` 命令会打印模型的文本回复，`call` 命令会输出 JSON 结果，方便后续集成。

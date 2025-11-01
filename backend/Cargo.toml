@@ -33,3 +33,4 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 chrono = { version = "0.4", features = ["serde", "clock"] }
 config = "0.14"
 tracing-appender = "0.2"
+async-openai = "0.23"

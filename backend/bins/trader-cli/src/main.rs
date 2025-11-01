@@ -73,6 +73,8 @@ enum DeepseekAction {
         )]
         prompt: String,
     },
+    /// 调用 DeepSeek 获取当前账户信息
+    AccountState,
 }
 
 #[cfg(feature = "mcp")]
@@ -153,6 +155,7 @@ async fn handle_okx(cmd: OkxCommand) -> Result<()> {
 #[cfg(feature = "deepseek")]
 async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
     use deepseek::{DeepSeekClient, FunctionCallRequest, FunctionCaller};
+    use serde_json::json;
 
     let config: &AppConfig = &CONFIG;
     let client = DeepSeekClient::from_app_config(config)?;
@@ -175,6 +178,45 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
         DeepseekAction::Chat { prompt } => {
             let reply = client.chat_completion(&prompt).await?;
             println!("{}", reply);
+        }
+        DeepseekAction::AccountState => {
+            let parameters_schema = json!({
+                "type": "object",
+                "properties": {
+                    "include_positions": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "include_history": {
+                        "type": "boolean",
+                        "default": false
+                    },
+                    "include_performance": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                },
+                "required": ["include_positions", "include_history", "include_performance"],
+                "additionalProperties": false
+            });
+
+            let request = FunctionCallRequest {
+                function: "get_account_state".to_string(),
+                arguments: json!({
+                    "include_positions": true,
+                    "include_history": true,
+                    "include_performance": true
+                }),
+                metadata: json!({
+                    "source": "trader-cli",
+                    "description": "Retrieve aggregated OKX account balances, performance indicators, and open positions.",
+                    "parameters": parameters_schema,
+                    "system_prompt": "You are an assistant that relays trading account requests. When asked to get account information, always call the provided tool with proper JSON arguments."
+                }),
+            };
+
+            let response = client.call_function(request).await?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
         }
     }
 

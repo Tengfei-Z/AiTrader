@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Context, Result};
-use chrono::{NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use okx::{models::PositionDetail, OkxRestClient};
 use serde::{Deserialize, Serialize};
 
@@ -196,9 +196,9 @@ async fn build_position_state(
 
 fn parse_timestamp(ts: &str) -> Result<String> {
     let millis: i64 = ts.parse().context("无法解析 OKX 时间戳")?;
-    let seconds = millis / 1000;
-    let sub_ms = (millis % 1000).abs() as u32 * 1_000_000;
-    let naive = NaiveDateTime::from_timestamp_opt(seconds, sub_ms)
-        .ok_or_else(|| anyhow!("时间戳超出范围"))?;
-    Ok(Utc.from_utc_datetime(&naive).to_rfc3339())
+    let seconds = millis.div_euclid(1000);
+    let nanos_part = millis.rem_euclid(1000) as u32 * 1_000_000;
+    let datetime: DateTime<Utc> =
+        DateTime::from_timestamp(seconds, nanos_part).ok_or_else(|| anyhow!("时间戳超出范围"))?;
+    Ok(datetime.to_rfc3339())
 }
