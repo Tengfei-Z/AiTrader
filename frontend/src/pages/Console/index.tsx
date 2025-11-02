@@ -1,15 +1,10 @@
 import { Col, Flex, Row } from 'antd';
 import { useMemo } from 'react';
-import AutomationStatusCard from '@components/AutomationStatusCard';
 import EquityCurveCard from '@components/EquityCurveCard';
 import MarketStrip from '@components/MarketStrip';
-import OpenOrdersTable from '@components/OpenOrdersTable';
-import OrderHistoryTable from '@components/OrderHistoryTable';
-import PositionCard from '@components/PositionCard';
-import TradeActivityList from '@components/TradeActivityList';
+import PositionsHistoryCard from '@components/PositionsHistoryCard';
 import { useFills } from '@hooks/useFills';
-import { useOpenOrders } from '@hooks/useOpenOrders';
-import { useOrderHistory } from '@hooks/useOrderHistory';
+import { usePositions } from '@hooks/usePositions';
 import { useTicker } from '@hooks/useTicker';
 import { useSymbolStore } from '@store/useSymbolStore';
 import { buildEquityCurve } from '@utils/pnl';
@@ -18,13 +13,12 @@ const AiConsolePage = () => {
   const symbol = useSymbolStore((state) => state.symbol);
 
   const { data: ticker } = useTicker(symbol);
-  const { data: openOrders, isLoading: openOrdersLoading } = useOpenOrders(symbol);
   const { data: fills, isLoading: fillsLoading } = useFills(symbol, 200);
-  const { data: orderHistory, isLoading: historyLoading } = useOrderHistory({ symbol, limit: 120 }, true);
+  const { data: positions, isLoading: positionsLoading } = usePositions();
 
   const markPrice = ticker?.last ? Number(ticker.last) : undefined;
 
-  const { points: equityCurve, netPosition, avgEntryPrice, unrealizedPnl } = useMemo(
+  const { points: equityCurve } = useMemo(
     () => buildEquityCurve(fills, markPrice),
     [fills, markPrice]
   );
@@ -33,36 +27,22 @@ const AiConsolePage = () => {
     <Flex vertical gap={24}>
       <MarketStrip />
 
-      <Row gutter={[24, 24]}>
-        <Col xs={24} xl={16}>
-          <Flex vertical gap={24}>
-            <EquityCurveCard data={equityCurve} loading={fillsLoading} />
-            <PositionCard
-              symbol={symbol}
-              netPosition={netPosition}
-              avgEntryPrice={avgEntryPrice}
-              markPrice={markPrice}
-              unrealizedPnl={unrealizedPnl}
-            />
-          </Flex>
-        </Col>
-        <Col xs={24} xl={8}>
-          <TradeActivityList fills={fills} loading={fillsLoading} />
-          <AutomationStatusCard
-            symbol={symbol}
-            fills={fills}
-            openOrders={openOrders}
-            loading={fillsLoading || openOrdersLoading}
+      <Row gutter={[24, 24]} align="stretch">
+        <Col xs={24} xl={14} style={{ display: 'flex' }}>
+          <EquityCurveCard
+            data={equityCurve}
+            loading={fillsLoading}
+            className="full-height-card"
           />
         </Col>
-      </Row>
-
-      <Row gutter={[24, 24]}>
-        <Col xs={24} md={12}>
-          <OrderHistoryTable orders={orderHistory} loading={historyLoading} />
-        </Col>
-        <Col xs={24} md={12}>
-          <OpenOrdersTable orders={openOrders} loading={openOrdersLoading} />
+        <Col xs={24} xl={10} style={{ display: 'flex' }}>
+          <PositionsHistoryCard
+            positions={positions}
+            positionsLoading={positionsLoading}
+            fills={fills}
+            fillsLoading={fillsLoading}
+            className="full-height-card"
+          />
         </Col>
       </Row>
     </Flex>

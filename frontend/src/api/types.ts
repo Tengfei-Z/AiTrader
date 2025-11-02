@@ -36,6 +36,19 @@ export interface BalanceItem {
   valuationUSDT?: string;
 }
 
+export interface PositionItem {
+  symbol: string;
+  side: string;
+  entry_price?: number;
+  current_price?: number;
+  quantity?: number;
+  leverage?: number;
+  liquidation_price?: number;
+  margin?: number;
+  unrealized_pnl?: number;
+  entry_time?: string;
+}
+
 export type OrderStatus = 'open' | 'partially_filled' | 'filled' | 'canceled';
 
 export interface OrderItem {
@@ -58,6 +71,7 @@ export interface FillItem {
   price: string;
   size: string;
   fee: string;
+  pnl?: string;
   timestamp: string;
 }
 

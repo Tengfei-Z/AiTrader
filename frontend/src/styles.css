@@ -61,14 +61,219 @@ body {
   overflow: hidden;
 }
 
-.market-strip-symbol {
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(79, 70, 229, 0.08);
-  color: #4338ca;
-  font-size: 14px;
+.market-strip-layout {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: stretch;
 }
 
+.market-strip-ticker-wrapper {
+  flex: 2 1 480px;
+  min-width: 320px;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+}
+
+.market-strip-ticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.market-strip-ticker-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+}
+
+.market-strip-ticker-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.market-strip-ticker-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.market-strip-ticker-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.market-strip-ticker-code {
+  font-size: 12px;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
+}
+
+.market-strip-ticker-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.market-strip-ticker-meta .price {
+  font-weight: 600;
+  color: #111827;
+}
+
+.market-strip-ticker-meta .change {
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.market-strip-ticker-meta .change.positive {
+  color: #16a34a;
+}
+
+.market-strip-ticker-meta .change.negative {
+  color: #dc2626;
+}
+
+.full-height-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.full-height-card .ant-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.full-height-card .chart-container {
+  flex: 1;
+  min-height: 320px;
+}
+
+.full-height-card .chart-container > div {
+  width: 100%;
+  height: 100%;
+}
+
+.full-height-card .ant-tabs-content-holder {
+  flex: 1;
+  display: flex;
+}
+
+.full-height-card .ant-tabs-tabpane {
+  flex: 1;
+  display: flex;
+}
+
+.full-height-card .ant-table-wrapper,
+.full-height-card .ant-table {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.full-height-card .ant-table-container {
+  flex: 1;
+}
+
+.full-height-card .ant-table-body {
+  flex: 1;
+  overflow: auto !important;
+}
+
+.equity-header {
+  margin-bottom: 12px;
+  gap: 16px;
+}
+
+.equity-label {
+  font-size: 12px;
+  color: #64748b;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.equity-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.equity-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.equity-value {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.equity-delta {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.market-strip-balance-card {
+  flex: 1 1 320px;
+  min-width: 260px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.market-strip-balance-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.market-strip-balance-label {
+  font-size: 12px;
+  color: #64748b;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.market-strip-balance-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.market-strip-balance-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8 !important;
+}
+
+@media (max-width: 768px) {
+  .market-strip-layout {
+    flex-direction: column;
+  }
+
+  .market-strip-ticker-wrapper {
+    min-width: auto;
+  }
+}
 .trade-activity-item {
   width: 100%;
   display: flex;

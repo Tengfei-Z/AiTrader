@@ -69,6 +69,8 @@ pub struct PositionState {
     pub current_price: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_plan: Option<ExitPlan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realized_pnl: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -203,6 +205,7 @@ async fn build_position_state(
         unrealized_pnl,
         current_price,
         exit_plan: None,
+        realized_pnl: None,
     })
 }
 
@@ -216,8 +219,5 @@ fn parse_timestamp(ts: &str) -> Result<String> {
 }
 
 fn include_usdt_position(detail: &PositionDetail) -> bool {
-    detail
-        .inst_id
-        .to_ascii_uppercase()
-        .contains("USDT")
+    detail.inst_id.to_ascii_uppercase().contains("USDT")
 }

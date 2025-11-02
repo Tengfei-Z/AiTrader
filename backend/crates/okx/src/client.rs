@@ -62,10 +62,7 @@ impl OkxRestClient {
         Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), false)
     }
 
-    pub fn new_simulated(
-        base_url: impl Into<String>,
-        credentials: OkxCredentials,
-    ) -> Result<Self> {
+    pub fn new_simulated(base_url: impl Into<String>, credentials: OkxCredentials) -> Result<Self> {
         Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), true)
     }
 
@@ -164,6 +161,36 @@ impl OkxRestClient {
             path.push_str(&format!("?instType={}", inst_type));
         }
 
+        let response: ResponseWrapper = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
+    #[instrument(skip(self), fields(inst_id = inst_id.unwrap_or("all"), limit))]
+    pub async fn get_fills(
+        &self,
+        inst_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::models::FillDetail>> {
+        #[derive(serde::Deserialize)]
+        struct ResponseWrapper {
+            data: Vec<crate::models::FillDetail>,
+        }
+
+        let mut params = vec![("instType".to_string(), "SWAP".to_string())];
+        if let Some(inst_id) = inst_id {
+            params.push(("instId".to_string(), inst_id.to_string()));
+        }
+        if let Some(limit) = limit {
+            params.push(("limit".to_string(), limit.min(100).to_string()));
+        }
+
+        let query = params
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let path = format!("{API_PREFIX}/trade/fills?{query}");
         let response: ResponseWrapper = self.get(&path, None).await?;
         Ok(response.data)
     }

@@ -101,3 +101,33 @@ pub struct PositionDetail {
     #[serde(default)]
     pub c_time: Option<String>,
 }
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FillDetail {
+    #[serde(default)]
+    pub inst_type: Option<String>,
+    pub inst_id: String,
+    #[serde(default)]
+    pub trade_id: Option<String>,
+    #[serde(default)]
+    pub ord_id: Option<String>,
+    #[serde(default)]
+    pub cl_ord_id: Option<String>,
+    #[serde(default)]
+    pub fill_px: Option<String>,
+    #[serde(default)]
+    pub fill_sz: Option<String>,
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    #[serde(default)]
+    pub exec_type: Option<String>,
+    #[serde(default)]
+    pub fill_pnl: Option<String>,
+    #[serde(default)]
+    pub fee: Option<String>,
+    #[serde(default)]
+    pub ts: Option<String>,
+}

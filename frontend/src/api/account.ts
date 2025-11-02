@@ -1,5 +1,5 @@
 import client from './client';
-import type { ApiResponse, BalanceItem, FillItem, OrderItem } from './types';
+import type { ApiResponse, BalanceItem, FillItem, OrderItem, PositionItem } from './types';
 
 interface RawBalanceItem {
   asset: string;
@@ -25,6 +25,17 @@ export const fetchBalances = async () => {
   }));
 };
 
+export const fetchPositions = async () => {
+  const simulatedFlag = import.meta.env.VITE_OKX_SIMULATED;
+  const { data } = await client.get<ApiResponse<PositionItem[]>>('/account/positions', {
+    params:
+      simulatedFlag === 'false'
+        ? undefined
+        : { simulated: true }
+  });
+  return data.data;
+};
+
 export const fetchOpenOrders = async (symbol?: string) => {
   const { data } = await client.get<ApiResponse<OrderItem[]>>('/account/orders/open', {
     params: { symbol }
@@ -32,16 +43,13 @@ export const fetchOpenOrders = async (symbol?: string) => {
   return data.data;
 };
 
-export const fetchOrderHistory = async (params: { symbol?: string; limit?: number; state?: string }) => {
-  const { data } = await client.get<ApiResponse<OrderItem[]>>('/account/orders/history', {
-    params
-  });
-  return data.data;
-};
-
-export const fetchFills = async (params: { symbol?: string; limit?: number }) => {
+export const fetchFills = async (params: { symbol?: string; limit?: number; simulated?: boolean }) => {
+  const simulatedFlag = import.meta.env.VITE_OKX_SIMULATED;
   const { data } = await client.get<ApiResponse<FillItem[]>>('/account/fills', {
-    params
+    params: {
+      ...params,
+      simulated: simulatedFlag === 'false' ? params.simulated : true
+    }
   });
   return data.data;
 };

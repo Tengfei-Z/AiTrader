@@ -121,6 +121,7 @@ dependencies = [
  "axum",
  "chrono",
  "config",
+ "mcp_adapter",
  "okx",
  "serde",
  "serde_json",

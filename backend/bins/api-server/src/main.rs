@@ -20,8 +20,8 @@ use tracing_subscriber::{EnvFilter, Registry};
 
 mod config;
 use config::load_app_config;
-use okx::OkxRestClient;
 use mcp_adapter::account::{fetch_account_state, AccountStateRequest};
+use okx::OkxRestClient;
 
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
@@ -38,6 +38,7 @@ struct MockDataStore {
     orderbooks: HashMap<String, OrderBook>,
     trades: HashMap<String, Vec<Trade>>,
     balances: Vec<Balance>,
+    positions: Vec<Position>,
     open_orders: Vec<Order>,
     fills: Vec<Fill>,
     next_order_id: u64,
@@ -123,6 +124,20 @@ struct Balance {
     valuation_usdt: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Position {
+    symbol: String,
+    side: String,
+    entry_price: Option<f64>,
+    current_price: Option<f64>,
+    quantity: Option<f64>,
+    leverage: Option<f64>,
+    liquidation_price: Option<f64>,
+    margin: Option<f64>,
+    unrealized_pnl: Option<f64>,
+    entry_time: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum OrderStatus {
@@ -155,6 +170,8 @@ struct Fill {
     price: String,
     size: String,
     fee: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pnl: Option<String>,
     timestamp: String,
 }
 
@@ -169,7 +186,7 @@ struct SymbolQuery {
 struct SymbolOptionalQuery {
     symbol: Option<String>,
     limit: Option<usize>,
-    state: Option<String>,
+    simulated: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,7 +197,6 @@ struct PlaceOrderRequest {
     order_type: String,
     price: Option<String>,
     size: String,
-    time_in_force: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -195,8 +211,8 @@ fn api_routes() -> Router<AppState> {
         .route("/market/orderbook", get(get_orderbook))
         .route("/market/trades", get(get_trades))
         .route("/account/balances", get(get_balances))
+        .route("/account/positions", get(get_positions))
         .route("/account/orders/open", get(get_open_orders))
-        .route("/account/orders/history", get(get_order_history))
         .route("/account/fills", get(get_fills))
         .route("/orders", post(place_order))
         .route("/orders/:order_id", delete(cancel_order))
@@ -220,7 +236,8 @@ async fn main() -> anyhow::Result<()> {
         https: https_proxy,
     };
     let okx_client = OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options.clone()).ok();
-    let okx_simulated = OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options).ok();
+    let okx_simulated =
+        OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options).ok();
 
     let app_state = AppState {
         inner: Arc::new(RwLock::new(MockDataStore::new())),
@@ -381,6 +398,53 @@ async fn get_balances(
     Json(ApiResponse::ok(store.balances.clone()))
 }
 
+async fn get_positions(
+    State(state): State<AppState>,
+    Query(BalancesQuery { simulated }): Query<BalancesQuery>,
+) -> impl IntoResponse {
+    let use_simulated = simulated.unwrap_or(false);
+    tracing::info!(use_simulated, "received positions request");
+
+    if let Some(client) = if use_simulated {
+        state.okx_simulated.clone()
+    } else {
+        state.okx.clone()
+    } {
+        let mut request = AccountStateRequest::default();
+        request.simulated_trading = use_simulated;
+        request.include_history = false;
+        request.include_performance = false;
+
+        match fetch_account_state(&client, &request).await {
+            Ok(account_state) => {
+                let positions: Vec<Position> = account_state
+                    .active_positions
+                    .into_iter()
+                    .map(|pos| Position {
+                        symbol: pos.coin,
+                        side: pos.side,
+                        entry_price: pos.entry_price,
+                        current_price: pos.current_price,
+                        quantity: pos.quantity,
+                        leverage: pos.leverage,
+                        liquidation_price: pos.liquidation_price,
+                        margin: pos.margin,
+                        unrealized_pnl: pos.unrealized_pnl,
+                        entry_time: pos.entry_time,
+                    })
+                    .collect();
+                return Json(ApiResponse::ok(positions));
+            }
+            Err(err) => {
+                tracing::warn!(use_simulated, error = ?err, "failed to fetch OKX positions");
+            }
+        }
+    }
+
+    let store = state.inner.read().await;
+    Json(ApiResponse::ok(store.positions.clone()))
+}
+
 async fn get_open_orders(
     State(state): State<AppState>,
     Query(SymbolOptionalQuery { symbol, .. }): Query<SymbolOptionalQuery>,
@@ -401,45 +465,106 @@ async fn get_open_orders(
     Json(ApiResponse::ok(orders))
 }
 
-async fn get_order_history(
-    State(state): State<AppState>,
-    Query(params): Query<SymbolOptionalQuery>,
-) -> impl IntoResponse {
-    tracing::info!(?params, "received order history request");
-    let store = state.inner.read().await;
-    let mut orders = store.open_orders.clone();
-
-    if let Some(symbol) = params.symbol {
-        orders.retain(|order| order.symbol == symbol);
-    }
-
-    if let Some(state_filter) = params.state {
-        orders.retain(|order| order.status.to_string().eq_ignore_ascii_case(&state_filter));
-    }
-
-    if let Some(limit) = params.limit {
-        orders.truncate(limit);
-    }
-
-    Json(ApiResponse::ok(orders))
-}
-
 async fn get_fills(
     State(state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
-    let store = state.inner.read().await;
-    let mut fills = store.fills.clone();
+    let use_simulated = params.simulated.unwrap_or(false);
+    let symbol_filter = params.symbol.clone();
+    let limit = params.limit;
 
-    if let Some(symbol) = params.symbol {
+    tracing::info!(
+        ?symbol_filter,
+        use_simulated,
+        limit,
+        "received fills request"
+    );
+
+    if let Some(client) = if use_simulated {
+        state.okx_simulated.clone()
+    } else {
+        state.okx.clone()
+    } {
+        match client.get_fills(symbol_filter.as_deref(), limit).await {
+            Ok(remote_fills) => {
+                let mut fills: Vec<Fill> = remote_fills.into_iter().map(convert_okx_fill).collect();
+                if let Some(limit) = limit {
+                    fills.truncate(limit);
+                }
+                return Json(ApiResponse::ok(fills));
+            }
+            Err(err) => {
+                tracing::warn!(use_simulated, error = ?err, "failed to fetch OKX fills");
+            }
+        }
+    }
+
+    let mut fills = {
+        let store = state.inner.read().await;
+        store.fills.clone()
+    };
+
+    if let Some(symbol) = symbol_filter {
         fills.retain(|fill| fill.symbol == symbol);
     }
 
-    if let Some(limit) = params.limit {
+    if let Some(limit) = limit {
         fills.truncate(limit);
     }
 
     Json(ApiResponse::ok(fills))
+}
+
+fn convert_okx_fill(detail: okx::models::FillDetail) -> Fill {
+    let okx::models::FillDetail {
+        inst_id,
+        trade_id,
+        ord_id,
+        fill_px,
+        fill_sz,
+        side,
+        fee,
+        ts,
+        fill_pnl,
+        ..
+    } = detail;
+
+    let fill_id = trade_id
+        .clone()
+        .or_else(|| ord_id.clone())
+        .or_else(|| ts.clone())
+        .unwrap_or_else(|| inst_id.clone());
+
+    let order_id = ord_id.unwrap_or_else(|| fill_id.clone());
+
+    Fill {
+        fill_id,
+        order_id,
+        symbol: inst_id,
+        side: side
+            .map(|value| value.to_lowercase())
+            .unwrap_or_else(|| "unknown".to_string()),
+        price: string_or_default(fill_px, "0"),
+        size: string_or_default(fill_sz, "0"),
+        fee: string_or_default(fee, "0"),
+        pnl: optional_string(fill_pnl),
+        timestamp: string_or_default(ts, "0"),
+    }
+}
+
+fn optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn string_or_default(value: Option<String>, default: &str) -> String {
+    optional_string(value).unwrap_or_else(|| default.to_string())
 }
 
 async fn place_order(
@@ -554,6 +679,33 @@ impl MockDataStore {
             },
         ];
 
+        let positions = vec![
+            Position {
+                symbol: "BTC-USDT-SWAP".into(),
+                side: "long".into(),
+                entry_price: Some(108_000.0),
+                current_price: Some(112_200.0),
+                quantity: Some(0.35),
+                leverage: Some(5.0),
+                liquidation_price: Some(98_500.0),
+                margin: Some(7_000.0),
+                unrealized_pnl: Some(1470.0),
+                entry_time: Some(current_timestamp_minus(86_400_000)),
+            },
+            Position {
+                symbol: "ETH-USDT-SWAP".into(),
+                side: "short".into(),
+                entry_price: Some(3_450.0),
+                current_price: Some(3_380.0),
+                quantity: Some(5.2),
+                leverage: Some(3.0),
+                liquidation_price: Some(3_880.0),
+                margin: Some(6_000.0),
+                unrealized_pnl: Some(364.0),
+                entry_time: Some(current_timestamp_minus(43_200_000)),
+            },
+        ];
+
         let open_orders = vec![Order {
             order_id: "123456".into(),
             symbol: "BTC-USDT".into(),
@@ -574,6 +726,7 @@ impl MockDataStore {
             price: "109500".into(),
             size: "0.03".into(),
             fee: "0.000015".into(),
+            pnl: Some("12.5".into()),
             timestamp: current_timestamp_minus(43_200_000),
         }];
 
@@ -582,6 +735,7 @@ impl MockDataStore {
             orderbooks: HashMap::from([("BTC-USDT".into(), orderbook)]),
             trades: HashMap::from([("BTC-USDT".into(), trades)]),
             balances,
+            positions,
             open_orders,
             fills,
             next_order_id: 200000,

@@ -17,4 +17,5 @@ chrono = { workspace = true }
 config = { workspace = true }
 thiserror = { workspace = true }
 okx = { path = "../../crates/okx" }
+mcp_adapter = { path = "../../crates/mcp" }
 tracing-appender = { workspace = true }

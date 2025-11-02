@@ -47,7 +47,8 @@ impl AppConfig {
     pub fn load_from_env() -> Result<Self> {
         preload_env_files();
 
-        let okx_credentials = load_okx_credentials("OKX_API_KEY", "OKX_API_SECRET", "OKX_PASSPHRASE");
+        let okx_credentials =
+            load_okx_credentials("OKX_API_KEY", "OKX_API_SECRET", "OKX_PASSPHRASE");
         let okx_simulated_credentials = load_okx_credentials(
             "OKX_SIM_API_KEY",
             "OKX_SIM_API_SECRET",
