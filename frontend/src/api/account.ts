@@ -1,9 +1,28 @@
 import client from './client';
 import type { ApiResponse, BalanceItem, FillItem, OrderItem } from './types';
 
+interface RawBalanceItem {
+  asset: string;
+  available: string;
+  locked: string;
+  valuation_usdt?: string;
+  valuationUSDT?: string;
+}
+
 export const fetchBalances = async () => {
-  const { data } = await client.get<ApiResponse<BalanceItem[]>>('/account/balances');
-  return data.data;
+  const simulatedFlag = import.meta.env.VITE_OKX_SIMULATED;
+  const { data } = await client.get<ApiResponse<RawBalanceItem[]>>('/account/balances', {
+    params:
+      simulatedFlag === 'false'
+        ? undefined
+        : { simulated: true }
+  });
+  return data.data.map<BalanceItem>((item) => ({
+    asset: item.asset,
+    available: item.available,
+    locked: item.locked,
+    valuationUSDT: item.valuationUSDT ?? item.valuation_usdt
+  }));
 };
 
 export const fetchOpenOrders = async (symbol?: string) => {

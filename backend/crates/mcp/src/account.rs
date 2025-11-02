@@ -94,12 +94,19 @@ pub async fn fetch_account_state(
         .next()
         .ok_or_else(|| anyhow!("OKX 账户余额响应为空"))?;
 
-    let account_value = parse_amount(balance.total_eq.as_deref()).unwrap_or_default();
-    let available_cash = balance
-        .details
-        .iter()
-        .filter_map(|detail| parse_amount(detail.avail_bal.as_deref()))
-        .sum();
+    let mut account_value = 0.0_f64;
+    let mut available_cash = 0.0_f64;
+
+    for detail in &balance.details {
+        if detail.ccy.eq_ignore_ascii_case("USDT") {
+            if let Some(eq) = parse_amount(detail.eq.as_deref()) {
+                account_value += eq;
+            }
+            if let Some(avail) = parse_amount(detail.avail_bal.as_deref()) {
+                available_cash += avail;
+            }
+        }
+    }
 
     let mut total_unrealized = None;
     let mut positions_summary = Vec::new();
@@ -111,7 +118,10 @@ pub async fn fetch_account_state(
             .context("拉取 OKX 持仓失败")?;
 
         let mut instrument_cache: HashMap<String, f64> = HashMap::new();
-        for detail in positions.into_iter().filter(|pos| has_open_quantity(pos)) {
+        for detail in positions
+            .into_iter()
+            .filter(|pos| has_open_quantity(pos) && include_usdt_position(pos))
+        {
             if let Some(summary) = build_position_state(client, detail, &mut instrument_cache).await
             {
                 if let Some(pnl) = summary.unrealized_pnl {
@@ -203,4 +213,11 @@ fn parse_timestamp(ts: &str) -> Result<String> {
     let datetime: DateTime<Utc> =
         DateTime::from_timestamp(seconds, nanos_part).ok_or_else(|| anyhow!("时间戳超出范围"))?;
     Ok(datetime.to_rfc3339())
+}
+
+fn include_usdt_position(detail: &PositionDetail) -> bool {
+    detail
+        .inst_id
+        .to_ascii_uppercase()
+        .contains("USDT")
 }

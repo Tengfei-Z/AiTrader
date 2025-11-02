@@ -21,6 +21,7 @@ use tracing_subscriber::{EnvFilter, Registry};
 mod config;
 use config::load_app_config;
 use okx::OkxRestClient;
+use mcp_adapter::account::{fetch_account_state, AccountStateRequest};
 
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
@@ -28,6 +29,7 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 struct AppState {
     inner: Arc<RwLock<MockDataStore>>,
     okx: Option<OkxRestClient>,
+    okx_simulated: Option<OkxRestClient>,
 }
 
 #[derive(Debug)]
@@ -39,6 +41,10 @@ struct MockDataStore {
     open_orders: Vec<Order>,
     fills: Vec<Fill>,
     next_order_id: u64,
+}
+
+fn format_amount(value: f64) -> String {
+    format!("{value:.6}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,9 +219,13 @@ async fn main() -> anyhow::Result<()> {
         http: http_proxy,
         https: https_proxy,
     };
+    let okx_client = OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options.clone()).ok();
+    let okx_simulated = OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options).ok();
+
     let app_state = AppState {
         inner: Arc::new(RwLock::new(MockDataStore::new())),
-        okx: OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options).ok(),
+        okx: okx_client,
+        okx_simulated,
     };
     let bind_addr = settings
         .bind_addr()
@@ -335,8 +345,38 @@ async fn get_trades(
     Json(response)
 }
 
-async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
-    tracing::info!("received balances request");
+async fn get_balances(
+    State(state): State<AppState>,
+    Query(BalancesQuery { simulated }): Query<BalancesQuery>,
+) -> impl IntoResponse {
+    let use_simulated = simulated.unwrap_or(false);
+    tracing::info!(use_simulated, "received balances request");
+
+    if let Some(client) = if use_simulated {
+        state.okx_simulated.clone()
+    } else {
+        state.okx.clone()
+    } {
+        let mut request = AccountStateRequest::default();
+        request.simulated_trading = use_simulated;
+
+        match fetch_account_state(&client, &request).await {
+            Ok(account_state) => {
+                let locked = (account_state.account_value - account_state.available_cash).max(0.0);
+                let balances = vec![Balance {
+                    asset: "USDT".into(),
+                    available: format_amount(account_state.available_cash),
+                    locked: format_amount(locked),
+                    valuation_usdt: format_amount(account_state.account_value),
+                }];
+                return Json(ApiResponse::ok(balances));
+            }
+            Err(err) => {
+                tracing::warn!(use_simulated, error = ?err, "failed to fetch OKX balances");
+            }
+        }
+    }
+
     let store = state.inner.read().await;
     Json(ApiResponse::ok(store.balances.clone()))
 }
@@ -566,4 +606,8 @@ impl std::fmt::Display for OrderStatus {
             OrderStatus::Canceled => write!(f, "canceled"),
         }
     }
+}
+#[derive(Debug, Deserialize, Default)]
+struct BalancesQuery {
+    simulated: Option<bool>,
 }

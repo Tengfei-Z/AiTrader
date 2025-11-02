@@ -50,6 +50,14 @@ impl OkxRestClient {
         )
     }
 
+    pub fn from_config_simulated_with_proxy(
+        config: &AppConfig,
+        proxy: ProxyOptions,
+    ) -> Result<Self> {
+        let credentials = config.require_okx_simulated_credentials()?.clone();
+        Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy, true)
+    }
+
     pub fn new(base_url: impl Into<String>, credentials: OkxCredentials) -> Result<Self> {
         Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), false)
     }
