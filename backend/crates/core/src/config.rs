@@ -37,6 +37,7 @@ pub struct AppConfig {
     #[serde(default = "default_okx_rest_endpoint")]
     pub okx_rest_endpoint: String,
     pub okx_credentials: Option<OkxCredentials>,
+    pub okx_simulated_credentials: Option<OkxCredentials>,
     pub deepseek: Option<DeepSeekConfig>,
     pub mcp: Option<McpConfig>,
 }
@@ -46,18 +47,12 @@ impl AppConfig {
     pub fn load_from_env() -> Result<Self> {
         preload_env_files();
 
-        let okx_credentials = match (
-            env_var_non_empty("OKX_API_KEY"),
-            env_var_non_empty("OKX_API_SECRET"),
-            env_var_non_empty("OKX_PASSPHRASE"),
-        ) {
-            (Ok(api_key), Ok(api_secret), Ok(passphrase)) => Some(OkxCredentials {
-                api_key,
-                api_secret,
-                passphrase,
-            }),
-            _ => None,
-        };
+        let okx_credentials = load_okx_credentials("OKX_API_KEY", "OKX_API_SECRET", "OKX_PASSPHRASE");
+        let okx_simulated_credentials = load_okx_credentials(
+            "OKX_SIM_API_KEY",
+            "OKX_SIM_API_SECRET",
+            "OKX_SIM_PASSPHRASE",
+        );
 
         let deepseek = match (
             env_var_non_empty("DEEPSEEK_API_KEY"),
@@ -102,6 +97,7 @@ impl AppConfig {
         Ok(Self {
             okx_rest_endpoint,
             okx_credentials,
+            okx_simulated_credentials,
             deepseek,
             mcp,
         })
@@ -121,6 +117,24 @@ impl AppConfig {
                 && !credentials.api_secret.trim().is_empty()
                 && !credentials.passphrase.trim().is_empty(),
             "OKX 凭证不能为空：请在 .env 中填写 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE"
+        );
+
+        Ok(credentials)
+    }
+
+    pub fn require_okx_simulated_credentials(&self) -> Result<&OkxCredentials> {
+        let credentials = self
+            .okx_simulated_credentials
+            .as_ref()
+            .context(
+                "未找到 OKX 模拟账户凭证：请在当前目录创建 .env，并设置 OKX_SIM_API_KEY、OKX_SIM_API_SECRET、OKX_SIM_PASSPHRASE",
+            )?;
+
+        ensure!(
+            !credentials.api_key.trim().is_empty()
+                && !credentials.api_secret.trim().is_empty()
+                && !credentials.passphrase.trim().is_empty(),
+            "OKX 模拟账户凭证不能为空：请在 .env 中填写 OKX_SIM_API_KEY、OKX_SIM_API_SECRET、OKX_SIM_PASSPHRASE"
         );
 
         Ok(credentials)
@@ -188,5 +202,20 @@ fn preload_env_files() {
         if path.exists() {
             let _ = dotenvy::from_path(path);
         }
+    }
+}
+
+fn load_okx_credentials(key: &str, secret: &str, passphrase: &str) -> Option<OkxCredentials> {
+    match (
+        env_var_non_empty(key),
+        env_var_non_empty(secret),
+        env_var_non_empty(passphrase),
+    ) {
+        (Ok(api_key), Ok(api_secret), Ok(passphrase)) => Some(OkxCredentials {
+            api_key,
+            api_secret,
+            passphrase,
+        }),
+        _ => None,
     }
 }

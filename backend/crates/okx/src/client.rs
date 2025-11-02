@@ -15,6 +15,7 @@ pub struct OkxRestClient {
     http: Client,
     base_url: String,
     credentials: OkxCredentials,
+    simulated_trading: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -30,22 +31,41 @@ impl OkxRestClient {
             config.okx_rest_endpoint.clone(),
             credentials,
             ProxyOptions::default(),
+            false,
         )
     }
 
     pub fn from_config_with_proxy(config: &AppConfig, proxy: ProxyOptions) -> Result<Self> {
         let credentials = config.require_okx_credentials()?.clone();
-        Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy)
+        Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy, false)
+    }
+
+    pub fn from_config_simulated(config: &AppConfig) -> Result<Self> {
+        let credentials = config.require_okx_simulated_credentials()?.clone();
+        Self::new_with_proxy(
+            config.okx_rest_endpoint.clone(),
+            credentials,
+            ProxyOptions::default(),
+            true,
+        )
     }
 
     pub fn new(base_url: impl Into<String>, credentials: OkxCredentials) -> Result<Self> {
-        Self::new_with_proxy(base_url, credentials, ProxyOptions::default())
+        Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), false)
+    }
+
+    pub fn new_simulated(
+        base_url: impl Into<String>,
+        credentials: OkxCredentials,
+    ) -> Result<Self> {
+        Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), true)
     }
 
     pub fn new_with_proxy(
         base_url: impl Into<String>,
         credentials: OkxCredentials,
         proxy: ProxyOptions,
+        simulated_trading: bool,
     ) -> Result<Self> {
         let mut builder = Client::builder()
             .user_agent("ai-trader-backend/0.1")
@@ -69,6 +89,7 @@ impl OkxRestClient {
             http,
             base_url: base_url.into(),
             credentials,
+            simulated_trading,
         })
     }
 
@@ -182,6 +203,9 @@ impl OkxRestClient {
         headers.insert("OK-ACCESS-TIMESTAMP", HeaderValue::from_str(&timestamp)?);
         headers.insert("OK-ACCESS-SIGN", HeaderValue::from_str(&sign)?);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        if self.simulated_trading {
+            headers.insert("x-simulated-trading", HeaderValue::from_static("1"));
+        }
 
         let builder = self.http.request(method, url).headers(headers);
         Ok(match payload_json {

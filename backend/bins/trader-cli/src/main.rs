@@ -25,6 +25,9 @@ enum Commands {
 
 #[derive(Debug, Parser)]
 struct OkxCommand {
+    /// 是否使用 OKX 模拟账户
+    #[arg(long, default_value_t = false)]
+    simulated: bool,
     #[command(subcommand)]
     action: OkxAction,
 }
@@ -74,7 +77,11 @@ enum DeepseekAction {
         prompt: String,
     },
     /// 调用 DeepSeek 获取当前账户信息
-    AccountState,
+    AccountState {
+        /// 是否使用 OKX 模拟账户
+        #[arg(long, default_value_t = false)]
+        simulated: bool,
+    },
 }
 
 #[cfg(feature = "mcp")]
@@ -136,9 +143,14 @@ async fn handle_okx(cmd: OkxCommand) -> Result<()> {
     use okx::OkxRestClient;
 
     let config: &AppConfig = &CONFIG;
-    let client = OkxRestClient::from_config(config)?;
+    let OkxCommand { simulated, action } = cmd;
+    let client = if simulated {
+        OkxRestClient::from_config_simulated(config)?
+    } else {
+        OkxRestClient::from_config(config)?
+    };
 
-    match cmd.action {
+    match action {
         OkxAction::Time => {
             let server_time = client.get_server_time().await?;
             println!("{}", server_time);
@@ -179,7 +191,7 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
             let reply = client.chat_completion(&prompt).await?;
             println!("{}", reply);
         }
-        DeepseekAction::AccountState => {
+        DeepseekAction::AccountState { simulated } => {
             let parameters_schema = json!({
                 "type": "object",
                 "properties": {
@@ -194,9 +206,18 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
                     "include_performance": {
                         "type": "boolean",
                         "default": false
+                    },
+                    "simulated_trading": {
+                        "type": "boolean",
+                        "default": false
                     }
                 },
-                "required": ["include_positions", "include_history", "include_performance"],
+                "required": [
+                    "include_positions",
+                    "include_history",
+                    "include_performance",
+                    "simulated_trading"
+                ],
                 "additionalProperties": false
             });
 
@@ -205,7 +226,8 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
                 arguments: json!({
                     "include_positions": true,
                     "include_history": true,
-                    "include_performance": true
+                    "include_performance": true,
+                    "simulated_trading": simulated
                 }),
                 metadata: json!({
                     "source": "trader-cli",

@@ -10,7 +10,7 @@
 
 ## 使用指南
 
-1. 在当前目录复制并编辑 `.env`：
+1. 在当前目录复制并编辑 `.env`（若要使用模拟账户，请额外配置 `OKX_SIM_API_KEY`、`OKX_SIM_API_SECRET`、`OKX_SIM_PASSPHRASE`）：
 
    ```bash
    cp .env.example .env
@@ -28,6 +28,9 @@
 
    # 调用函数接口并附带元数据（描述、参数 Schema 等）
    cargo run -p deepseek --bin deepseek-cli -- call --function test --arguments '{"foo":"bar"}' --metadata '{"description":"demo","parameters":{"type":"object"}}'
+
+   # 结合 trader-cli 调用账户工具（支持 --simulated 使用 OKX 模拟账户）
+   cargo run -p trader-cli --features deepseek -- deepseek account-state --simulated
    ```
 
    `chat` 命令会打印模型的文本回复，`call` 命令会输出 JSON 结果，方便后续集成。

@@ -189,16 +189,20 @@ impl DeepSeekClient {
     async fn execute_local_tool(&self, name: &str, arguments: &Value) -> Result<Option<Value>> {
         match name {
             "get_account_state" => {
+                let request: AccountStateRequest =
+                    serde_json::from_value(arguments.clone()).unwrap_or_default();
+
                 let app_config = match &self.app_config {
                     Some(cfg) => cfg,
                     None => return Ok(None),
                 };
 
-                let okx_client =
-                    OkxRestClient::from_config(app_config).context("初始化 OKX 客户端失败")?;
-
-                let request: AccountStateRequest =
-                    serde_json::from_value(arguments.clone()).unwrap_or_default();
+                let okx_client = if request.simulated_trading {
+                    OkxRestClient::from_config_simulated(app_config)
+                } else {
+                    OkxRestClient::from_config(app_config)
+                }
+                .context("初始化 OKX 客户端失败")?;
 
                 let account_state = fetch_account_state(&okx_client, &request)
                     .await

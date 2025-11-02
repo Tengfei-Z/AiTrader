@@ -10,6 +10,7 @@ use rmcp::schemars;
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct AccountStateRequest {
+    pub simulated_trading: bool,
     pub include_positions: bool,
     pub include_history: bool,
     pub include_performance: bool,
@@ -18,6 +19,7 @@ pub struct AccountStateRequest {
 impl Default for AccountStateRequest {
     fn default() -> Self {
         Self {
+            simulated_trading: false,
             include_positions: true,
             include_history: false,
             include_performance: false,

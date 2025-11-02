@@ -57,14 +57,19 @@ impl DemoArithmeticServer {
         info!(
             endpoint = %self.config.okx_rest_endpoint,
             api_key_length = credentials.api_key.len(),
+            simulated = request.simulated_trading,
             "OKX 凭证加载成功"
         );
 
-        let client = OkxRestClient::new(self.config.okx_rest_endpoint.clone(), credentials)
-            .map_err(|err| {
-                error!(?err, "初始化 OKX 客户端失败");
-                McpError::internal_error(format!("初始化 OKX 客户端失败: {}", err), None)
-            })?;
+        let client = if request.simulated_trading {
+            OkxRestClient::new_simulated(self.config.okx_rest_endpoint.clone(), credentials)
+        } else {
+            OkxRestClient::new(self.config.okx_rest_endpoint.clone(), credentials)
+        }
+        .map_err(|err| {
+            error!(?err, "初始化 OKX 客户端失败");
+            McpError::internal_error(format!("初始化 OKX 客户端失败: {}", err), None)
+        })?;
 
         let account_state = crate::account::fetch_account_state(&client, &request)
             .await
