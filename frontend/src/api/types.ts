@@ -62,6 +62,15 @@ export interface PositionHistoryItem {
   exit_time?: string;
 }
 
+export interface StrategyMessage {
+  id: string;
+  role: 'assistant' | 'user' | 'system';
+  content: string;
+  createdAt: string;
+  summary?: string;
+  tags?: string[];
+}
+
 export type OrderStatus = 'open' | 'partially_filled' | 'filled' | 'canceled';
 
 export interface OrderItem {

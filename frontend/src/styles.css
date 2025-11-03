@@ -157,7 +157,7 @@ body {
 
 .full-height-card .chart-container {
   flex: 1;
-  min-height: 320px;
+  min-height: 420px;
 }
 
 .full-height-card .chart-container > div {
@@ -193,6 +193,58 @@ body {
 .full-height-card .ant-table-body {
   flex: 1;
   overflow: auto !important;
+}
+
+.strategy-chat-card .ant-card-body {
+  padding-top: 16px;
+}
+
+.strategy-chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.strategy-chat-panel__toolbar {
+  margin-bottom: -8px;
+}
+
+.strategy-chat-panel__title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.strategy-chat-history {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 6px;
+  max-height: 420px;
+}
+
+.strategy-chat-message {
+  padding: 12px 0;
+}
+
+.strategy-chat-message + .strategy-chat-message {
+  border-top: 1px solid #f1f5f9;
+}
+
+.strategy-chat-message__meta {
+  font-size: 12px;
+}
+
+.strategy-chat-message__summary {
+  font-size: 13px;
+}
+
+.strategy-chat-message__content {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
+
+.strategy-chat-actions {
+  font-size: 12px;
 }
 
 .equity-header {

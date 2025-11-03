@@ -5,6 +5,7 @@ import MarketStrip from '@components/MarketStrip';
 import PositionsHistoryCard from '@components/PositionsHistoryCard';
 import { useFills } from '@hooks/useFills';
 import { usePositionHistory } from '@hooks/usePositionHistory';
+import { useStrategyChat } from '@hooks/useStrategyChat';
 import { usePositions } from '@hooks/usePositions';
 import { useTicker } from '@hooks/useTicker';
 import { useSymbolStore } from '@store/useSymbolStore';
@@ -17,6 +18,11 @@ const AiConsolePage = () => {
   const { data: fills, isLoading: fillsLoading } = useFills(symbol, 200);
   const { data: positions, isLoading: positionsLoading } = usePositions();
   const { data: positionHistory, isLoading: positionHistoryLoading } = usePositionHistory();
+  const {
+    data: strategyMessages,
+    isLoading: strategyLoading,
+    refetch: refetchStrategyChat
+  } = useStrategyChat();
 
   const markPrice = ticker?.last ? Number(ticker.last) : undefined;
 
@@ -43,6 +49,9 @@ const AiConsolePage = () => {
             positionsLoading={positionsLoading}
             history={positionHistory}
             historyLoading={positionHistoryLoading}
+            strategyMessages={strategyMessages}
+            strategyLoading={strategyLoading}
+            onStrategyRefresh={refetchStrategyChat}
             className="full-height-card"
           />
         </Col>
