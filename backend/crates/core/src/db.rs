@@ -61,6 +61,8 @@ pub fn fetch_deepseek_credentials() -> Result<Option<DeepSeekConfig>> {
         }
     };
 
+    ensure_deepseek_table(&mut client)?;
+
     let query = "SELECT api_key, endpoint, COALESCE(model, $1) AS model \
                  FROM deepseek_credentials ORDER BY updated_at DESC LIMIT 1";
 
@@ -104,17 +106,34 @@ pub fn store_deepseek_credentials(config: &DeepSeekConfig) -> Result<()> {
         }
     };
 
+    if let Err(err) = ensure_deepseek_table(&mut client) {
+        warn!(%err, "创建 DeepSeek 凭证表失败，将跳过写入");
+        return Ok(());
+    }
+
     let params: [&(dyn ToSql + Sync); 3] = [&config.api_key, &config.endpoint, &config.model];
 
-    if let Err(err) = client.execute(
+    match client.execute(
         "INSERT INTO deepseek_credentials (api_key, endpoint, model, updated_at) \
          VALUES ($1, $2, $3, NOW())",
         &params,
     ) {
-        warn!(%err, "写入 DeepSeek 凭证失败");
-    } else {
-        info!("DeepSeek 凭证已写入数据库");
+        Ok(_) => info!("DeepSeek 凭证已写入数据库"),
+        Err(err) => warn!(%err, "写入 DeepSeek 凭证失败"),
     }
 
+    Ok(())
+}
+
+fn ensure_deepseek_table(client: &mut Client) -> Result<()> {
+    client.batch_execute(
+        "CREATE TABLE IF NOT EXISTS deepseek_credentials (
+            id          BIGSERIAL PRIMARY KEY,
+            api_key     TEXT NOT NULL,
+            endpoint    TEXT NOT NULL,
+            model       TEXT NOT NULL DEFAULT 'deepseek-chat',
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );",
+    )?;
     Ok(())
 }
