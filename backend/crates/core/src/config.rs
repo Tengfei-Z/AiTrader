@@ -218,6 +218,7 @@ fn preload_env_files() {
     let candidate_files = [
         manifest_dir.join("../../.env"),
         manifest_dir.join("../okx/.env"),
+        manifest_dir.join("../deepseek/.env"),
     ];
 
     for path in candidate_files {

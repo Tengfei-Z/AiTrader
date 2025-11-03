@@ -34,13 +34,13 @@
 | `locked_usdt` | NUMERIC(24,8) | 冻结余额 |
 | `as_of` | TIMESTAMPTZ | 快照时间 |
 
-### `deepseek_credentials`
+### `settings`
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `id` | BIGSERIAL PK | |
-| `api_key` | TEXT | DeepSeek API Key |
-| `endpoint` | TEXT | DeepSeek API Endpoint |
-| `model` | TEXT | 使用的模型名称 |
+| `deepseek_api_key` | TEXT | DeepSeek API Key |
+| `deepseek_endpoint` | TEXT | DeepSeek API Endpoint |
+| `deepseek_model` | TEXT | 使用的模型名称 |
 | `updated_at` | TIMESTAMPTZ | 最近更新时间 |
 
 ### `orders`
@@ -140,7 +140,7 @@
 |------|------|------|
 | `id` | BIGSERIAL PK | |
 | `account_id` | UUID FK | |
-| `window` | TEXT | `daily` / `weekly` / `all_time` 等 |
+| `window_name` | TEXT | `daily` / `weekly` / `all_time` 等 |
 | `sharpe_ratio` | NUMERIC(10,6) | |
 | `win_rate` | NUMERIC(6,4) | |
 | `average_leverage` | NUMERIC(10,4) | |
@@ -202,12 +202,12 @@ CREATE TABLE IF NOT EXISTS aitrader.balance_snapshots (
     UNIQUE (account_id, as_of)
 );
 
-CREATE TABLE IF NOT EXISTS aitrader.deepseek_credentials (
-    id          BIGSERIAL PRIMARY KEY,
-    api_key     TEXT NOT NULL,
-    endpoint    TEXT NOT NULL,
-    model       TEXT NOT NULL DEFAULT 'deepseek-chat',
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS aitrader.settings (
+    id                  BIGSERIAL PRIMARY KEY,
+    deepseek_api_key    TEXT NOT NULL,
+    deepseek_endpoint   TEXT NOT NULL,
+    deepseek_model      TEXT NOT NULL DEFAULT 'deepseek-chat',
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS aitrader.orders (
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS aitrader.market_snapshots (
 CREATE TABLE IF NOT EXISTS aitrader.performance_snapshots (
     id                      BIGSERIAL PRIMARY KEY,
     account_id              UUID NOT NULL REFERENCES aitrader.accounts (id),
-    window                  TEXT NOT NULL,
+    window_name             TEXT NOT NULL,
     sharpe_ratio            NUMERIC(10, 6),
     win_rate                NUMERIC(6, 4),
     average_leverage        NUMERIC(10, 4),
@@ -315,7 +315,7 @@ CREATE TABLE IF NOT EXISTS aitrader.performance_snapshots (
     hold_ratio_short        NUMERIC(6, 4),
     hold_ratio_flat         NUMERIC(6, 4),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (account_id, window)
+    UNIQUE (account_id, window_name)
 );
 ```
 
