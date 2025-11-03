@@ -2,37 +2,53 @@ use crate::config::DeepSeekConfig;
 use anyhow::Result;
 use postgres::{types::ToSql, Client, NoTls};
 use serde::Deserialize;
-use std::{env, fs, path::PathBuf};
+use std::{
+    collections::HashSet,
+    env, fs,
+    path::{Path, PathBuf},
+};
 use tracing::{info, warn};
 
 const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
 const DEFAULT_CONFIG_PATH: &str = "config/config.yaml";
 
+#[derive(Debug, Deserialize)]
+struct FileConfig {
+    db: Option<DbSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DbSection {
+    url: Option<String>,
+}
+
 fn database_url() -> Option<String> {
-    load_url_from_config()
+    let url = load_url_from_config();
+    if url.is_none() {
+        warn!("未在配置中找到数据库连接字符串");
+    }
+    url
 }
 
 fn load_url_from_config() -> Option<String> {
-    #[derive(Debug, Deserialize)]
-    struct DbConfig {
-        url: Option<String>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct FileConfig {
-        db: Option<DbConfig>,
-    }
-
     let config_path =
         env::var("AITRADER_CONFIG_PATH").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
-    let mut path = PathBuf::from(&config_path);
-    if !path.is_absolute() {
-        if let Ok(current_dir) = env::current_dir() {
-            path = current_dir.join(path);
+
+    for candidate in candidate_paths(&config_path) {
+        if let Some(result) = read_config(candidate) {
+            return Some(result);
         }
     }
 
-    let contents = fs::read_to_string(path).ok()?;
+    None
+}
+
+fn read_config(path: PathBuf) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+
+    let contents = fs::read_to_string(&path).ok()?;
     let config: FileConfig = serde_yaml::from_str(&contents).ok()?;
     config.db.and_then(|db| db.url).and_then(|url| {
         let trimmed = url.trim();
@@ -42,6 +58,69 @@ fn load_url_from_config() -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn candidate_paths(config_path: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    let target = PathBuf::from(config_path);
+
+    if target.is_absolute() {
+        candidates.push(target);
+        return candidates;
+    }
+
+    if let Ok(repo_root) = env::var("AITRADER_REPO_ROOT") {
+        let base = PathBuf::from(repo_root);
+        push_candidate(&base.join(config_path), &mut candidates, &mut seen);
+    }
+
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        let base = PathBuf::from(manifest_dir);
+        for ancestor in base.ancestors() {
+            push_candidate(
+                &PathBuf::from(ancestor).join(config_path),
+                &mut candidates,
+                &mut seen,
+            );
+        }
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        for ancestor in current_dir.ancestors() {
+            push_candidate(
+                &PathBuf::from(ancestor).join(config_path),
+                &mut candidates,
+                &mut seen,
+            );
+        }
+    }
+
+    // 常见的 repo 相对路径，避免遗漏
+    push_candidate(
+        &Path::new("..").join(config_path),
+        &mut candidates,
+        &mut seen,
+    );
+    push_candidate(
+        &Path::new("../..").join(config_path),
+        &mut candidates,
+        &mut seen,
+    );
+
+    candidates
+}
+
+fn push_candidate(path: &Path, candidates: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
+    let canonical = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        PathBuf::from(path)
+    };
+
+    if seen.insert(canonical.clone()) {
+        candidates.push(canonical);
+    }
 }
 
 pub fn fetch_deepseek_credentials() -> Result<Option<DeepSeekConfig>> {
