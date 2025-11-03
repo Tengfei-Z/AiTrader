@@ -131,3 +131,29 @@ pub struct FillDetail {
     #[serde(default)]
     pub ts: Option<String>,
 }
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionHistoryDetail {
+    pub inst_id: String,
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    #[serde(default)]
+    pub close_pos: Option<String>,
+    #[serde(default)]
+    pub open_avg_px: Option<String>,
+    #[serde(default)]
+    pub close_avg_px: Option<String>,
+    #[serde(default)]
+    pub lever: Option<String>,
+    #[serde(default)]
+    pub margin: Option<String>,
+    #[serde(default)]
+    pub pnl: Option<String>,
+    #[serde(default)]
+    pub pnl_ratio: Option<String>,
+    #[serde(default)]
+    pub c_time: Option<String>,
+    #[serde(default)]
+    pub u_time: Option<String>,
+}

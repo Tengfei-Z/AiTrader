@@ -39,6 +39,7 @@ struct MockDataStore {
     trades: HashMap<String, Vec<Trade>>,
     balances: Vec<Balance>,
     positions: Vec<Position>,
+    position_history: Vec<PositionHistory>,
     open_orders: Vec<Order>,
     fills: Vec<Fill>,
     next_order_id: u64,
@@ -138,6 +139,20 @@ struct Position {
     entry_time: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PositionHistory {
+    symbol: String,
+    side: String,
+    quantity: Option<f64>,
+    leverage: Option<f64>,
+    entry_price: Option<f64>,
+    exit_price: Option<f64>,
+    margin: Option<f64>,
+    realized_pnl: Option<f64>,
+    entry_time: Option<String>,
+    exit_time: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum OrderStatus {
@@ -212,6 +227,7 @@ fn api_routes() -> Router<AppState> {
         .route("/market/trades", get(get_trades))
         .route("/account/balances", get(get_balances))
         .route("/account/positions", get(get_positions))
+        .route("/account/positions/history", get(get_positions_history))
         .route("/account/orders/open", get(get_open_orders))
         .route("/account/fills", get(get_fills))
         .route("/orders", post(place_order))
@@ -515,6 +531,72 @@ async fn get_fills(
     Json(ApiResponse::ok(fills))
 }
 
+async fn get_positions_history(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolOptionalQuery>,
+) -> impl IntoResponse {
+    let use_simulated = params.simulated.unwrap_or(false);
+    let symbol_filter = params.symbol.clone();
+    let limit = params.limit;
+
+    tracing::info!(
+        ?symbol_filter,
+        use_simulated,
+        limit,
+        "received positions history request"
+    );
+
+    if let Some(client) = if use_simulated {
+        state.okx_simulated.clone()
+    } else {
+        state.okx.clone()
+    } {
+        match client
+            .get_positions_history(symbol_filter.as_deref(), limit)
+            .await
+        {
+            Ok(remote_history) => {
+                let mut history: Vec<PositionHistory> = remote_history
+                    .into_iter()
+                    .map(convert_okx_position_history)
+                    .collect();
+
+                if let Some(symbol) = symbol_filter.as_ref() {
+                    history.retain(|item| item.symbol == *symbol);
+                }
+
+                if let Some(limit) = limit {
+                    history.truncate(limit);
+                }
+
+                return Json(ApiResponse::ok(history));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    use_simulated,
+                    error = ?err,
+                    "failed to fetch OKX historical positions"
+                );
+            }
+        }
+    }
+
+    let mut history = {
+        let store = state.inner.read().await;
+        store.position_history.clone()
+    };
+
+    if let Some(symbol) = symbol_filter {
+        history.retain(|item| item.symbol == symbol);
+    }
+
+    if let Some(limit) = limit {
+        history.truncate(limit);
+    }
+
+    Json(ApiResponse::ok(history))
+}
+
 fn convert_okx_fill(detail: okx::models::FillDetail) -> Fill {
     let okx::models::FillDetail {
         inst_id,
@@ -565,6 +647,43 @@ fn optional_string(value: Option<String>) -> Option<String> {
 
 fn string_or_default(value: Option<String>, default: &str) -> String {
     optional_string(value).unwrap_or_else(|| default.to_string())
+}
+
+fn convert_okx_position_history(detail: okx::models::PositionHistoryDetail) -> PositionHistory {
+    let okx::models::PositionHistoryDetail {
+        inst_id,
+        pos_side,
+        close_pos,
+        open_avg_px,
+        close_avg_px,
+        lever,
+        margin,
+        pnl,
+        pnl_ratio: _,
+        c_time,
+        u_time,
+    } = detail;
+
+    PositionHistory {
+        symbol: inst_id,
+        side: pos_side
+            .map(|value| value.to_lowercase())
+            .unwrap_or_else(|| "net".to_string()),
+        quantity: parse_optional_number(close_pos),
+        leverage: parse_optional_number(lever),
+        entry_price: parse_optional_number(open_avg_px),
+        exit_price: parse_optional_number(close_avg_px),
+        margin: parse_optional_number(margin),
+        realized_pnl: parse_optional_number(pnl),
+        entry_time: optional_string(c_time),
+        exit_time: optional_string(u_time),
+    }
+}
+
+fn parse_optional_number(value: Option<String>) -> Option<f64> {
+    optional_string(value)
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
 }
 
 async fn place_order(
@@ -706,6 +825,33 @@ impl MockDataStore {
             },
         ];
 
+        let position_history = vec![
+            PositionHistory {
+                symbol: "BTC-USDT-SWAP".into(),
+                side: "long".into(),
+                quantity: Some(0.25),
+                leverage: Some(4.0),
+                entry_price: Some(99_800.0),
+                exit_price: Some(108_450.0),
+                margin: Some(5_500.0),
+                realized_pnl: Some(2150.0),
+                entry_time: Some(current_timestamp_minus(259_200_000)),
+                exit_time: Some(current_timestamp_minus(172_800_000)),
+            },
+            PositionHistory {
+                symbol: "ETH-USDT-SWAP".into(),
+                side: "short".into(),
+                quantity: Some(3.6),
+                leverage: Some(3.0),
+                entry_price: Some(3_580.0),
+                exit_price: Some(3_420.0),
+                margin: Some(4_200.0),
+                realized_pnl: Some(576.0),
+                entry_time: Some(current_timestamp_minus(432_000_000)),
+                exit_time: Some(current_timestamp_minus(216_000_000)),
+            },
+        ];
+
         let open_orders = vec![Order {
             order_id: "123456".into(),
             symbol: "BTC-USDT".into(),
@@ -736,6 +882,7 @@ impl MockDataStore {
             trades: HashMap::from([("BTC-USDT".into(), trades)]),
             balances,
             positions,
+            position_history,
             open_orders,
             fills,
             next_order_id: 200000,

@@ -49,6 +49,19 @@ export interface PositionItem {
   entry_time?: string;
 }
 
+export interface PositionHistoryItem {
+  symbol: string;
+  side: string;
+  quantity?: number;
+  leverage?: number;
+  entry_price?: number;
+  exit_price?: number;
+  margin?: number;
+  realized_pnl?: number;
+  entry_time?: string;
+  exit_time?: string;
+}
+
 export type OrderStatus = 'open' | 'partially_filled' | 'filled' | 'canceled';
 
 export interface OrderItem {

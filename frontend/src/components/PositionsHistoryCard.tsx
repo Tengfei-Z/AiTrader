@@ -1,17 +1,17 @@
 import { Card, Tabs } from 'antd';
-import type { PositionItem, FillItem } from '@api/types';
+import type { PositionHistoryItem, PositionItem } from '@api/types';
 import PositionsTable from '@components/PositionsTable';
-import FillsTable from '@components/FillsTable';
+import PositionsHistoryTable from '@components/PositionsHistoryTable';
 
 interface Props {
   positions?: PositionItem[];
-  fills?: FillItem[];
+  history?: PositionHistoryItem[];
   positionsLoading?: boolean;
-  fillsLoading?: boolean;
+  historyLoading?: boolean;
   className?: string;
 }
 
-const PositionsHistoryCard = ({ positions, fills, positionsLoading, fillsLoading, className }: Props) => {
+const PositionsHistoryCard = ({ positions, history, positionsLoading, historyLoading, className }: Props) => {
   const items = [
     {
       key: 'positions',
@@ -19,9 +19,9 @@ const PositionsHistoryCard = ({ positions, fills, positionsLoading, fillsLoading
       children: <PositionsTable positions={positions} loading={positionsLoading} embedded />
     },
     {
-      key: 'fills',
-      label: '历史订单',
-      children: <FillsTable fills={fills} loading={fillsLoading} embedded />
+      key: 'history',
+      label: '历史持仓',
+      children: <PositionsHistoryTable history={history} loading={historyLoading} embedded />
     }
   ];
 

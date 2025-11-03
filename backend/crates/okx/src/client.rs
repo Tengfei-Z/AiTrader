@@ -195,6 +195,36 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
+    #[instrument(skip(self), fields(inst_id = inst_id.unwrap_or("all"), limit))]
+    pub async fn get_positions_history(
+        &self,
+        inst_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::models::PositionHistoryDetail>> {
+        #[derive(serde::Deserialize)]
+        struct ResponseWrapper {
+            data: Vec<crate::models::PositionHistoryDetail>,
+        }
+
+        let mut params = vec![("instType".to_string(), "SWAP".to_string())];
+        if let Some(inst_id) = inst_id {
+            params.push(("instId".to_string(), inst_id.to_string()));
+        }
+        if let Some(limit) = limit {
+            params.push(("limit".to_string(), limit.min(100).to_string()));
+        }
+
+        let query = params
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let path = format!("{API_PREFIX}/account/positions-history?{query}");
+        let response: ResponseWrapper = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
         T: DeserializeOwned,

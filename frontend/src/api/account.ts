@@ -1,5 +1,12 @@
 import client from './client';
-import type { ApiResponse, BalanceItem, FillItem, OrderItem, PositionItem } from './types';
+import type {
+  ApiResponse,
+  BalanceItem,
+  FillItem,
+  OrderItem,
+  PositionHistoryItem,
+  PositionItem
+} from './types';
 
 interface RawBalanceItem {
   asset: string;
@@ -32,6 +39,17 @@ export const fetchPositions = async () => {
       simulatedFlag === 'false'
         ? undefined
         : { simulated: true }
+  });
+  return data.data;
+};
+
+export const fetchPositionHistory = async (params: { symbol?: string; limit?: number; simulated?: boolean } = {}) => {
+  const simulatedFlag = import.meta.env.VITE_OKX_SIMULATED;
+  const { data } = await client.get<ApiResponse<PositionHistoryItem[]>>('/account/positions/history', {
+    params: {
+      ...params,
+      simulated: simulatedFlag === 'false' ? params.simulated : true
+    }
   });
   return data.data;
 };

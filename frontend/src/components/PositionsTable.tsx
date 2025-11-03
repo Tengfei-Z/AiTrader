@@ -24,9 +24,10 @@ const columns = [
     title: '方向',
     dataIndex: 'side',
     key: 'side',
-    render: (value: string) => (
-      <Tag color={value === 'long' ? 'green' : 'volcano'}>{value}</Tag>
-    )
+    render: (value: string) => {
+      const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
+      return <Tag color={value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue'}>{label}</Tag>;
+    }
   },
   {
     title: '数量',
