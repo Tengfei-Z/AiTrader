@@ -1,9 +1,11 @@
+use crate::db;
 use anyhow::{ensure, Context, Result};
 use dotenvy::dotenv;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// Global configuration accessor to keep the rest of the application stateless.
 pub static CONFIG: Lazy<AppConfig> = Lazy::new(|| {
@@ -55,19 +57,38 @@ impl AppConfig {
             "OKX_SIM_PASSPHRASE",
         );
 
-        let deepseek = match (
-            env_var_non_empty("DEEPSEEK_API_KEY"),
-            env_var_non_empty("DEEPSEEK_ENDPOINT"),
-        ) {
-            (Ok(api_key), Ok(endpoint)) => {
-                let model = env::var("DEEPSEEK_MODEL").unwrap_or_else(|_| default_model());
-                Some(DeepSeekConfig {
-                    api_key,
-                    endpoint,
-                    model,
-                })
+        let deepseek_from_db = match db::fetch_deepseek_credentials() {
+            Ok(config) => config,
+            Err(err) => {
+                warn!(%err, "从数据库读取 DeepSeek 凭证失败，将尝试环境变量");
+                None
             }
-            _ => None,
+        };
+
+        let deepseek = match deepseek_from_db {
+            Some(config) => Some(config),
+            None => {
+                match (
+                    env_var_non_empty("DEEPSEEK_API_KEY"),
+                    env_var_non_empty("DEEPSEEK_ENDPOINT"),
+                ) {
+                    (Ok(api_key), Ok(endpoint)) => {
+                        let model = env::var("DEEPSEEK_MODEL").unwrap_or_else(|_| default_model());
+                        let config = DeepSeekConfig {
+                            api_key,
+                            endpoint,
+                            model,
+                        };
+
+                        if let Err(err) = db::store_deepseek_credentials(&config) {
+                            warn!(%err, "将 DeepSeek 凭证写入数据库失败");
+                        }
+
+                        Some(config)
+                    }
+                    _ => None,
+                }
+            }
         };
 
         let mcp = match env_var_non_empty("MCP_EXECUTABLE") {

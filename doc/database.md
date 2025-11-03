@@ -34,6 +34,15 @@
 | `locked_usdt` | NUMERIC(24,8) | 冻结余额 |
 | `as_of` | TIMESTAMPTZ | 快照时间 |
 
+### `deepseek_credentials`
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | BIGSERIAL PK | |
+| `api_key` | TEXT | DeepSeek API Key |
+| `endpoint` | TEXT | DeepSeek API Endpoint |
+| `model` | TEXT | 使用的模型名称 |
+| `updated_at` | TIMESTAMPTZ | 最近更新时间 |
+
 ### `orders`
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -191,6 +200,14 @@ CREATE TABLE IF NOT EXISTS aitrader.balance_snapshots (
     as_of           TIMESTAMPTZ NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (account_id, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS aitrader.deepseek_credentials (
+    id          BIGSERIAL PRIMARY KEY,
+    api_key     TEXT NOT NULL,
+    endpoint    TEXT NOT NULL,
+    model       TEXT NOT NULL DEFAULT 'deepseek-chat',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS aitrader.orders (
