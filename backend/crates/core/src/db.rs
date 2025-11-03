@@ -3,7 +3,7 @@ use anyhow::Result;
 use postgres::{types::ToSql, Client, NoTls};
 use serde::Deserialize;
 use std::{env, fs, path::PathBuf};
-use tracing::warn;
+use tracing::{info, warn};
 
 const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
 const DEFAULT_CONFIG_PATH: &str = "config/config.yaml";
@@ -51,7 +51,10 @@ pub fn fetch_deepseek_credentials() -> Result<Option<DeepSeekConfig>> {
     };
 
     let mut client = match Client::connect(&url, NoTls) {
-        Ok(client) => client,
+        Ok(client) => {
+            info!("成功连接数据库，读取 DeepSeek 凭证");
+            client
+        }
         Err(err) => {
             warn!(%err, "连接数据库获取 DeepSeek 凭证失败");
             return Ok(None);
@@ -66,13 +69,17 @@ pub fn fetch_deepseek_credentials() -> Result<Option<DeepSeekConfig>> {
             let api_key: String = row.get("api_key");
             let endpoint: String = row.get("endpoint");
             let model: String = row.get("model");
+            info!("已从数据库加载 DeepSeek 凭证");
             Ok(Some(DeepSeekConfig {
                 api_key,
                 endpoint,
                 model,
             }))
         }
-        Ok(None) => Ok(None),
+        Ok(None) => {
+            info!("数据库未找到 DeepSeek 凭证，将回退至环境变量");
+            Ok(None)
+        }
         Err(err) => {
             warn!(%err, "查询 DeepSeek 凭证失败，将回退至环境变量");
             Ok(None)
@@ -87,7 +94,10 @@ pub fn store_deepseek_credentials(config: &DeepSeekConfig) -> Result<()> {
     };
 
     let mut client = match Client::connect(&url, NoTls) {
-        Ok(client) => client,
+        Ok(client) => {
+            info!("成功连接数据库，写入 DeepSeek 凭证");
+            client
+        }
         Err(err) => {
             warn!(%err, "连接数据库写入 DeepSeek 凭证失败");
             return Ok(());
@@ -102,6 +112,8 @@ pub fn store_deepseek_credentials(config: &DeepSeekConfig) -> Result<()> {
         &params,
     ) {
         warn!(%err, "写入 DeepSeek 凭证失败");
+    } else {
+        info!("DeepSeek 凭证已写入数据库");
     }
 
     Ok(())
