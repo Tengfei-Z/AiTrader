@@ -245,8 +245,10 @@ async fn main() -> anyhow::Result<()> {
     settings.apply_runtime_env();
     let (http_proxy, https_proxy) = settings.proxy_settings();
 
-    if let Err(err) = init_database() {
-        tracing::warn!(%err, "数据库初始化过程中出现错误");
+    match tokio::task::spawn_blocking(|| init_database()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => tracing::warn!(%err, "数据库初始化过程中出现错误"),
+        Err(err) => tracing::warn!(%err, "数据库初始化任务意外终止"),
     }
 
     // 触发配置加载，确保 .env 生效
