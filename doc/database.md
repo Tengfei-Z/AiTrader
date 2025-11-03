@@ -38,6 +38,22 @@
 
 > 以下示例字段仅展示核心列，实际建表时可根据业务落地更多属性（如创建人、更新时间、软删除等）。所有表建议增加 `created_at TIMESTAMPTZ DEFAULT now()` 与 `updated_at TIMESTAMPTZ` 并通过触发器维护。
 
+### 4.0 Schema 规范
+
+- 所有业务表统一创建在 `aitrader` schema 下，不使用默认 `public`。实例化数据库后先执行：
+
+```sql
+CREATE SCHEMA IF NOT EXISTS aitrader AUTHORIZATION <db_owner>;
+```
+
+- 表命名风格：`aitrader.<业务域>_<实体>`（如 `aitrader.accounts`、`aitrader.positions_closed`）。
+- 通用字段约定：
+  - `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`
+  - `created_at TIMESTAMPTZ DEFAULT now()`
+  - `updated_at TIMESTAMPTZ DEFAULT now()`
+  - 如需软删除，追加 `deleted_at TIMESTAMPTZ`
+- 若需 `gen_random_uuid()` 请启用 `pgcrypto` 扩展：`CREATE EXTENSION IF NOT EXISTS pgcrypto;`
+
 ### 4.1 账户与资产
 
 #### `accounts`
@@ -247,3 +263,142 @@
 
 欢迎在需求发生变化时补充本文件，确保前后端与数据团队对齐。
 
+---
+
+## 附录：示例建表脚本（摘录）
+
+以下 SQL 展示核心实体的基础结构，所有对象均创建在 `aitrader` schema 中，落地时可在此基础上增加索引、约束与触发器。
+
+```sql
+-- 先确保 schema 与扩展存在
+CREATE ROLE aitrader_owner LOGIN PASSWORD '<password>';
+CREATE SCHEMA IF NOT EXISTS aitrader AUTHORIZATION aitrader_owner;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 账户信息
+CREATE TABLE IF NOT EXISTS aitrader.accounts (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_id     TEXT UNIQUE NOT NULL,
+    mode            TEXT NOT NULL CHECK (mode IN ('live', 'simulated')),
+    status          TEXT NOT NULL DEFAULT 'active',
+    metadata        JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 余额快照
+CREATE TABLE IF NOT EXISTS aitrader.balance_snapshots (
+    id              BIGSERIAL PRIMARY KEY,
+    account_id      UUID NOT NULL REFERENCES aitrader.accounts (id),
+    asset           TEXT NOT NULL,
+    available       NUMERIC(30, 10) NOT NULL,
+    locked          NUMERIC(30, 10) NOT NULL DEFAULT 0,
+    valuation_usdt  NUMERIC(30, 10),
+    as_of           TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_balance_snapshots_account_asset
+    ON aitrader.balance_snapshots (account_id, asset, as_of DESC);
+
+-- 订单与成交
+CREATE TABLE IF NOT EXISTS aitrader.orders (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id          UUID NOT NULL REFERENCES aitrader.accounts (id),
+    exchange_order_id   TEXT,
+    symbol              TEXT NOT NULL,
+    side                TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    order_type          TEXT NOT NULL,
+    price               NUMERIC(30, 10),
+    size                NUMERIC(30, 10) NOT NULL,
+    filled_size         NUMERIC(30, 10) NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL,
+    time_in_force       TEXT,
+    metadata            JSONB DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_orders_account_symbol
+    ON aitrader.orders (account_id, symbol, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS aitrader.fills (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id          UUID NOT NULL REFERENCES aitrader.accounts (id),
+    order_id            UUID NOT NULL REFERENCES aitrader.orders (id),
+    exchange_fill_id    TEXT,
+    symbol              TEXT NOT NULL,
+    side                TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    price               NUMERIC(30, 10) NOT NULL,
+    size                NUMERIC(30, 10) NOT NULL,
+    fee                 NUMERIC(30, 10) NOT NULL DEFAULT 0,
+    pnl                 NUMERIC(30, 10),
+    timestamp           TIMESTAMPTZ NOT NULL,
+    raw_payload         JSONB DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_fills_account_symbol
+    ON aitrader.fills (account_id, symbol, timestamp DESC);
+
+-- 当前持仓
+CREATE TABLE IF NOT EXISTS aitrader.positions_open (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id          UUID NOT NULL REFERENCES aitrader.accounts (id),
+    symbol              TEXT NOT NULL,
+    side                TEXT NOT NULL,
+    quantity            NUMERIC(30, 10) NOT NULL,
+    avg_entry_price     NUMERIC(30, 10),
+    leverage            NUMERIC(10, 2),
+    margin              NUMERIC(30, 10),
+    liquidation_price   NUMERIC(30, 10),
+    unrealized_pnl      NUMERIC(30, 10),
+    opened_at           TIMESTAMPTZ,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 历史持仓
+CREATE TABLE IF NOT EXISTS aitrader.positions_closed (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id          UUID NOT NULL REFERENCES aitrader.accounts (id),
+    symbol              TEXT NOT NULL,
+    side                TEXT NOT NULL,
+    quantity            NUMERIC(30, 10) NOT NULL,
+    entry_price         NUMERIC(30, 10),
+    exit_price          NUMERIC(30, 10),
+    leverage            NUMERIC(10, 2),
+    margin              NUMERIC(30, 10),
+    realized_pnl        NUMERIC(30, 10),
+    entry_time          TIMESTAMPTZ,
+    exit_time           TIMESTAMPTZ NOT NULL,
+    source              TEXT DEFAULT 'exchange',
+    raw_payload         JSONB DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_positions_closed_account_exit
+    ON aitrader.positions_closed (account_id, exit_time DESC);
+
+-- 策略会话与消息
+CREATE TABLE IF NOT EXISTS aitrader.strategy_sessions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id      UUID NOT NULL REFERENCES aitrader.accounts (id),
+    title           TEXT,
+    status          TEXT NOT NULL DEFAULT 'active',
+    metadata        JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    closed_at       TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS aitrader.strategy_messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      UUID NOT NULL REFERENCES aitrader.strategy_sessions (id),
+    role            TEXT NOT NULL CHECK (role IN ('assistant', 'user', 'system')),
+    content         TEXT NOT NULL,
+    summary         TEXT,
+    tags            TEXT[] DEFAULT '{}',
+    confidence      NUMERIC(6, 3),
+    attachments     JSONB DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_strategy_messages_session_time
+    ON aitrader.strategy_messages (session_id, created_at DESC);
+```
+
+> 完整部署时可将上述 SQL 拆分为迁移脚本（例如 `migrations/0001_init.sql`），确保自动化环境能够 idempotent 地创建/升级数据库结构。
