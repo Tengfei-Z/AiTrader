@@ -19,6 +19,162 @@ pub struct Ticker {
     pub ts: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestResponse<T> {
+    pub code: String,
+    pub msg: String,
+    pub data: Vec<T>,
+}
+
+impl<T> RestResponse<T> {
+    pub fn ensure_success(mut self) -> Result<Vec<T>, OkxError> {
+        if self.code != "0" {
+            return Err(OkxError::Api {
+                code: self.code,
+                msg: self.msg,
+            });
+        }
+        Ok(std::mem::take(&mut self.data))
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderResponseItem {
+    pub ord_id: String,
+    #[serde(default)]
+    pub cl_ord_id: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    pub s_code: String,
+    #[serde(default)]
+    pub s_msg: Option<String>,
+}
+
+impl OrderResponseItem {
+    pub fn ensure_success(&self) -> Result<(), OkxError> {
+        if self.s_code != "0" {
+            return Err(OkxError::ApiSub {
+                code: self.s_code.clone(),
+                msg: self.s_msg.clone().unwrap_or_default(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosePositionResponseItem {
+    pub inst_id: String,
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    pub s_code: String,
+    #[serde(default)]
+    pub s_msg: Option<String>,
+}
+
+impl ClosePositionResponseItem {
+    pub fn ensure_success(&self) -> Result<(), OkxError> {
+        if self.s_code != "0" {
+            return Err(OkxError::ApiSub {
+                code: self.s_code.clone(),
+                msg: self.s_msg.clone().unwrap_or_default(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTradingStopResponseItem {
+    pub inst_id: String,
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    pub s_code: String,
+    #[serde(default)]
+    pub s_msg: Option<String>,
+}
+
+impl SetTradingStopResponseItem {
+    pub fn ensure_success(&self) -> Result<(), OkxError> {
+        if self.s_code != "0" {
+            return Err(OkxError::ApiSub {
+                code: self.s_code.clone(),
+                msg: self.s_msg.clone().unwrap_or_default(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaceOrderRequest {
+    pub inst_id: String,
+    pub td_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ccy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cl_ord_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    pub side: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pos_side: Option<String>,
+    pub ord_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sz: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notional: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub px: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reduce_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tgt_ccy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lever: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClosePositionRequest {
+    pub inst_id: String,
+    pub mgn_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pos_side: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ccy: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTradingStopRequest {
+    pub inst_id: String,
+    pub td_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pos_side: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ccy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tp_trigger_px: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tp_ord_px: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sl_trigger_px: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sl_ord_px: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_px_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tp_trigger_px_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sl_trigger_px_type: Option<String>,
+}
+
 /// Create OKX-compliant signature for signed requests.
 pub fn sign_request(
     timestamp: &str,

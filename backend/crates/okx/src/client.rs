@@ -234,6 +234,66 @@ impl OkxRestClient {
         self.execute(builder).await
     }
 
+    async fn post<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        tracing::info!("OKX POST {}", path_and_query);
+        let builder = self.prepare_request(Method::POST, path_and_query, body)?;
+        self.execute(builder).await
+    }
+
+    pub async fn place_order(
+        &self,
+        request: &crate::models::PlaceOrderRequest,
+    ) -> Result<crate::models::OrderResponseItem> {
+        let payload = serde_json::to_value(request)?;
+        let response: crate::models::RestResponse<crate::models::OrderResponseItem> = self
+            .post(&format!("{API_PREFIX}/trade/order"), Some(payload))
+            .await?;
+        let mut items = response.ensure_success()?;
+        let item = items
+            .pop()
+            .ok_or_else(|| OkxError::EmptyResponse("trade/order".into()))?;
+        item.ensure_success()?;
+        Ok(item)
+    }
+
+    pub async fn close_position(
+        &self,
+        request: &crate::models::ClosePositionRequest,
+    ) -> Result<crate::models::ClosePositionResponseItem> {
+        let payload = serde_json::to_value(request)?;
+        let response: crate::models::RestResponse<crate::models::ClosePositionResponseItem> = self
+            .post(&format!("{API_PREFIX}/trade/close-position"), Some(payload))
+            .await?;
+        let mut items = response.ensure_success()?;
+        let item = items
+            .pop()
+            .ok_or_else(|| OkxError::EmptyResponse("trade/close-position".into()))?;
+        item.ensure_success()?;
+        Ok(item)
+    }
+
+    pub async fn set_trading_stop(
+        &self,
+        request: &crate::models::SetTradingStopRequest,
+    ) -> Result<crate::models::SetTradingStopResponseItem> {
+        let payload = serde_json::to_value(request)?;
+        let response: crate::models::RestResponse<crate::models::SetTradingStopResponseItem> = self
+            .post(
+                &format!("{API_PREFIX}/trade/set-trading-stop"),
+                Some(payload),
+            )
+            .await?;
+        let mut items = response.ensure_success()?;
+        let item = items
+            .pop()
+            .ok_or_else(|| OkxError::EmptyResponse("trade/set-trading-stop".into()))?;
+        item.ensure_success()?;
+        Ok(item)
+    }
+
     fn prepare_request(
         &self,
         method: Method,

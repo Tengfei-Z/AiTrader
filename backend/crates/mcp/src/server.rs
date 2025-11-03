@@ -45,31 +45,7 @@ impl DemoArithmeticServer {
         &self,
         Parameters(request): Parameters<crate::account::AccountStateRequest>,
     ) -> Result<Json<crate::account::AccountState>, McpError> {
-        let credentials = self
-            .config
-            .require_okx_credentials()
-            .map_err(|err| {
-                error!(%err, "缺少 OKX 凭证");
-                McpError::invalid_request(format!("缺少 OKX 凭证: {}", err), None)
-            })?
-            .clone();
-
-        info!(
-            endpoint = %self.config.okx_rest_endpoint,
-            api_key_length = credentials.api_key.len(),
-            simulated = request.simulated_trading,
-            "OKX 凭证加载成功"
-        );
-
-        let client = if request.simulated_trading {
-            OkxRestClient::new_simulated(self.config.okx_rest_endpoint.clone(), credentials)
-        } else {
-            OkxRestClient::new(self.config.okx_rest_endpoint.clone(), credentials)
-        }
-        .map_err(|err| {
-            error!(?err, "初始化 OKX 客户端失败");
-            McpError::internal_error(format!("初始化 OKX 客户端失败: {}", err), None)
-        })?;
+        let client = self.build_okx_client(request.simulated_trading)?;
 
         let account_state = crate::account::fetch_account_state(&client, &request)
             .await
@@ -83,6 +59,51 @@ impl DemoArithmeticServer {
 
         Ok(Json(account_state))
     }
+    #[tool(
+        name = "execute_trade",
+        description = "执行 OKX 开仓或平仓操作（永续合约默认使用 cross 保证金模式）"
+    )]
+    async fn execute_trade(
+        &self,
+        Parameters(request): Parameters<crate::trade::ExecuteTradeRequest>,
+    ) -> Result<Json<crate::trade::ExecuteTradeResponse>, McpError> {
+        let client = self.build_okx_client(request.simulated_trading)?;
+        let response = crate::trade::execute_trade(&client, &request)
+            .await
+            .map_err(|err| {
+                error!(
+                    %err,
+                    instrument = request.instrument_id.as_deref().unwrap_or(&request.coin),
+                    "执行交易失败"
+                );
+                McpError::internal_error("执行交易失败", Some(json!({ "reason": err.to_string() })))
+            })?;
+
+        Ok(Json(response))
+    }
+
+    #[tool(name = "update_exit_plan", description = "更新已有仓位的止盈止损计划")]
+    async fn update_exit_plan(
+        &self,
+        Parameters(request): Parameters<crate::trade::UpdateExitPlanRequest>,
+    ) -> Result<Json<crate::trade::UpdateExitPlanResponse>, McpError> {
+        let client = self.build_okx_client(request.simulated_trading)?;
+        let response = crate::trade::update_exit_plan(&client, &request)
+            .await
+            .map_err(|err| {
+                error!(
+                    %err,
+                    position_id = %request.position_id,
+                    "更新退出计划失败"
+                );
+                McpError::internal_error(
+                    "更新退出计划失败",
+                    Some(json!({ "reason": err.to_string() })),
+                )
+            })?;
+
+        Ok(Json(response))
+    }
 }
 
 #[tool_handler]
@@ -91,7 +112,10 @@ impl ServerHandler for DemoArithmeticServer {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
-            instructions: Some("Demo arithmetic server with a single `one_plus_one` tool.".into()),
+            instructions: Some(
+                "AiTrader MCP server exposing arithmetic demo plus OKX account and trading tools."
+                    .into(),
+            ),
             ..ServerInfo::default()
         }
     }
@@ -108,5 +132,53 @@ impl DemoArithmeticServer {
         service.waiting().await.map_err(|err| anyhow!(err))?;
 
         Ok(())
+    }
+
+    fn build_okx_client(&self, simulated: bool) -> Result<OkxRestClient, McpError> {
+        let endpoint = self.config.okx_rest_endpoint.clone();
+
+        if simulated {
+            let credentials = self
+                .config
+                .require_okx_simulated_credentials()
+                .map_err(|err| {
+                    error!(%err, "缺少 OKX 模拟账户凭证");
+                    McpError::invalid_request(format!("缺少 OKX 模拟账户凭证: {}", err), None)
+                })?
+                .clone();
+
+            info!(
+                endpoint = %endpoint,
+                api_key_length = credentials.api_key.len(),
+                simulated = true,
+                "OKX 模拟凭证加载成功"
+            );
+
+            OkxRestClient::new_simulated(endpoint.clone(), credentials).map_err(|err| {
+                error!(?err, "初始化 OKX 模拟客户端失败");
+                McpError::internal_error(format!("初始化 OKX 模拟客户端失败: {}", err), None)
+            })
+        } else {
+            let credentials = self
+                .config
+                .require_okx_credentials()
+                .map_err(|err| {
+                    error!(%err, "缺少 OKX 凭证");
+                    McpError::invalid_request(format!("缺少 OKX 凭证: {}", err), None)
+                })?
+                .clone();
+
+            info!(
+                endpoint = %endpoint,
+                api_key_length = credentials.api_key.len(),
+                simulated = false,
+                "OKX 凭证加载成功"
+            );
+
+            OkxRestClient::new(endpoint.clone(), credentials).map_err(|err| {
+                error!(?err, "初始化 OKX 客户端失败");
+                McpError::internal_error(format!("初始化 OKX 客户端失败: {}", err), None)
+            })
+        }
     }
 }

@@ -17,6 +17,10 @@ pub enum OkxError {
     Signature(String),
     #[error("empty response from {0}")]
     EmptyResponse(String),
+    #[error("okx api error {code}: {msg}")]
+    Api { code: String, msg: String },
+    #[error("okx api sub-error {code}: {msg}")]
+    ApiSub { code: String, msg: String },
     #[error("invalid header value: {0}")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
 }
