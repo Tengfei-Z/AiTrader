@@ -1,14 +1,41 @@
 use crate::config::DeepSeekConfig;
 use anyhow::Result;
 use postgres::{types::ToSql, Client, NoTls};
-use std::env;
+use serde::Deserialize;
+use std::{env, fs, path::PathBuf};
 use tracing::warn;
 
 const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
+const DEFAULT_CONFIG_PATH: &str = "config/config.yaml";
 
 fn database_url() -> Option<String> {
-    env::var("DATABASE_URL").ok().and_then(|value| {
-        let trimmed = value.trim();
+    load_url_from_config()
+}
+
+fn load_url_from_config() -> Option<String> {
+    #[derive(Debug, Deserialize)]
+    struct DbConfig {
+        url: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct FileConfig {
+        db: Option<DbConfig>,
+    }
+
+    let config_path =
+        env::var("AITRADER_CONFIG_PATH").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
+    let mut path = PathBuf::from(&config_path);
+    if !path.is_absolute() {
+        if let Ok(current_dir) = env::current_dir() {
+            path = current_dir.join(path);
+        }
+    }
+
+    let contents = fs::read_to_string(path).ok()?;
+    let config: FileConfig = serde_yaml::from_str(&contents).ok()?;
+    config.db.and_then(|db| db.url).and_then(|url| {
+        let trimmed = url.trim();
         if trimmed.is_empty() {
             None
         } else {
@@ -67,7 +94,7 @@ pub fn store_deepseek_credentials(config: &DeepSeekConfig) -> Result<()> {
         }
     };
 
-    let params: [&dyn ToSql; 3] = [&config.api_key, &config.endpoint, &config.model];
+    let params: [&(dyn ToSql + Sync); 3] = [&config.api_key, &config.endpoint, &config.model];
 
     if let Err(err) = client.execute(
         "INSERT INTO deepseek_credentials (api_key, endpoint, model, updated_at) \
