@@ -34,5 +34,5 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 config = "0.14"
 tracing-appender = "0.2"
 async-openai = "0.23"
-postgres = "0.19"
 serde_yaml = "0.9"
+tokio-postgres = "0.7"

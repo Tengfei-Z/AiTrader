@@ -360,8 +360,16 @@ backend_service_start() {
 }
 
 backend_service_stop() {
-  echo "Stopping ${SYSTEMD_SERVICE_NAME}..."
-  systemctl stop "${SYSTEMD_SERVICE_NAME}"
+  echo "Stopping ${SYSTEMD_SERVICE_NAME} if running..."
+  if systemctl is-active --quiet "${SYSTEMD_SERVICE_NAME}" 2>/dev/null; then
+    systemctl stop "${SYSTEMD_SERVICE_NAME}"
+  else
+    if systemctl list-unit-files --type=service --all | awk '{print $1}' | grep -Fxq "${SYSTEMD_SERVICE_NAME}"; then
+      echo "${SYSTEMD_SERVICE_NAME} is not active; skipping stop."
+    else
+      echo "${SYSTEMD_SERVICE_NAME} is not installed; skipping stop."
+    fi
+  fi
 }
 
 backend_service_status() {
@@ -385,6 +393,7 @@ uninstall() {
 
 deploy() {
   validate_config
+  backend_service_stop
   ensure_backend_artifact
   ensure_frontend_build
   ensure_paths

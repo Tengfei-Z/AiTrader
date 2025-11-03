@@ -36,10 +36,11 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "once_cell",
- "postgres",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tokio",
+ "tokio-postgres",
  "tracing",
 ]
 
@@ -1702,20 +1703,6 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
-
-[[package]]
-name = "postgres"
-version = "0.19.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7c48ece1c6cda0db61b058c1721378da76855140e9214339fa1317decacb176"
-dependencies = [
- "bytes",
- "fallible-iterator",
- "futures-util",
- "log",
- "tokio",
- "tokio-postgres",
-]
 
 [[package]]
 name = "postgres-protocol"

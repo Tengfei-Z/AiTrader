@@ -43,4 +43,6 @@ server:
 
 db:
   url: "postgres://user:password@127.0.0.1:5432/aitrader"
+  schema: "aitrader"
+  settings_table: "settings"
   max_connections: 10
