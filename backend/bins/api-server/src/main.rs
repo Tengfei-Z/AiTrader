@@ -3,7 +3,7 @@ use std::fs;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use ai_core::config::CONFIG;
+use ai_core::{config::CONFIG, db::init_database};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -244,6 +244,10 @@ async fn main() -> anyhow::Result<()> {
     });
     settings.apply_runtime_env();
     let (http_proxy, https_proxy) = settings.proxy_settings();
+
+    if let Err(err) = init_database() {
+        tracing::warn!(%err, "数据库初始化过程中出现错误");
+    }
 
     // 触发配置加载，确保 .env 生效
     let _ = &CONFIG.okx_rest_endpoint;

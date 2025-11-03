@@ -89,6 +89,32 @@ pub fn fetch_deepseek_credentials() -> Result<Option<DeepSeekConfig>> {
     }
 }
 
+pub fn init_database() -> Result<()> {
+    let url = match database_url() {
+        Some(url) => url,
+        None => {
+            warn!("未在配置中找到数据库连接字符串，跳过初始化");
+            return Ok(());
+        }
+    };
+
+    let mut client = match Client::connect(&url, NoTls) {
+        Ok(client) => {
+            info!("数据库连接成功，开始初始化");
+            client
+        }
+        Err(err) => {
+            warn!(%err, "数据库初始化失败，无法连接");
+            return Ok(());
+        }
+    };
+
+    ensure_deepseek_table(&mut client)?;
+    info!("数据库初始化完成");
+
+    Ok(())
+}
+
 pub fn store_deepseek_credentials(config: &DeepSeekConfig) -> Result<()> {
     let url = match database_url() {
         Some(url) => url,
