@@ -225,6 +225,71 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
+    #[instrument(skip(self), fields(inst_id = %inst_id, timeframe = %timeframe, limit))]
+    pub async fn get_candles(
+        &self,
+        inst_id: &str,
+        timeframe: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<crate::models::Candle>> {
+        let mut params = vec![
+            ("instId".to_string(), inst_id.to_string()),
+            ("bar".to_string(), timeframe.to_string()),
+        ];
+        if let Some(limit) = limit {
+            params.push(("limit".to_string(), limit.min(300).to_string()));
+        }
+
+        let query = params
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let path = format!("{API_PREFIX}/market/candles?{query}");
+        let response: crate::models::RestResponse<crate::models::Candle> =
+            self.get(&path, None).await?;
+        Ok(response.ensure_success()?)
+    }
+
+    #[instrument(skip(self), fields(inst_id = %inst_id, depth))]
+    pub async fn get_order_book(
+        &self,
+        inst_id: &str,
+        depth: Option<usize>,
+    ) -> Result<crate::models::OrderBookSnapshot> {
+        let depth = depth.unwrap_or(5).min(100);
+        let path = format!("{API_PREFIX}/market/books?instId={inst_id}&sz={depth}");
+        let response: crate::models::RestResponse<crate::models::OrderBookSnapshot> =
+            self.get(&path, None).await?;
+        let mut items = response.ensure_success()?;
+        Ok(items
+            .pop()
+            .ok_or_else(|| OkxError::EmptyResponse("market/books".into()))?)
+    }
+
+    #[instrument(skip(self), fields(inst_id = %inst_id))]
+    pub async fn get_funding_rate(&self, inst_id: &str) -> Result<crate::models::FundingRate> {
+        let path = format!("{API_PREFIX}/public/funding-rate?instId={inst_id}");
+        let response: crate::models::RestResponse<crate::models::FundingRate> =
+            self.get(&path, None).await?;
+        let mut items = response.ensure_success()?;
+        Ok(items
+            .pop()
+            .ok_or_else(|| OkxError::EmptyResponse("public/funding-rate".into()))?)
+    }
+
+    #[instrument(skip(self), fields(inst_id = %inst_id))]
+    pub async fn get_open_interest(&self, inst_id: &str) -> Result<crate::models::OpenInterest> {
+        let path = format!("{API_PREFIX}/public/open-interest?instId={inst_id}");
+        let response: crate::models::RestResponse<crate::models::OpenInterest> =
+            self.get(&path, None).await?;
+        let mut items = response.ensure_success()?;
+        Ok(items
+            .pop()
+            .ok_or_else(|| OkxError::EmptyResponse("public/open-interest".into()))?)
+    }
+
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
         T: DeserializeOwned,

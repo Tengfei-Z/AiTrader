@@ -37,6 +37,28 @@ impl DemoArithmeticServer {
     async fn one_plus_one(&self) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text("2")]))
     }
+
+    #[tool(
+        name = "get_market_data",
+        description = "获取指定合约的实时行情、技术指标及资金费率等数据"
+    )]
+    async fn get_market_data(
+        &self,
+        Parameters(request): Parameters<crate::market::MarketDataRequest>,
+    ) -> Result<Json<crate::market::MarketDataResponse>, McpError> {
+        let client = self.build_okx_client(request.simulated_trading)?;
+        let response = crate::market::fetch_market_data(&client, &request)
+            .await
+            .map_err(|err| {
+                error!(%err, "获取行情数据失败");
+                McpError::internal_error(
+                    "获取行情数据失败",
+                    Some(json!({ "reason": err.to_string() })),
+                )
+            })?;
+
+        Ok(Json(response))
+    }
     #[tool(
         name = "get_account_state",
         description = "查询 OKX 账户当前状态及持仓汇总"

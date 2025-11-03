@@ -1,4 +1,5 @@
 pub mod account;
+pub mod market;
 pub mod process;
 pub mod server;
 pub mod trade;

@@ -2,7 +2,9 @@ use crate::error::OkxError;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use sha2::Sha256;
+use std::fmt;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -108,6 +110,121 @@ impl SetTradingStopResponseItem {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Candle {
+    pub timestamp: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: Option<f64>,
+}
+
+impl<'de> serde::Deserialize<'de> for Candle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CandleVisitor;
+
+        impl<'de> Visitor<'de> for CandleVisitor {
+            type Value = Candle;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("OKX candle array")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let ts: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::custom("missing timestamp"))?;
+                let open: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::custom("missing open price"))?;
+                let high: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::custom("missing high price"))?;
+                let low: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::custom("missing low price"))?;
+                let close: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::custom("missing close price"))?;
+                let volume: Option<String> = seq.next_element()?;
+
+                let timestamp = ts.parse::<i64>().map_err(|err| {
+                    de::Error::custom(format!("invalid timestamp: {err} (value: {ts})"))
+                })?;
+
+                let open = open.parse::<f64>().map_err(|err| {
+                    de::Error::custom(format!("invalid open price: {err} (value: {open})"))
+                })?;
+                let high = high.parse::<f64>().map_err(|err| {
+                    de::Error::custom(format!("invalid high price: {err} (value: {high})"))
+                })?;
+                let low = low.parse::<f64>().map_err(|err| {
+                    de::Error::custom(format!("invalid low price: {err} (value: {low})"))
+                })?;
+                let close = close.parse::<f64>().map_err(|err| {
+                    de::Error::custom(format!("invalid close price: {err} (value: {close})"))
+                })?;
+                let volume = volume.and_then(|raw| raw.parse::<f64>().ok());
+
+                Ok(Candle {
+                    timestamp,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                })
+            }
+        }
+
+        deserializer.deserialize_seq(CandleVisitor)
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FundingRate {
+    pub inst_id: String,
+    #[serde(default)]
+    pub funding_rate: Option<String>,
+    #[serde(default)]
+    pub next_funding_rate: Option<String>,
+    #[serde(default)]
+    pub funding_time: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenInterest {
+    pub inst_id: String,
+    #[serde(default)]
+    pub oi: Option<String>,
+    #[serde(default)]
+    pub oi_ccy: Option<String>,
+    #[serde(default)]
+    pub oi_ccy_usd: Option<String>,
+    #[serde(default)]
+    pub ts: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderBookSnapshot {
+    #[serde(default)]
+    pub asks: Vec<Vec<String>>,
+    #[serde(default)]
+    pub bids: Vec<Vec<String>>,
+    #[serde(default)]
+    pub ts: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
