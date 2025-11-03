@@ -46,6 +46,7 @@
 | `size` | NUMERIC(20,8) | 下单数量（张） |
 | `filled_size` | NUMERIC(20,8) | 已成交数量 |
 | `status` | TEXT | `open` / `filled` / `canceled` ... |
+| `leverage` | NUMERIC(10,2) | 下单时使用的杠杆倍数 |
 | `confidence` | NUMERIC(5,2) | 模型置信度（0–100） |
 | `tool_call_id` | UUID FK → `mcp_tool_calls.id` | 触发该订单的 MCP 调用 |
 | `created_at` | TIMESTAMPTZ | |
@@ -146,8 +147,16 @@
 
 - `accounts` ←→ `balance_snapshots` / `orders` / `fills` / `positions_open` / `positions_closed` / `performance_snapshots`
 - `orders` ←→ `fills`（1:N）
+- `orders.affects` → 更新 `positions_open`，仓位归零时写入 `positions_closed`
 - `orders.tool_call_id` → `mcp_tool_calls.id`
 - `market_snapshots` 通过 `symbol + timeframe` 区分数据
+
+### 关系说明
+
+- **下单 (orders)**：记录每次向 OKX 提交的指令，包含方向、数量、杠杆倍数以及模型置信度，并标记是由哪次 MCP 调用触发。
+- **成交 (fills)**：当订单被撮合时生成的记录，`fills.order_id` 对应原订单。成交结果会累加到订单的 `filled_size` 并驱动持仓数量变化。
+- **当前持仓 (positions_open)**：根据成交数据维护的实时持仓快照。如果一笔成交使某个 symbol/方向的仓位归零，则对应行会被移除。
+- **历史持仓 (positions_closed)**：当仓位归零时，将这段持仓的起止时间、均价、盈亏、平均置信度等写入历史表，供绩效统计与审计使用。
 
 ---
 
@@ -194,6 +203,7 @@ CREATE TABLE IF NOT EXISTS aitrader.orders (
     size            NUMERIC(20, 8) NOT NULL,
     filled_size     NUMERIC(20, 8) NOT NULL DEFAULT 0,
     status          TEXT NOT NULL,
+    leverage        NUMERIC(10, 2),
     confidence      NUMERIC(5, 2),
     tool_call_id    UUID,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
