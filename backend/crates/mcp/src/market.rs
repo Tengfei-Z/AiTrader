@@ -21,6 +21,7 @@ pub struct MarketDataRequest {
     pub include_orderbook: bool,
     pub include_funding: bool,
     pub include_open_interest: bool,
+    pub include_series: bool,  // 新增：是否包含完整序列数据
     pub simulated_trading: bool,
 }
 
@@ -34,6 +35,7 @@ impl Default for MarketDataRequest {
             include_orderbook: false,
             include_funding: false,
             include_open_interest: false,
+            include_series: false,  // 默认不包含序列，只返回当前值
             simulated_trading: false,
         }
     }
@@ -197,6 +199,7 @@ pub async fn fetch_market_data(
             request.include_orderbook,
             request.include_funding,
             request.include_open_interest,
+            request.include_series,
         )
         .await
         {
@@ -223,6 +226,7 @@ async fn gather_coin_data(
     include_orderbook: bool,
     include_funding: bool,
     include_open_interest: bool,
+    include_series: bool,  // 新增参数
 ) -> Result<CoinMarketData> {
     let mut data = CoinMarketData::default();
 
@@ -242,7 +246,9 @@ async fn gather_coin_data(
     let latest_price = price_series.last().copied();
 
     if indicators.is_empty() || indicators.contains("price") {
-        data.price_series = price_series.clone();
+        if include_series {
+            data.price_series = price_series.clone();
+        }
         data.current_price = latest_price;
     } else {
         data.current_price = latest_price;
@@ -252,7 +258,9 @@ async fn gather_coin_data(
         let ema20 = compute_ema(&price_series, 20);
         if !ema20.is_empty() {
             data.current_ema20 = ema20.last().copied();
-            data.ema20_series = ema20;
+            if include_series {
+                data.ema20_series = ema20;
+            }
         }
     }
 
@@ -260,7 +268,9 @@ async fn gather_coin_data(
         let ema50 = compute_ema(&price_series, 50);
         if !ema50.is_empty() {
             data.current_ema50 = ema50.last().copied();
-            data.ema50_series = ema50;
+            if include_series {
+                data.ema50_series = ema50;
+            }
         }
     }
 
@@ -268,7 +278,9 @@ async fn gather_coin_data(
         let macd_series = compute_macd(&price_series);
         if !macd_series.is_empty() {
             data.current_macd = macd_series.last().copied();
-            data.macd_series = macd_series;
+            if include_series {
+                data.macd_series = macd_series;
+            }
         }
     }
 
@@ -276,7 +288,9 @@ async fn gather_coin_data(
     if indicators.contains("rsi7") || indicators.contains("rsi") {
         let rsi7 = compute_rsi(&price_series, 7);
         if !rsi7.is_empty() {
-            data.rsi7_series = rsi7.clone();
+            if include_series {
+                data.rsi7_series = rsi7.clone();
+            }
             current_rsi = rsi7.last().copied().or(current_rsi);
         }
     }
@@ -284,7 +298,9 @@ async fn gather_coin_data(
     if indicators.contains("rsi14") || indicators.contains("rsi") {
         let rsi14 = compute_rsi(&price_series, 14);
         if !rsi14.is_empty() {
-            data.rsi14_series = rsi14.clone();
+            if include_series {
+                data.rsi14_series = rsi14.clone();
+            }
             current_rsi = rsi14.last().copied().or(current_rsi);
         }
     }
