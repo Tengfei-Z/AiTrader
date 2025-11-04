@@ -83,12 +83,19 @@ impl DeepSeekClient {
     }
 
     pub fn new(config: DeepSeekConfig) -> Result<Self> {
+        // 创建自定义 reqwest client，设置 HTTP 超时
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))  // HTTP 层面 20 秒超时
+            .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
+            .build()
+            .context("创建 HTTP 客户端失败")?;
+
         let openai_config = OpenAIConfig::new()
             .with_api_key(config.api_key.clone())
             .with_api_base(config.endpoint.trim_end_matches('/').to_string());
 
         Ok(Self {
-            client: OpenAIClient::with_config(openai_config),
+            client: OpenAIClient::with_config(openai_config).with_http_client(http_client),
             config,
             app_config: None,
         })
