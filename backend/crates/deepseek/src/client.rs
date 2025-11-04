@@ -12,6 +12,7 @@ use async_openai::{
     Client as OpenAIClient,
 };
 use async_trait::async_trait;
+use std::time::Duration;
 use tracing::{info, instrument, warn};
 
 use crate::schema::{FunctionCallRequest, FunctionCallResponse};
@@ -196,28 +197,38 @@ impl FunctionCaller for DeepSeekClient {
                 "Sending DeepSeek chat completion request"
             );
 
-            let response = match self
-                .client
-                .chat()
-                .create(chat_request)
-                .await
-            {
-                Ok(resp) => {
-                    info!(
-                        function = %request.function,
-                        turn,
-                        "Successfully received response from DeepSeek API"
-                    );
-                    resp
-                }
-                Err(e) => {
+            // Set a 60 second timeout for the API call
+            let api_future = self.client.chat().create(chat_request);
+            let timeout_duration = Duration::from_secs(60);
+            
+            let response = match tokio::time::timeout(timeout_duration, api_future).await {
+                Ok(result) => match result {
+                    Ok(resp) => {
+                        info!(
+                            function = %request.function,
+                            turn,
+                            "Successfully received response from DeepSeek API"
+                        );
+                        resp
+                    }
+                    Err(e) => {
+                        warn!(
+                            function = %request.function,
+                            turn,
+                            error = %e,
+                            "Failed to call DeepSeek Chat API"
+                        );
+                        return Err(e).context("调用 DeepSeek Chat 接口失败");
+                    }
+                },
+                Err(_) => {
                     warn!(
                         function = %request.function,
                         turn,
-                        error = %e,
-                        "Failed to call DeepSeek Chat API"
+                        timeout_secs = 60,
+                        "DeepSeek API call timed out"
                     );
-                    return Err(e).context("调用 DeepSeek Chat 接口失败");
+                    return Err(anyhow!("DeepSeek API 调用超时（60秒）"));
                 }
             };
 
