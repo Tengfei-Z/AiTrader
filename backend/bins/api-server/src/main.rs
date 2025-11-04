@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -205,6 +204,7 @@ struct SymbolQuery {
     symbol: String,
     depth: Option<usize>,
     limit: Option<usize>,
+    simulated: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -357,18 +357,24 @@ fn init_tracing() {
 
 async fn get_ticker(
     State(state): State<AppState>,
-    Query(SymbolQuery { symbol, .. }): Query<SymbolQuery>,
+    Query(SymbolQuery { symbol, simulated, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
-    debug!(symbol = %symbol, "received ticker request");
-    if let Some(client) = state.okx.clone() {
+    let use_simulated = true;
+    if matches!(simulated, Some(false)) {
+        warn!("非模拟行情查询已被禁用，自动切换到模拟账户");
+    }
+    debug!(symbol = %symbol, use_simulated, "received ticker request");
+
+    // Try simulated client
+    if let Some(client) = state.okx_simulated.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
-                debug!(symbol = %symbol, "okx ticker hit");
+                debug!(symbol = %symbol, use_simulated, "okx ticker hit");
                 let mut ticker = Ticker::from(remote);
                 ticker.symbol = symbol.clone();
                 return Json(ApiResponse::ok(ticker));
             }
-            Err(err) => tracing::warn!(symbol = %symbol, error = ?err, "okx ticker fetch failed"),
+            Err(err) => tracing::warn!(symbol = %symbol, error = ?err, use_simulated, "okx ticker fetch failed"),
         }
     }
 
@@ -669,23 +675,6 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         *counter += 1;
         *counter
     };
-
-    let parameters_schema = json!({
-        "type": "object",
-        "properties": {
-            "include_positions": { "type": "boolean", "default": true },
-            "include_history": { "type": "boolean", "default": true },
-            "include_performance": { "type": "boolean", "default": true },
-            "simulated_trading": { "type": "boolean", "default": false }
-        },
-        "required": [
-            "include_positions",
-            "include_history",
-            "include_performance",
-            "simulated_trading"
-        ],
-        "additionalProperties": false
-    });
 
     let system_prompt = format!(
         "{}\n\nRun #{} 规则（精简）：\n- 仅分析与交易 BTC 永续：BTC-USDT-SWAP（不涉现货）。\n- 建议下单默认标的：BTC-USDT-SWAP。\n- 先取账户/仓位，再给结论；输出含：思考、决策、置信度。",

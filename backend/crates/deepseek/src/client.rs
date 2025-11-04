@@ -3,10 +3,12 @@ use anyhow::{anyhow, ensure, Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionNamedToolChoice, ChatCompletionRequestAssistantMessageArgs,
-        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionToolArgs,
-        ChatCompletionToolChoiceOption, ChatCompletionToolType, CreateChatCompletionRequestArgs,
+        ChatCompletionNamedToolChoice,
+        ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestUserMessageArgs,
+        ChatCompletionTool, ChatCompletionToolArgs,
+        ChatCompletionToolChoiceOption, ChatCompletionToolType,
+        CreateChatCompletionRequestArgs,
         FunctionName, FunctionObject, FunctionObjectArgs,
     },
     Client as OpenAIClient,
@@ -29,38 +31,48 @@ use serde_json::{self, json, Value};
 
 const ALLOWED_COINS: &[&str] = &["BTC", "ETH", "SOL", "BNB"];
 
-pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。你的目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
+pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的加密货币交易助手，严格遵循两步工作流程。
 
-工作职责：
-1. 产出 Alpha：研判行情结构、识别交易机会、预测价格走向。
-2. 决定仓位：合理分配资金、选择杠杆倍数、管理整体风险敞口。
-3. 控制节奏：确定开仓与平仓时机，设置止盈止损。
-4. 风险管理：避免过度暴露，确保有充足保证金与退出计划。
+工具说明：
+1. get_account_state：
+   参数要求：{
+     "include_history": true,
+     "include_performance": true,
+     "include_positions": true,
+     "simulated_trading": true
+   }
+   用途：仅用于首次获取账户状态
 
-约束条件：
-- 仅可交易白名单内的币种与合约。
-- 杠杆上限 25X。
-- 每个持仓必须具备完整的退出方案（止盈、止损、失效条件）。
-- 输出需清晰、可审计，便于透明化展示。
+2. execute_trade：
+   参数格式：{
+     "instrument_id": "BTC-USDT-SWAP",
+     "direction": "buy"/"sell",
+     "size": <number>,
+     "take_profit": <number>,
+     "stop_loss": <number>
+   }
+   用途：执行交易决策
 
-可用 MCP 工具：
-1. get_market_data：获取实时行情及技术指标
-2. get_account_state：查询账户状态与持仓
-3. execute_trade：执行交易（开/平仓）
-4. update_exit_plan：更新已有仓位的退出计划
+强制执行流程：
+1. 第一步：调用 get_account_state（仅限一次）
+2. 第二步：分析账户状态后必须调用 execute_trade
 
-输出要求（每次响应）：
-1. 思考总结（≤200 字）：概述市场状况、持仓状态、下一步计划。
-2. 决策行动：如需操作，调用 MCP 工具并保证退出计划完整。
-3. 置信度（0-100）：给出当前判断的信心水平。
+交易规则：
+- 合约品种：BTC-USDT-SWAP
+- 仓位控制：≤账户30%
+- 止损范围：2-3%
+- 禁止重复查询账户
+- 必须完成交易决策
 
-策略提示：
-- 风险优先，追求稳定的风险收益比。
-- 避免无效频繁交易，关注成本。
-- 保持严格止损，保护本金。
-- 分散持仓，避免单一资产集中。
-- 顺势而为，尊重趋势变化。
-- 保持耐心，等待高质量信号。"#;
+回复要求：
+1. 分析：说明当前账户状态
+2. 决策：给出具体交易行动
+3. 执行：调用 execute_trade
+
+输出格式：
+1. 操作结果：简述本次操作的执行结果
+2. 账户信息：显示关键的账户数据
+3. 注意事项：如有风险提示则展示"#;
 
 #[async_trait]
 pub trait FunctionCaller: Send + Sync {
@@ -85,10 +97,11 @@ impl DeepSeekClient {
     pub fn new(config: DeepSeekConfig) -> Result<Self> {
         // 创建自定义 reqwest client，设置 HTTP 超时
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(20))  // HTTP 层面 20 秒总超时
-            .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
-            .read_timeout(Duration::from_secs(15))  // 读取超时 15 秒（防止流式响应卡住）
-            .pool_idle_timeout(Duration::from_secs(30))  // 连接池空闲超时
+            .timeout(Duration::from_secs(15))  // HTTP 层面 15 秒总超时，与 API 调用超时一致
+            .connect_timeout(Duration::from_secs(5))  // 连接超时 5 秒
+            .read_timeout(Duration::from_secs(10))  // 读取超时 10 秒（降低流式响应卡住的风险）
+            .pool_idle_timeout(Duration::from_secs(20))  // 连接池空闲超时，降低资源占用
+            .tcp_nodelay(true)  // 启用 TCP_NODELAY，减少延迟
             .build()
             .context("创建 HTTP 客户端失败")?;
 
@@ -171,8 +184,10 @@ impl FunctionCaller for DeepSeekClient {
         let mut usage_log: Vec<Value> = Vec::new();
         let mut final_message: Option<String> = None;
         let mut force_tool_choice = true;
+        let mut final_turn = 0;
 
         for turn in 0..5 {  // 从8降到5，减少对话轮数
+            final_turn = turn;
             info!(
                 function = %request.function,
                 turn,
@@ -208,15 +223,35 @@ impl FunctionCaller for DeepSeekClient {
 
             // 计算并记录发送给 DeepSeek 的消息统计
             let mut total_chars = 0;
+            let mut total_tools = 0;
             let mut message_details = Vec::new();
+            let mut message_types = Vec::new();
+
             for (idx, msg) in messages.iter().enumerate() {
                 let msg_json = serde_json::to_string(msg).unwrap_or_default();
                 let char_count = msg_json.chars().count();
                 total_chars += char_count;
-                message_details.push(format!("msg[{}]: {} chars", idx, char_count));
-            }
-            let estimated_tokens = total_chars / 4; // 粗略估算：平均 4 字符 ≈ 1 token
 
+                // 分析消息类型和内容
+                let msg_type = if msg_json.contains("\"role\":\"system\"") {
+                    "system"
+                } else if msg_json.contains("\"role\":\"user\"") {
+                    "user"
+                } else if msg_json.contains("\"role\":\"assistant\"") {
+                    "assistant"
+                } else if msg_json.contains("\"role\":\"tool\"") {
+                    total_tools += 1;
+                    "tool"
+                } else {
+                    "unknown"
+                };
+
+                message_types.push(msg_type);
+                message_details.push(format!("msg[{}]: {} chars ({})", idx, char_count, msg_type));
+            }
+
+            let estimated_tokens = total_chars / 4; // 粗略估算：平均 4 字符 ≈ 1 token
+            
             info!(
                 function = %request.function,
                 turn,
@@ -224,7 +259,9 @@ impl FunctionCaller for DeepSeekClient {
                 message_count = messages.len(),
                 total_chars,
                 estimated_tokens,
-                message_breakdown = ?message_details,
+                total_tools,
+                message_types = ?message_types,
+                message_details = ?message_details,
                 "Sending DeepSeek chat completion request"
             );
 
@@ -299,18 +336,7 @@ impl FunctionCaller for DeepSeekClient {
                 "Received DeepSeek response"
             );
 
-            let mut assistant_builder = ChatCompletionRequestAssistantMessageArgs::default();
-            if let Some(content) = choice.message.content.clone() {
-                assistant_builder.content(content);
-            }
-            if let Some(tool_calls) = choice.message.tool_calls.clone() {
-                assistant_builder.tool_calls(tool_calls);
-            }
-            let assistant_message = assistant_builder
-                .build()
-                .context("构建 assistant 消息失败")?;
-            messages.push(assistant_message.into());
-
+            // 优化消息处理
             if let Some(tool_calls) = &choice.message.tool_calls {
                 // 如果即将超过最大轮数，拒绝继续执行工具
                 if turn >= 4 {
@@ -326,6 +352,17 @@ impl FunctionCaller for DeepSeekClient {
                         tool_history
                     ));
                     break;
+                }
+                
+                // 记录当前工具调用数量
+                let tool_count = tool_calls.len();
+                if tool_count > 1 {
+                    warn!(
+                        function = %request.function,
+                        turn,
+                        tool_count,
+                        "Multiple tool calls in single turn"
+                    );
                 }
 
                 for tool_call in tool_calls {
@@ -392,34 +429,93 @@ impl FunctionCaller for DeepSeekClient {
                     });
                     tool_history.push(record);
 
-                    let tool_message = ChatCompletionRequestToolMessageArgs::default()
-                        .tool_call_id(tool_call.id.clone())
-                        .content(tool_content.clone())
+                    // 优化结果消息格式
+                    // 先计算字符数以供日志使用
+                    let content_length = tool_content.chars().count();
+
+                    // 构造消息内容
+                    let (msg_prefix, msg_content) = match tool_call.function.name.as_str() {
+                        "get_market_data" => {
+                            // 对市场数据做特殊处理，突出显示关键信息
+                            let value: Value = serde_json::from_str(&tool_content).unwrap_or_default();
+                            let coins = value.get("coins").and_then(|v| v.as_object());
+                            if let Some(coin_data) = coins {
+                                let mut summary = Vec::new();
+                                for (coin, data) in coin_data {
+                                    if let Some(data_obj) = data.as_object() {
+                                        let price = data_obj.get("current_price")
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or_default();
+                                        let funding = data_obj.get("funding_rate")
+                                            .and_then(|v| v.as_f64())
+                                            .map(|f| format!("资金费率:{:.4}%", f * 100.0))
+                                            .unwrap_or_default();
+                                        summary.push(format!("{}=${:.2} {}", coin, price, funding));
+                                    }
+                                }
+                                ("市场概况", summary.join(", "))
+                            } else {
+                                ("市场数据", tool_content.clone())
+                            }
+                        }
+                        "get_account_state" => ("账户状态", tool_content.clone()),
+                        "execute_trade" => ("交易执行", tool_content.clone()),
+                        "update_exit_plan" => ("退出计划", tool_content.clone()),
+                        _ => ("工具执行结果", tool_content.clone())
+                    };
+                    
+                    let user_message = ChatCompletionRequestUserMessageArgs::default()
+                        .content(format!("{}：{}", msg_prefix, msg_content))
                         .build()
-                        .context("构建 tool 消息失败")?;
+                        .context("构建数据消息失败")?;
                     
                     info!(
                         tool_name = %tool_call.function.name,
                         turn,
-                        tool_content_chars = tool_content.chars().count(),
-                        "Tool message constructed, adding to conversation"
+                        msg_prefix = %msg_prefix,
+                        content_chars = content_length,
+                        "Data message constructed, adding to conversation"
                     );
                     
-                    messages.push(tool_message.into());
+                    messages.push(user_message.into());
                 }
 
                 continue;
             }
 
+            // 检查是否有有效的响应内容
+            if let Some(content) = &choice.message.content {
+                if !content.trim().is_empty() {
+                    final_message = Some(content.clone());
+                    break;
+                }
+                // 如果内容为空且是工具调用，记录警告
+                if choice.message.tool_calls.is_some() {
+                    warn!(
+                        function = %request.function,
+                        turn,
+                        "Empty response with tool call, requiring explanation"
+                    );
+                    // 加入提醒消息
+                    let reminder = ChatCompletionRequestUserMessageArgs::default()
+                        .content("请提供具体的分析和决策说明，不要重复调用相同的工具。每次工具调用都必须有明确的目的和解释。")
+                        .build()
+                        .context("构建提醒消息失败")?;
+                    messages.push(reminder.into());
+                    continue;
+                }
+            }
             final_message = choice.message.content.clone();
             break;
         }
 
-        if final_message.is_none() {
+        if final_message.is_none() || final_message.as_ref().map_or(true, |s| s.trim().is_empty()) {
             warn!(
                 function = %request.function,
-                "DeepSeek conversation ended without final assistant message"
+                "DeepSeek conversation ended without valid assistant message"
             );
+            // 如果没有有效回复，返回一个错误信息
+            final_message = Some("错误：模型未能提供有效的分析和决策说明。请重试。".to_string());
         }
 
         let final_message_value = final_message.unwrap_or_default();
@@ -432,6 +528,11 @@ impl FunctionCaller for DeepSeekClient {
         let output = json!({
             "tool_results": tool_history,
             "final_message": final_message_value,
+            "execution_info": {
+                "turns_completed": final_turn + 1,
+                "messages_exchanged": messages.len(),
+                "tool_calls_made": tool_history.len()
+            }
         });
 
         Ok(FunctionCallResponse {
@@ -716,21 +817,20 @@ fn build_tool_catalog(
         Some(primary_schema.clone()),
     )?);
 
-    for (name, description, schema) in default_tool_definitions() {
-        if name == primary_name {
-            continue;
-        }
-        tools.push(build_function_object(
-            name,
-            Some(description),
-            Some(schema),
-        )?);
-    }
+                    // 针对每个时间周期生成工具定义
+                    for (name, description, schema) in default_tool_definitions() {
+                        if name == primary_name {
+                            continue;
+                        }
+                        tools.push(build_function_object(
+                            name,
+                            Some(description),
+                            Some(schema),
+                        )?);
+                    }
 
-    Ok(tools)
-}
-
-fn build_function_object(
+                    Ok(tools)
+                }fn build_function_object(
     name: &str,
     description: Option<&str>,
     parameters: Option<Value>,
@@ -761,35 +861,8 @@ fn build_chat_tools(tools: &[FunctionObject]) -> Result<Vec<ChatCompletionTool>>
 fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
     vec![
         (
-            "get_market_data",
-            "Fetch recent market metrics, indicators, and optional order book snapshots for specified coins.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "coins": {
-                        "type": "array",
-                        "items": { "type": "string", "enum": ["BTC", "ETH", "SOL", "BNB"] },
-                        "minItems": 1
-                    },
-                    "timeframe": { "type": "string", "default": "3m" },
-                    "quote": { "type": "string", "default": "USDT" },
-                    "indicators": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "default": ["price"]
-                    },
-                    "include_orderbook": { "type": "boolean", "default": false },
-                    "include_funding": { "type": "boolean", "default": false },
-                    "include_open_interest": { "type": "boolean", "default": false },
-                    "simulated_trading": { "type": "boolean", "default": true }
-                },
-                "required": ["coins"],
-                "additionalProperties": false
-            }),
-        ),
-        (
             "get_account_state",
-            "Aggregate OKX account balances, active positions, and performance metrics.",
+            "查询账户余额、当前持仓和交易历史。",
             json!({
                 "type": "object",
                 "properties": {
@@ -809,45 +882,62 @@ fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
         ),
         (
             "execute_trade",
-            "Place or close a leveraged trade on OKX using either live or simulated credentials.",
+            "执行交易操作，包括开仓或平仓 BTC 永续合约。",
             json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "enum": ["open_long", "open_short", "close_position"] },
-                    "coin": { "type": "string", "enum": ["BTC", "ETH", "SOL", "BNB"] },
-                    "instrument_id": { "type": "string" },
-                    "instrument_type": { "type": "string" },
-                    "quote": { "type": "string", "default": "USDT" },
-                    "td_mode": { "type": "string", "default": "cross" },
-                    "margin_currency": { "type": "string" },
-                    "leverage": { "type": "number" },
-                    "margin_amount": { "type": "number" },
-                    "quantity": { "type": "number" },
-                    "position_id": { "type": "string" },
-                    "exit_plan": { "type": "object" },
-                    "confidence": { "type": "integer" },
-                    "simulated_trading": { "type": "boolean", "default": true }
+                    "action": { 
+                        "type": "string", 
+                        "enum": ["open_long", "open_short", "close_position"],
+                        "description": "交易动作：开多、开空或平仓"
+                    },
+                    "instrument_id": { 
+                        "type": "string",
+                        "default": "BTC-USDT-SWAP",
+                        "description": "合约 ID，默认 BTC 永续"
+                    },
+                    "quantity": { 
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "交易数量" 
+                    },
+                    "position_id": { 
+                        "type": "string",
+                        "description": "平仓时需要提供的持仓 ID" 
+                    },
+                    "leverage": { 
+                        "type": "number", 
+                        "minimum": 1,
+                        "maximum": 25,
+                        "default": 10,
+                        "description": "杠杆倍数，1-25倍"
+                    },
+                    "simulated_trading": { 
+                        "type": "boolean", 
+                        "default": true,
+                        "description": "是否使用模拟账户"
+                    }
                 },
-                "required": ["action", "coin", "simulated_trading"],
-                "additionalProperties": true
-            }),
-        ),
-        (
-            "update_exit_plan",
-            "Adjust take-profit and stop-loss parameters for an existing position.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "position_id": { "type": "string" },
-                    "new_profit_target": { "type": "number" },
-                    "new_stop_loss": { "type": "number" },
-                    "new_invalidation": { "type": "string" },
-                    "instrument_id": { "type": "string" },
-                    "td_mode": { "type": "string" },
-                    "simulated_trading": { "type": "boolean", "default": true }
-                },
-                "required": ["position_id", "simulated_trading"],
-                "additionalProperties": false
+                "required": ["action", "simulated_trading"],
+                "additionalProperties": false,
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": { "action": { "enum": ["open_long", "open_short"] } }
+                        },
+                        "then": {
+                            "required": ["quantity", "leverage"]
+                        }
+                    },
+                    {
+                        "if": {
+                            "properties": { "action": { "const": "close_position" } }
+                        },
+                        "then": {
+                            "required": ["position_id"]
+                        }
+                    }
+                ]
             }),
         ),
     ]

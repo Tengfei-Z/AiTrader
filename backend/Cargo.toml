@@ -4,7 +4,6 @@ members = [
     "crates/okx",
     "crates/deepseek",
     "crates/mcp",
-    "bins/trader-cli",
     "bins/api-server",
 ]
 resolver = "2"

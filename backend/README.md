@@ -8,21 +8,18 @@
 - `crates/okx`：OKX REST/WebSocket 客户端（已实现 REST 骨架）。
 - `crates/deepseek`：DeepSeek Function Call 封装（结构就绪）。
 - `crates/mcp`：MCP 工具适配层，包含进程管理的基础代码。
-- `bins/trader-cli`：用于冒烟测试与手动操作的可执行程序。
 
-## 运行 CLI
+## 运行服务
 
 ```bash
 cd backend
-cargo run -p trader-cli -- okx time
-cargo run -p trader-cli -- okx ticker --symbol BTC-USDT
-cargo run -p trader-cli -- deepseek chat
-cargo run -p trader-cli -- deepseek call --function demo --arguments '{"foo":"bar"}'
-cargo run -p trader-cli -- mcp send --tool echo --payload '{"text":"hello"}'
 cargo run -p api-server
 ```
 
-前两个命令演示 OKX API，需要在对应目录配置 `OKX_*` 凭证；中间两个演示 DeepSeek，需配置 `DEEPSEEK_*`；最后一个命令演示 MCP 进程交互，需要配置 `MCP_*`；`api-server` 提供统一 REST API，供前端调用。
+api-server 提供统一的 REST API，供前端调用。运行前需要配置相应的环境变量：
+- OKX API：需要配置 `OKX_*` 凭证
+- DeepSeek：需要配置 `DEEPSEEK_*` 
+- MCP：需要配置 `MCP_*`
 
 ## 下一步建议
 

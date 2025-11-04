@@ -2723,22 +2723,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trader-cli"
-version = "0.1.0"
-dependencies = [
- "ai_core",
- "anyhow",
- "clap",
- "deepseek",
- "mcp_adapter",
- "okx",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
