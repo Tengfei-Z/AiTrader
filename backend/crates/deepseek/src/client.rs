@@ -164,6 +164,14 @@ impl FunctionCaller for DeepSeekClient {
         let mut force_tool_choice = true;
 
         for turn in 0..5 {  // 从8降到5，减少对话轮数
+            info!(
+                function = %request.function,
+                turn,
+                total_messages = messages.len(),
+                tool_history_count = tool_history.len(),
+                "Starting conversation turn"
+            );
+
             let chat_tools = build_chat_tools(&tool_catalog)?;
             let mut request_builder = CreateChatCompletionRequestArgs::default();
             request_builder
@@ -202,6 +210,13 @@ impl FunctionCaller for DeepSeekClient {
             
             let start_time = std::time::Instant::now();
             
+            info!(
+                function = %request.function,
+                turn,
+                timeout_secs = 15,
+                "About to call DeepSeek API with timeout"
+            );
+            
             let response = match tokio::time::timeout(
                 timeout_duration, 
                 self.client.chat().create(chat_request)
@@ -218,9 +233,11 @@ impl FunctionCaller for DeepSeekClient {
                         resp
                     }
                     Err(e) => {
+                        let elapsed = start_time.elapsed();
                         warn!(
                             function = %request.function,
                             turn,
+                            elapsed_secs = elapsed.as_secs_f64(),
                             error = %e,
                             "Failed to call DeepSeek Chat API"
                         );
@@ -228,12 +245,14 @@ impl FunctionCaller for DeepSeekClient {
                     }
                 },
                 Err(_) => {
+                    let elapsed = start_time.elapsed();
                     warn!(
                         function = %request.function,
                         turn,
                         timeout_secs = 15,
+                        elapsed_secs = elapsed.as_secs_f64(),
                         message_count = messages.len(),
-                        "DeepSeek API call timed out"
+                        "DeepSeek API call timed out after waiting"
                     );
                     return Err(anyhow!("DeepSeek API 调用超时（15秒）"));
                 }
@@ -270,6 +289,22 @@ impl FunctionCaller for DeepSeekClient {
             messages.push(assistant_message.into());
 
             if let Some(tool_calls) = &choice.message.tool_calls {
+                // 如果即将超过最大轮数，拒绝继续执行工具
+                if turn >= 4 {
+                    warn!(
+                        function = %request.function,
+                        turn,
+                        tool_calls_count = tool_calls.len(),
+                        "Reached maximum turns, ignoring tool calls and forcing completion"
+                    );
+                    final_message = Some(format!(
+                        "已达到最大对话轮数（{}），无法继续执行工具调用。当前工具历史：{:?}",
+                        turn + 1,
+                        tool_history
+                    ));
+                    break;
+                }
+
                 for tool_call in tool_calls {
                     let arguments_raw = tool_call.function.arguments.clone();
                     let parsed_arguments: Value = serde_json::from_str(&arguments_raw)
