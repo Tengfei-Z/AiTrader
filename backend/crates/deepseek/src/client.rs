@@ -3,20 +3,55 @@ use anyhow::{anyhow, Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionNamedToolChoice, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionNamedToolChoice, ChatCompletionRequestAssistantMessageArgs,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
         ChatCompletionRequestUserMessageArgs, ChatCompletionToolArgs,
         ChatCompletionToolChoiceOption, ChatCompletionToolType, CreateChatCompletionRequestArgs,
-        FunctionName, FunctionObjectArgs,
+        FunctionName, FunctionObject, FunctionObjectArgs,
     },
     Client as OpenAIClient,
 };
 use async_trait::async_trait;
-use tracing::instrument;
+use tracing::{info, instrument, warn};
 
 use crate::schema::{FunctionCallRequest, FunctionCallResponse};
 use mcp_adapter::account::{fetch_account_state, AccountStateRequest};
 use okx::OkxRestClient;
 use serde_json::{self, json, Value};
+
+pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。你的目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
+
+工作职责：
+1. 产出 Alpha：研判行情结构、识别交易机会、预测价格走向。
+2. 决定仓位：合理分配资金、选择杠杆倍数、管理整体风险敞口。
+3. 控制节奏：确定开仓与平仓时机，设置止盈止损。
+4. 风险管理：避免过度暴露，确保有充足保证金与退出计划。
+
+约束条件：
+- 仅可交易白名单内的币种与合约。
+- 杠杆上限 25X。
+- 每个持仓必须具备完整的退出方案（止盈、止损、失效条件）。
+- 输出需清晰、可审计，便于透明化展示。
+
+可用 MCP 工具：
+1. get_market_data：获取实时行情及技术指标
+2. get_account_state：查询账户状态与持仓
+3. execute_trade：执行交易（开/平仓）
+4. update_exit_plan：更新已有仓位的退出计划
+5. get_performance_metrics：查看账户表现数据
+
+输出要求（每次响应）：
+1. 思考总结（≤200 字）：概述市场状况、持仓状态、下一步计划。
+2. 决策行动：如需操作，调用 MCP 工具并保证退出计划完整。
+3. 置信度（0-100）：给出当前判断的信心水平。
+
+策略提示：
+- 风险优先，追求稳定的风险收益比。
+- 避免无效频繁交易，关注成本。
+- 保持严格止损，保护本金。
+- 分散持仓，避免单一资产集中。
+- 顺势而为，尊重趋势变化。
+- 保持耐心，等待高质量信号。"#;
 
 #[async_trait]
 pub trait FunctionCaller: Send + Sync {
@@ -55,13 +90,24 @@ impl DeepSeekClient {
 impl FunctionCaller for DeepSeekClient {
     #[instrument(skip(self, request), fields(model = %self.config.model))]
     async fn call_function(&self, request: FunctionCallRequest) -> Result<FunctionCallResponse> {
+        info!(
+            function = %request.function,
+            arguments = %request.arguments,
+            metadata = %request.metadata,
+            "Preparing DeepSeek function call"
+        );
+
         let system_prompt = request
             .metadata
             .get("system_prompt")
             .and_then(|v| v.as_str())
-            .unwrap_or(
-                "You are a function calling assistant. Always respond by calling the requested tool with the provided JSON arguments.",
-            );
+            .unwrap_or(DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT);
+
+        info!(
+            function = %request.function,
+            system_prompt_preview = %truncate_for_log(system_prompt, 240),
+            "Using system prompt for DeepSeek request"
+        );
 
         let function_description = request
             .metadata
@@ -80,18 +126,15 @@ impl FunctionCaller for DeepSeekClient {
                 })
             });
 
-        let mut function_builder = FunctionObjectArgs::default();
-        function_builder.name(request.function.clone());
-        if let Some(desc) = function_description {
-            function_builder.description(desc);
-        }
-        function_builder.parameters(Some(parameters_schema));
-        let function_object = function_builder.build().context("构建函数描述失败")?;
-
-        let tool = ChatCompletionToolArgs::default()
-            .function(function_object)
-            .build()
-            .context("构建工具描述失败")?;
+        let build_function_object = || -> Result<FunctionObject> {
+            let mut function_builder = FunctionObjectArgs::default();
+            function_builder.name(request.function.clone());
+            if let Some(desc) = &function_description {
+                function_builder.description(desc.clone());
+            }
+            function_builder.parameters(Some(parameters_schema.clone()));
+            function_builder.build().context("构建函数描述失败")
+        };
 
         let system_message = ChatCompletionRequestSystemMessageArgs::default()
             .content(system_prompt)
@@ -109,78 +152,192 @@ impl FunctionCaller for DeepSeekClient {
             .build()
             .context("构建 user 消息失败")?;
 
-        let chat_request = CreateChatCompletionRequestArgs::default()
-            .model(self.config.model.clone())
-            .messages([system_message.into(), user_message.into()])
-            .tools(vec![tool])
-            .tool_choice(ChatCompletionToolChoiceOption::Named(
-                ChatCompletionNamedToolChoice {
-                    r#type: ChatCompletionToolType::Function,
-                    function: FunctionName {
-                        name: request.function.clone(),
+        let mut messages = vec![system_message.into(), user_message.into()];
+        let mut tool_history: Vec<Value> = Vec::new();
+        let mut usage_log: Vec<Value> = Vec::new();
+        let mut final_message: Option<String> = None;
+        let mut force_tool_choice = true;
+
+        for turn in 0..8 {
+            let tool = ChatCompletionToolArgs::default()
+                .function(build_function_object()?)
+                .build()
+                .context("构建工具描述失败")?;
+
+            let mut request_builder = CreateChatCompletionRequestArgs::default();
+            request_builder
+                .model(self.config.model.clone())
+                .messages(messages.clone())
+                .tools(vec![tool])
+                .temperature(0_f32);
+
+            if force_tool_choice {
+                request_builder.tool_choice(ChatCompletionToolChoiceOption::Named(
+                    ChatCompletionNamedToolChoice {
+                        r#type: ChatCompletionToolType::Function,
+                        function: FunctionName {
+                            name: request.function.clone(),
+                        },
                     },
-                },
-            ))
-            .temperature(0_f32)
-            .build()
-            .context("构建 ChatCompletion 请求失败")?;
+                ));
+            }
 
-        let response = self
-            .client
-            .chat()
-            .create(chat_request)
-            .await
-            .context("调用 DeepSeek Chat 接口失败")?;
+            let chat_request = request_builder
+                .build()
+                .context("构建 ChatCompletion 请求失败")?;
 
-        let choice = response
-            .choices
-            .first()
-            .ok_or_else(|| anyhow!("DeepSeek 返回结果为空"))?;
+            force_tool_choice = false;
 
-        let usage_value = response
-            .usage
-            .as_ref()
-            .and_then(|u| serde_json::to_value(u).ok());
+            info!(
+                function = %request.function,
+                turn,
+                model = %self.config.model,
+                "Sending DeepSeek chat completion request"
+            );
 
-        if let Some(tool_calls) = &choice.message.tool_calls {
-            if let Some(tool_call) = tool_calls.first() {
-                let arguments_raw = tool_call.function.arguments.clone();
-                let parsed_arguments: Value = serde_json::from_str(&arguments_raw)
-                    .unwrap_or_else(|_| Value::String(arguments_raw.clone()));
+            let response = self
+                .client
+                .chat()
+                .create(chat_request)
+                .await
+                .context("调用 DeepSeek Chat 接口失败")?;
 
-                if let Some(execution) = self
-                    .execute_local_tool(&tool_call.function.name, &parsed_arguments)
-                    .await?
-                {
-                    return Ok(FunctionCallResponse {
-                        output: execution,
-                        usage: usage_value,
-                        message: choice.message.content.clone(),
-                    });
+            if let Some(usage) = response.usage.as_ref() {
+                if let Ok(value) = serde_json::to_value(usage) {
+                    usage_log.push(value);
                 }
+            }
 
-                let output = json!({
-                    "tool_call": {
+            let choice = response
+                .choices
+                .first()
+                .ok_or_else(|| anyhow!("DeepSeek 返回结果为空"))?;
+
+            info!(
+                function = %request.function,
+                turn,
+                response_message = ?choice.message,
+                "Received DeepSeek response"
+            );
+
+            let mut assistant_builder = ChatCompletionRequestAssistantMessageArgs::default();
+            if let Some(content) = choice.message.content.clone() {
+                assistant_builder.content(content);
+            }
+            if let Some(tool_calls) = choice.message.tool_calls.clone() {
+                assistant_builder.tool_calls(tool_calls);
+            }
+            let assistant_message = assistant_builder
+                .build()
+                .context("构建 assistant 消息失败")?;
+            messages.push(assistant_message.into());
+
+            if let Some(tool_calls) = &choice.message.tool_calls {
+                for tool_call in tool_calls {
+                    let arguments_raw = tool_call.function.arguments.clone();
+                    let parsed_arguments: Value = serde_json::from_str(&arguments_raw)
+                        .unwrap_or_else(|_| Value::String(arguments_raw.clone()));
+
+                    info!(
+                        tool_name = %tool_call.function.name,
+                        tool_arguments = %parsed_arguments,
+                        tool_call_id = %tool_call.id,
+                        turn,
+                        "DeepSeek suggested tool invocation"
+                    );
+
+                    let execution = self
+                        .execute_local_tool(&tool_call.function.name, &parsed_arguments)
+                        .await?;
+
+                    let Some(result) = execution else {
+                        warn!(
+                            tool_name = %tool_call.function.name,
+                            "No local executor found for suggested tool, returning payload"
+                        );
+                        let output = json!({
+                            "tool_call": {
+                                "id": tool_call.id,
+                                "name": tool_call.function.name,
+                                "arguments": parsed_arguments,
+                            }
+                        });
+                        return Ok(FunctionCallResponse {
+                            output,
+                            usage: if usage_log.is_empty() {
+                                None
+                            } else {
+                                Some(Value::Array(usage_log))
+                            },
+                            message: choice.message.content.clone(),
+                        });
+                    };
+
+                    info!(
+                        tool_name = %tool_call.function.name,
+                        turn,
+                        "Executed local tool for DeepSeek request"
+                    );
+
+                    let tool_content = serde_json::to_string(&result).unwrap_or_default();
+
+                    info!(
+                        tool_name = %tool_call.function.name,
+                        turn,
+                        tool_output_preview = %truncate_for_log(&tool_content, 240),
+                        "Local tool execution completed"
+                    );
+
+                    let record = json!({
                         "id": tool_call.id,
                         "name": tool_call.function.name,
                         "arguments": parsed_arguments,
-                    }
-                });
+                        "output": result
+                    });
+                    tool_history.push(record);
 
-                return Ok(FunctionCallResponse {
-                    output,
-                    usage: usage_value,
-                    message: choice.message.content.clone(),
-                });
+                    let tool_message = ChatCompletionRequestToolMessageArgs::default()
+                        .tool_call_id(tool_call.id.clone())
+                        .content(tool_content)
+                        .build()
+                        .context("构建 tool 消息失败")?;
+                    messages.push(tool_message.into());
+                }
+
+                continue;
             }
+
+            final_message = choice.message.content.clone();
+            break;
         }
 
-        let content = choice.message.content.clone().unwrap_or_default();
+        if final_message.is_none() {
+            warn!(
+                function = %request.function,
+                "DeepSeek conversation ended without final assistant message"
+            );
+        }
+
+        let final_message_value = final_message.unwrap_or_default();
+
+        info!(
+            function = %request.function,
+            "DeepSeek conversation completed"
+        );
+
+        let output = json!({
+            "tool_results": tool_history,
+            "final_message": final_message_value,
+        });
 
         Ok(FunctionCallResponse {
-            output: json!({ "content": content }),
-            usage: usage_value,
-            message: choice.message.content.clone(),
+            output,
+            usage: if usage_log.is_empty() {
+                None
+            } else {
+                Some(Value::Array(usage_log))
+            },
+            message: Some(final_message_value),
         })
     }
 }
@@ -191,6 +348,12 @@ impl DeepSeekClient {
             "get_account_state" => {
                 let request: AccountStateRequest =
                     serde_json::from_value(arguments.clone()).unwrap_or_default();
+
+                info!(
+                    tool = name,
+                    arguments = %arguments,
+                    "Executing local tool handler"
+                );
 
                 let app_config = match &self.app_config {
                     Some(cfg) => cfg,
@@ -209,6 +372,8 @@ impl DeepSeekClient {
                     .context("执行本地账户聚合失败")?;
 
                 let value = serde_json::to_value(account_state).context("序列化账户结果失败")?;
+
+                info!(tool = name, "Local tool completed successfully");
 
                 Ok(Some(value))
             }
@@ -241,10 +406,24 @@ impl DeepSeekClient {
             .await
             .context("调用 DeepSeek Chat 接口失败")?;
 
+        info!(
+            model = %self.config.model,
+            prompt = %truncate_for_log(prompt, 240),
+            "DeepSeek chat completion request sent"
+        );
+
         response
             .choices
             .first()
             .and_then(|choice| choice.message.content.clone())
             .ok_or_else(|| anyhow!("DeepSeek Chat 返回结果为空"))
     }
+}
+
+fn truncate_for_log(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    text.chars().take(max_chars).collect::<String>() + "…"
 }

@@ -10,9 +10,10 @@ use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{info, Level};
+use tracing::{debug, info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::layer::SubscriberExt;
@@ -20,6 +21,9 @@ use tracing_subscriber::{EnvFilter, Registry};
 
 mod config;
 use config::load_app_config;
+use deepseek::{
+    DeepSeekClient, FunctionCallRequest, FunctionCaller, DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT,
+};
 use mcp_adapter::account::{fetch_account_state, AccountStateRequest};
 use okx::OkxRestClient;
 
@@ -30,6 +34,7 @@ struct AppState {
     inner: Arc<RwLock<MockDataStore>>,
     okx: Option<OkxRestClient>,
     okx_simulated: Option<OkxRestClient>,
+    deepseek: Option<DeepSeekClient>,
 }
 
 #[derive(Debug)]
@@ -43,6 +48,8 @@ struct MockDataStore {
     open_orders: Vec<Order>,
     fills: Vec<Fill>,
     next_order_id: u64,
+    strategy_messages: Vec<StrategyMessage>,
+    strategy_run_counter: u64,
 }
 
 fn format_amount(value: f64) -> String {
@@ -115,6 +122,19 @@ struct Trade {
     size: String,
     side: String,
     timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyMessage {
+    id: String,
+    role: String,
+    content: String,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +252,8 @@ fn api_routes() -> Router<AppState> {
         .route("/account/fills", get(get_fills))
         .route("/orders", post(place_order))
         .route("/orders/:order_id", delete(cancel_order))
+        .route("/model/strategy-chat", get(get_strategy_chat))
+        .route("/model/strategy-run", post(trigger_strategy_run))
 }
 
 #[tokio::main]
@@ -255,14 +277,23 @@ async fn main() -> anyhow::Result<()> {
         http: http_proxy,
         https: https_proxy,
     };
-    let okx_client = OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options.clone()).ok();
+    let okx_client = None;
     let okx_simulated =
-        OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options).ok();
+        OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options.clone()).ok();
+
+    let deepseek_client = match DeepSeekClient::from_app_config(&CONFIG) {
+        Ok(client) => Some(client),
+        Err(err) => {
+            tracing::warn!(%err, "初始化 DeepSeek 客户端失败");
+            None
+        }
+    };
 
     let app_state = AppState {
         inner: Arc::new(RwLock::new(MockDataStore::new())),
         okx: okx_client,
         okx_simulated,
+        deepseek: deepseek_client,
     };
     let bind_addr = settings
         .bind_addr()
@@ -314,11 +345,11 @@ async fn get_ticker(
     State(state): State<AppState>,
     Query(SymbolQuery { symbol, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
-    tracing::info!(symbol = %symbol, "received ticker request");
+    debug!(symbol = %symbol, "received ticker request");
     if let Some(client) = state.okx.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
-                tracing::info!(symbol = %symbol, "okx ticker hit");
+                debug!(symbol = %symbol, "okx ticker hit");
                 let mut ticker = Ticker::from(remote);
                 ticker.symbol = symbol.clone();
                 return Json(ApiResponse::ok(ticker));
@@ -327,7 +358,7 @@ async fn get_ticker(
         }
     }
 
-    tracing::info!(symbol = %symbol, "using mock ticker");
+    debug!(symbol = %symbol, "using mock ticker");
     let store = state.inner.read().await;
     let response = store
         .tickers
@@ -386,14 +417,13 @@ async fn get_balances(
     State(state): State<AppState>,
     Query(BalancesQuery { simulated }): Query<BalancesQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = simulated.unwrap_or(false);
+    let use_simulated = true;
+    if matches!(simulated, Some(false)) {
+        warn!("非模拟账户查询已被禁用，自动切换到模拟账户");
+    }
     tracing::info!(use_simulated, "received balances request");
 
-    if let Some(client) = if use_simulated {
-        state.okx_simulated.clone()
-    } else {
-        state.okx.clone()
-    } {
+    if let Some(client) = state.okx_simulated.clone() {
         let mut request = AccountStateRequest::default();
         request.simulated_trading = use_simulated;
 
@@ -422,14 +452,13 @@ async fn get_positions(
     State(state): State<AppState>,
     Query(BalancesQuery { simulated }): Query<BalancesQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = simulated.unwrap_or(false);
+    let use_simulated = true;
+    if matches!(simulated, Some(false)) {
+        warn!("非模拟仓位查询已被禁用，自动切换到模拟账户");
+    }
     tracing::info!(use_simulated, "received positions request");
 
-    if let Some(client) = if use_simulated {
-        state.okx_simulated.clone()
-    } else {
-        state.okx.clone()
-    } {
+    if let Some(client) = state.okx_simulated.clone() {
         let mut request = AccountStateRequest::default();
         request.simulated_trading = use_simulated;
         request.include_history = false;
@@ -489,7 +518,7 @@ async fn get_fills(
     State(state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = params.simulated.unwrap_or(false);
+    let use_simulated = true;
     let symbol_filter = params.symbol.clone();
     let limit = params.limit;
 
@@ -500,11 +529,11 @@ async fn get_fills(
         "received fills request"
     );
 
-    if let Some(client) = if use_simulated {
-        state.okx_simulated.clone()
-    } else {
-        state.okx.clone()
-    } {
+    if matches!(params.simulated, Some(false)) {
+        warn!("非模拟成交查询已被禁用，自动切换到模拟账户");
+    }
+
+    if let Some(client) = state.okx_simulated.clone() {
         match client.get_fills(symbol_filter.as_deref(), limit).await {
             Ok(remote_fills) => {
                 let mut fills: Vec<Fill> = remote_fills.into_iter().map(convert_okx_fill).collect();
@@ -539,7 +568,7 @@ async fn get_positions_history(
     State(state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = params.simulated.unwrap_or(false);
+    let use_simulated = true;
     let symbol_filter = params.symbol.clone();
     let limit = params.limit;
 
@@ -550,11 +579,11 @@ async fn get_positions_history(
         "received positions history request"
     );
 
-    if let Some(client) = if use_simulated {
-        state.okx_simulated.clone()
-    } else {
-        state.okx.clone()
-    } {
+    if matches!(params.simulated, Some(false)) {
+        warn!("非模拟持仓历史查询已被禁用，自动切换到模拟账户");
+    }
+
+    if let Some(client) = state.okx_simulated.clone() {
         match client
             .get_positions_history(symbol_filter.as_deref(), limit)
             .await
@@ -682,6 +711,140 @@ fn convert_okx_position_history(detail: okx::models::PositionHistoryDetail) -> P
         entry_time: optional_string(c_time),
         exit_time: optional_string(u_time),
     }
+}
+
+async fn get_strategy_chat(State(state): State<AppState>) -> impl IntoResponse {
+    let store = state.inner.read().await;
+    Json(ApiResponse::ok(store.strategy_messages.clone()))
+}
+
+async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(deepseek_client) = state.deepseek.clone() else {
+        tracing::error!("DeepSeek client not initialised");
+        return Json(ApiResponse::<Vec<StrategyMessage>>::error(
+            "DeepSeek 未配置或初始化失败",
+        ));
+    };
+
+    let run_id = {
+        let mut store = state.inner.write().await;
+        store.strategy_run_counter += 1;
+        store.strategy_run_counter
+    };
+
+    let parameters_schema = json!({
+        "type": "object",
+        "properties": {
+            "include_positions": { "type": "boolean", "default": true },
+            "include_history": { "type": "boolean", "default": true },
+            "include_performance": { "type": "boolean", "default": true },
+            "simulated_trading": { "type": "boolean", "default": false }
+        },
+        "required": [
+            "include_positions",
+            "include_history",
+            "include_performance",
+            "simulated_trading"
+        ],
+        "additionalProperties": false
+    });
+
+    let system_prompt = format!(
+        "{}\n\n附加指引：当前为 Run #{run_id} 的策略执行，请首先调用工具获取账户与持仓数据，然后据此形成公开可展示的思考总结、决策与置信度。",
+        DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT
+    );
+
+    let function_request = FunctionCallRequest {
+        function: "get_account_state".to_string(),
+        arguments: json!({
+            "include_positions": true,
+            "include_history": true,
+            "include_performance": true,
+            "simulated_trading": true
+        }),
+        metadata: json!({
+            "source": "api-server",
+            "description": "Retrieve aggregated OKX account snapshot for strategy engine.",
+            "parameters": parameters_schema,
+            "system_prompt": system_prompt
+        }),
+    };
+
+    info!(
+        run_id,
+        "Triggering DeepSeek get_account_state function call"
+    );
+    let function_response = match deepseek_client.call_function(function_request).await {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::error!(run_id, error = ?err, "DeepSeek function call failed");
+            return Json(ApiResponse::<Vec<StrategyMessage>>::error(format!(
+                "DeepSeek 函数调用失败: {err}"
+            )));
+        }
+    };
+
+    let account_state_json = serde_json::to_string_pretty(&function_response.output)
+        .unwrap_or_else(|_| function_response.output.to_string());
+
+    info!(
+        run_id,
+        output_preview = %truncate_for_log(&account_state_json, 512),
+        "DeepSeek tool call succeeded"
+    );
+
+    let summary_prompt = format!(
+        "你是一名专业的加密货币交易 AI。以下是通过 get_account_state 工具获得的账户与持仓数据（JSON 格式）：\n{}\n\n请基于这些数据生成公开展示用的策略输出，并满足：\n1. 输出必须包含【思考总结】【决策】【置信度】三段，且每段换行分隔。\n2. 思考总结控制在 200 字以内，描述市场洞察、仓位状态与下一步计划。\n3. 决策需明确是否开仓/平仓/调整计划，如需操作请说明工具与参数。\n4. 置信度为 0-100 的整数。\n",
+        account_state_json
+    );
+
+    info!(run_id, "Requesting DeepSeek summary synthesis");
+    let summary_content = match deepseek_client.chat_completion(&summary_prompt).await {
+        Ok(text) => {
+            info!(
+                run_id,
+                summary_preview = %truncate_for_log(&text, 256),
+                "DeepSeek summary generated"
+            );
+            text
+        }
+        Err(err) => {
+            tracing::error!(run_id, error = ?err, "DeepSeek summary generation failed");
+            format!(
+                "【思考总结】\n未能生成总结，以下为账户数据：\n{}\n\n【决策】\n保持观望，待重新获取模型输出。\n\n【置信度】\n30",
+                account_state_json
+            )
+        }
+    };
+
+    let strategy_message = StrategyMessage {
+        id: format!(
+            "strategy-{}-{}",
+            run_id,
+            chrono::Utc::now().timestamp_millis()
+        ),
+        role: "assistant".into(),
+        created_at: current_timestamp_iso(),
+        summary: Some(format!("第 {} 次策略执行", run_id)),
+        tags: Some(vec!["auto-run".into(), "deepseek".into()]),
+        content: summary_content,
+    };
+
+    let messages = {
+        let mut store = state.inner.write().await;
+        store.strategy_messages.push(strategy_message);
+        store.strategy_messages.clone()
+    };
+
+    Json(ApiResponse::ok(messages))
+}
+
+fn truncate_for_log(text: &str, max_len: usize) -> String {
+    if text.chars().count() <= max_len {
+        return text.to_string();
+    }
+
+    text.chars().take(max_len).collect::<String>() + "…"
 }
 
 fn parse_optional_number(value: Option<String>) -> Option<f64> {
@@ -890,8 +1053,14 @@ impl MockDataStore {
             open_orders,
             fills,
             next_order_id: 200000,
+            strategy_messages: Vec::new(),
+            strategy_run_counter: 0,
         }
     }
+}
+
+fn current_timestamp_iso() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn current_timestamp() -> String {

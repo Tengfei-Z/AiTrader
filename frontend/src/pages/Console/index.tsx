@@ -1,4 +1,4 @@
-import { Col, Flex, Row } from 'antd';
+import { Col, Flex, Row, message } from 'antd';
 import { useMemo } from 'react';
 import EquityCurveCard from '@components/EquityCurveCard';
 import MarketStrip from '@components/MarketStrip';
@@ -6,6 +6,7 @@ import PositionsHistoryCard from '@components/PositionsHistoryCard';
 import { useFills } from '@hooks/useFills';
 import { usePositionHistory } from '@hooks/usePositionHistory';
 import { useStrategyChat } from '@hooks/useStrategyChat';
+import { useStrategyRunner } from '@hooks/useStrategyRunner';
 import { usePositions } from '@hooks/usePositions';
 import { useTicker } from '@hooks/useTicker';
 import { useSymbolStore } from '@store/useSymbolStore';
@@ -23,6 +24,10 @@ const AiConsolePage = () => {
     isLoading: strategyLoading,
     refetch: refetchStrategyChat
   } = useStrategyChat();
+  const {
+    mutateAsync: triggerStrategy,
+    isPending: strategyRunning
+  } = useStrategyRunner();
 
   const markPrice = ticker?.last ? Number(ticker.last) : undefined;
 
@@ -30,6 +35,18 @@ const AiConsolePage = () => {
     () => buildEquityCurve(fills, markPrice),
     [fills, markPrice]
   );
+
+  const handleStrategyStart = async () => {
+    try {
+      await triggerStrategy();
+      message.success('已触发策略运行');
+    } catch (error) {
+      console.error(error);
+      message.error('策略运行失败，请稍后重试');
+    } finally {
+      await refetchStrategyChat();
+    }
+  };
 
   return (
     <Flex vertical gap={24}>
@@ -52,6 +69,8 @@ const AiConsolePage = () => {
             strategyMessages={strategyMessages}
             strategyLoading={strategyLoading}
             onStrategyRefresh={refetchStrategyChat}
+            onStrategyStart={handleStrategyStart}
+            strategyRunning={strategyRunning}
             className="full-height-card"
           />
         </Col>

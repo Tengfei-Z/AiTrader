@@ -12,6 +12,8 @@ interface Props {
   historyLoading?: boolean;
   strategyLoading?: boolean;
   onStrategyRefresh?: () => void;
+  onStrategyStart?: () => void;
+  strategyRunning?: boolean;
   className?: string;
 }
 
@@ -23,6 +25,8 @@ const PositionsHistoryCard = ({
   historyLoading,
   strategyLoading,
   onStrategyRefresh,
+  onStrategyStart,
+  strategyRunning,
   className
 }: Props) => {
   const items = [
@@ -44,6 +48,8 @@ const PositionsHistoryCard = ({
           messages={strategyMessages}
           loading={strategyLoading}
           onRefresh={onStrategyRefresh}
+          onStart={onStrategyStart}
+          starting={strategyRunning}
           embedded
         />
       )

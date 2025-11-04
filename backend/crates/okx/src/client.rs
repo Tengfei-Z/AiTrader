@@ -77,13 +77,13 @@ impl OkxRestClient {
             .danger_accept_invalid_certs(true);
 
         if let Some(ref http_proxy) = proxy.http {
-            tracing::info!("configuring HTTP proxy {}", http_proxy);
+            tracing::debug!("configuring HTTP proxy {}", http_proxy);
             let http = reqwest::Proxy::http(http_proxy)?;
             builder = builder.proxy(http);
         }
 
         if let Some(ref https_proxy) = proxy.https {
-            tracing::info!("configuring HTTPS proxy {}", https_proxy);
+            tracing::debug!("configuring HTTPS proxy {}", https_proxy);
             let https = reqwest::Proxy::https(https_proxy)?;
             builder = builder.proxy(https);
         }
@@ -294,7 +294,7 @@ impl OkxRestClient {
     where
         T: DeserializeOwned,
     {
-        tracing::info!("OKX GET {}", path_and_query);
+        tracing::debug!("OKX GET {}", path_and_query);
         let builder = self.prepare_request(Method::GET, path_and_query, body)?;
         self.execute(builder).await
     }
@@ -303,7 +303,7 @@ impl OkxRestClient {
     where
         T: DeserializeOwned,
     {
-        tracing::info!("OKX POST {}", path_and_query);
+        tracing::debug!("OKX POST {}", path_and_query);
         let builder = self.prepare_request(Method::POST, path_and_query, body)?;
         self.execute(builder).await
     }

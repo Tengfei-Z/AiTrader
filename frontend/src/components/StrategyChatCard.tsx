@@ -7,6 +7,8 @@ interface Props {
   loading?: boolean;
   className?: string;
   onRefresh?: () => void;
+  onStart?: () => void;
+  starting?: boolean;
   embedded?: boolean;
 }
 
@@ -16,8 +18,17 @@ const roleMap: Record<StrategyMessage['role'], { label: string; color: string }>
   system: { label: '系统提示', color: 'gold' }
 };
 
-const StrategyChatCard = ({ messages, loading, className, onRefresh, embedded }: Props) => {
+const StrategyChatCard = ({
+  messages,
+  loading,
+  className,
+  onRefresh,
+  onStart,
+  starting,
+  embedded
+}: Props) => {
   const sortedMessages = (messages ?? []).slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const spinning = Boolean(loading || starting);
 
   const content = (
     <Flex vertical gap={16} className="strategy-chat-panel">
@@ -25,11 +36,18 @@ const StrategyChatCard = ({ messages, loading, className, onRefresh, embedded }:
         <Typography.Title level={5} className="strategy-chat-panel__title">
           策略对话
         </Typography.Title>
-        {onRefresh && (
-          <Button type="link" size="small" onClick={onRefresh}>
-            刷新
-          </Button>
-        )}
+        <Flex align="center" gap={8}>
+          {onStart && (
+            <Button type="primary" size="small" onClick={onStart} loading={starting}>
+              启动策略
+            </Button>
+          )}
+          {onRefresh && (
+            <Button type="link" size="small" onClick={onRefresh}>
+              刷新
+            </Button>
+          )}
+        </Flex>
       </Flex>
       {sortedMessages.length === 0 ? (
         <Empty description="暂无对话记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -85,19 +103,15 @@ const StrategyChatCard = ({ messages, loading, className, onRefresh, embedded }:
 
   if (embedded) {
     return (
-      <Spin spinning={loading}>
+      <Spin spinning={spinning}>
         <div className={className}>{content}</div>
       </Spin>
     );
   }
 
   return (
-    <Card
-      bordered={false}
-      loading={loading}
-      className={['strategy-chat-card', className].filter(Boolean).join(' ')}
-    >
-      {content}
+    <Card bordered={false} className={['strategy-chat-card', className].filter(Boolean).join(' ')}>
+      <Spin spinning={spinning}>{content}</Spin>
     </Card>
   );
 };

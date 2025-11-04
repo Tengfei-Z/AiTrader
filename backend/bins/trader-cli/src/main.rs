@@ -166,7 +166,9 @@ async fn handle_okx(cmd: OkxCommand) -> Result<()> {
 
 #[cfg(feature = "deepseek")]
 async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
-    use deepseek::{DeepSeekClient, FunctionCallRequest, FunctionCaller};
+    use deepseek::{
+        DeepSeekClient, FunctionCallRequest, FunctionCaller, DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT,
+    };
     use serde_json::json;
 
     let config: &AppConfig = &CONFIG;
@@ -192,6 +194,10 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
             println!("{}", reply);
         }
         DeepseekAction::AccountState { simulated } => {
+            let system_prompt = format!(
+                "{}\n\n附加指引：当接到账户状态查询时，请优先调用 MCP 工具 get_account_state，并传入当前请求中的 JSON 参数，再据此完成总结、决策与置信度评估。",
+                DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT
+            );
             let parameters_schema = json!({
                 "type": "object",
                 "properties": {
@@ -233,7 +239,7 @@ async fn handle_deepseek(cmd: DeepseekCommand) -> Result<()> {
                     "source": "trader-cli",
                     "description": "Retrieve aggregated OKX account balances, performance indicators, and open positions.",
                     "parameters": parameters_schema,
-                    "system_prompt": "You are an assistant that relays trading account requests. When asked to get account information, always call the provided tool with proper JSON arguments."
+                    "system_prompt": system_prompt
                 }),
             };
 

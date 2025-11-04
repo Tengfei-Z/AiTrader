@@ -124,6 +124,7 @@ dependencies = [
  "axum",
  "chrono",
  "config",
+ "deepseek",
  "mcp_adapter",
  "okx",
  "serde",
