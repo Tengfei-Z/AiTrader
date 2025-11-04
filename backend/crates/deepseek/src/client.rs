@@ -1,11 +1,11 @@
 use ai_core::config::{AppConfig, DeepSeekConfig};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use async_openai::{
     config::OpenAIConfig,
     types::{
         ChatCompletionNamedToolChoice, ChatCompletionRequestAssistantMessageArgs,
         ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessageArgs,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionToolArgs,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionToolArgs,
         ChatCompletionToolChoiceOption, ChatCompletionToolType, CreateChatCompletionRequestArgs,
         FunctionName, FunctionObject, FunctionObjectArgs,
     },
@@ -25,6 +25,8 @@ use mcp_adapter::{
 };
 use okx::OkxRestClient;
 use serde_json::{self, json, Value};
+
+const ALLOWED_COINS: &[&str] = &["BTC", "ETH", "SOL", "BNB"];
 
 pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。你的目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
 
@@ -344,7 +346,7 @@ impl DeepSeekClient {
     async fn execute_local_tool(&self, name: &str, arguments: &Value) -> Result<Option<Value>> {
         match name {
             "get_account_state" => {
-                let request: AccountStateRequest =
+                let mut request: AccountStateRequest =
                     serde_json::from_value(arguments.clone()).unwrap_or_default();
 
                 info!(
@@ -353,17 +355,12 @@ impl DeepSeekClient {
                     "Executing local tool handler"
                 );
 
-                let app_config = match &self.app_config {
-                    Some(cfg) => cfg,
-                    None => return Ok(None),
-                };
+                enforce_simulated(&mut request.simulated_trading);
 
-                let okx_client = if request.simulated_trading {
-                    OkxRestClient::from_config_simulated(app_config)
-                } else {
-                    OkxRestClient::from_config(app_config)
-                }
-                .context("初始化 OKX 客户端失败")?;
+                let app_config = get_app_config(&self.app_config)?;
+
+                let okx_client = OkxRestClient::from_config_simulated(app_config)
+                    .context("初始化 OKX 客户端失败")?;
 
                 let account_state = fetch_account_state(&okx_client, &request)
                     .await
@@ -376,7 +373,7 @@ impl DeepSeekClient {
                 Ok(Some(value))
             }
             "get_market_data" => {
-                let request: MarketDataRequest =
+                let mut request: MarketDataRequest =
                     serde_json::from_value(arguments.clone()).unwrap_or_default();
 
                 info!(
@@ -386,21 +383,28 @@ impl DeepSeekClient {
                     "Executing local tool handler"
                 );
 
-                let app_config = match &self.app_config {
-                    Some(cfg) => cfg,
-                    None => return Ok(None),
+                enforce_simulated(&mut request.simulated_trading);
+                request.coins = sanitize_coins(request.coins)?;
+
+                let app_config = get_app_config(&self.app_config)?;
+
+                let okx_client = OkxRestClient::from_config_simulated(app_config)
+                    .context("初始化 OKX 客户端失败")?;
+
+                let response = match fetch_market_data(&okx_client, &request).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        warn!(
+                            tool = name,
+                            error = ?err,
+                            coins = ?request.coins,
+                            "拉取行情数据失败"
+                        );
+                        return Ok(Some(json!({
+                            "error": format!("fetch_market_data failed: {err}")
+                        })));
+                    }
                 };
-
-                let okx_client = if request.simulated_trading {
-                    OkxRestClient::from_config_simulated(app_config)
-                } else {
-                    OkxRestClient::from_config(app_config)
-                }
-                .context("初始化 OKX 客户端失败")?;
-
-                let response = fetch_market_data(&okx_client, &request)
-                    .await
-                    .context("拉取行情数据失败")?;
 
                 let value = serde_json::to_value(response).context("序列化行情结果失败")?;
 
@@ -409,7 +413,7 @@ impl DeepSeekClient {
                 Ok(Some(value))
             }
             "execute_trade" => {
-                let request: ExecuteTradeRequest =
+                let mut request: ExecuteTradeRequest =
                     serde_json::from_value(arguments.clone()).unwrap_or_default();
 
                 info!(
@@ -420,21 +424,32 @@ impl DeepSeekClient {
                     "Executing local tool handler"
                 );
 
-                let app_config = match &self.app_config {
-                    Some(cfg) => cfg,
-                    None => return Ok(None),
-                };
-
-                let okx_client = if request.simulated_trading {
-                    OkxRestClient::from_config_simulated(app_config)
-                } else {
-                    OkxRestClient::from_config(app_config)
+                enforce_simulated(&mut request.simulated_trading);
+                ensure_allowed_coin(&request.coin)?;
+                if let Some(inst) = request.instrument_id.as_ref() {
+                    ensure_allowed_instrument(inst)?;
                 }
-                .context("初始化 OKX 客户端失败")?;
 
-                let response = execute_trade_tool(&okx_client, &request)
-                    .await
-                    .context("执行交易失败")?;
+                let app_config = get_app_config(&self.app_config)?;
+
+                let okx_client = OkxRestClient::from_config_simulated(app_config)
+                    .context("初始化 OKX 客户端失败")?;
+
+                let response = match execute_trade_tool(&okx_client, &request).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        warn!(
+                            tool = name,
+                            error = ?err,
+                            action = ?request.action,
+                            coin = %request.coin,
+                            "执行交易失败"
+                        );
+                        return Ok(Some(json!({
+                            "error": format!("execute_trade failed: {err}")
+                        })));
+                    }
+                };
 
                 let value = serde_json::to_value(response).context("序列化交易结果失败")?;
 
@@ -443,7 +458,7 @@ impl DeepSeekClient {
                 Ok(Some(value))
             }
             "update_exit_plan" => {
-                let request: UpdateExitPlanRequest =
+                let mut request: UpdateExitPlanRequest =
                     serde_json::from_value(arguments.clone()).unwrap_or_default();
 
                 info!(
@@ -453,21 +468,27 @@ impl DeepSeekClient {
                     "Executing local tool handler"
                 );
 
-                let app_config = match &self.app_config {
-                    Some(cfg) => cfg,
-                    None => return Ok(None),
+                enforce_simulated(&mut request.simulated_trading);
+
+                let app_config = get_app_config(&self.app_config)?;
+
+                let okx_client = OkxRestClient::from_config_simulated(app_config)
+                    .context("初始化 OKX 客户端失败")?;
+
+                let response = match update_exit_plan(&okx_client, &request).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        warn!(
+                            tool = name,
+                            error = ?err,
+                            position_id = %request.position_id,
+                            "更新退出计划失败"
+                        );
+                        return Ok(Some(json!({
+                            "error": format!("update_exit_plan failed: {err}")
+                        })));
+                    }
                 };
-
-                let okx_client = if request.simulated_trading {
-                    OkxRestClient::from_config_simulated(app_config)
-                } else {
-                    OkxRestClient::from_config(app_config)
-                }
-                .context("初始化 OKX 客户端失败")?;
-
-                let response = update_exit_plan(&okx_client, &request)
-                    .await
-                    .context("更新退出计划失败")?;
 
                 let value = serde_json::to_value(response).context("序列化退出计划结果失败")?;
 
@@ -526,6 +547,58 @@ fn truncate_for_log(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect::<String>() + "…"
 }
 
+fn enforce_simulated(flag: &mut bool) {
+    if !*flag {
+        warn!("非模拟调用已被禁用，自动切换到模拟账户");
+        *flag = true;
+    }
+}
+
+fn sanitize_coins(coins: Vec<String>) -> Result<Vec<String>> {
+    let mut filtered: Vec<String> = Vec::new();
+
+    for coin in coins {
+        let upper = coin.to_ascii_uppercase();
+        if ALLOWED_COINS.contains(&upper.as_str()) {
+            if !filtered.contains(&upper) {
+                filtered.push(upper);
+            }
+        } else {
+            warn!(coin = %coin, "币种不在允许列表，已忽略");
+        }
+    }
+
+    ensure!(
+        !filtered.is_empty(),
+        "请求币种均不在允许列表 {:?}",
+        ALLOWED_COINS
+    );
+
+    Ok(filtered)
+}
+
+fn ensure_allowed_coin(coin: &str) -> Result<()> {
+    let upper = coin.to_ascii_uppercase();
+    ensure!(
+        ALLOWED_COINS.contains(&upper.as_str()),
+        "币种 {} 不在允许列表 {:?}",
+        coin,
+        ALLOWED_COINS
+    );
+    Ok(())
+}
+
+fn ensure_allowed_instrument(instrument_id: &str) -> Result<()> {
+    let coin = instrument_id.split('-').next().unwrap_or(instrument_id);
+    ensure_allowed_coin(coin)
+}
+
+fn get_app_config(app_config: &Option<AppConfig>) -> Result<&AppConfig> {
+    app_config
+        .as_ref()
+        .ok_or_else(|| anyhow!("AppConfig 未初始化，无法执行本地工具"))
+}
+
 fn build_tool_catalog(
     primary_name: &str,
     primary_description: Option<&str>,
@@ -569,9 +642,7 @@ fn build_function_object(
     builder.build().context("构建函数描述失败")
 }
 
-fn build_chat_tools(
-    tools: &[FunctionObject],
-) -> Result<Vec<async_openai::types::ChatCompletionTool>> {
+fn build_chat_tools(tools: &[FunctionObject]) -> Result<Vec<ChatCompletionTool>> {
     tools
         .iter()
         .map(|tool| {
@@ -593,7 +664,7 @@ fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                 "properties": {
                     "coins": {
                         "type": "array",
-                        "items": { "type": "string" },
+                        "items": { "type": "string", "enum": ["BTC", "ETH", "SOL", "BNB"] },
                         "minItems": 1
                     },
                     "timeframe": { "type": "string", "default": "3m" },
@@ -639,7 +710,7 @@ fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                 "type": "object",
                 "properties": {
                     "action": { "type": "string", "enum": ["open_long", "open_short", "close_position"] },
-                    "coin": { "type": "string" },
+                    "coin": { "type": "string", "enum": ["BTC", "ETH", "SOL", "BNB"] },
                     "instrument_id": { "type": "string" },
                     "instrument_type": { "type": "string" },
                     "quote": { "type": "string", "default": "USDT" },

@@ -7,6 +7,9 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser, Debug)]
 #[command(name = "okx-cli", about = "独立的 OKX API 测试工具", version)]
 struct Cli {
+    /// 是否使用模拟账户（默认开启）
+    #[arg(long, default_value_t = true)]
+    simulated: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -31,7 +34,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let config: &AppConfig = &CONFIG;
-    let client = OkxRestClient::from_config(config)?;
+    let client = if cli.simulated {
+        OkxRestClient::from_config_simulated(config)?
+    } else {
+        OkxRestClient::from_config(config)?
+    };
 
     match cli.command {
         Command::Time => {

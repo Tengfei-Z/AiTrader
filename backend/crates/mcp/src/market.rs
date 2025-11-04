@@ -204,7 +204,7 @@ pub async fn fetch_market_data(
                 response.coins.insert(coin.to_uppercase(), data);
             }
             Err(err) => {
-                warn!(%err, coin = %coin, "failed to gather market data");
+                warn!(error = ?err, coin = %coin, "failed to gather market data");
                 let mut data = CoinMarketData::default();
                 data.notes = Some(format!("数据拉取失败: {}", err));
                 response.coins.insert(coin.to_uppercase(), data);
