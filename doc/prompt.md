@@ -24,7 +24,6 @@ This document captures the current prompt contract used by AiTrader when orchest
 2. get_account_state：查询账户状态与持仓
 3. execute_trade：执行交易（开/平仓）
 4. update_exit_plan：更新已有仓位的退出计划
-5. get_performance_metrics：查看账户表现数据
 
 输出要求（每次响应）：
 1. 思考总结（≤200 字）：概述市场状况、持仓状态、下一步计划

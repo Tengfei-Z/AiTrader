@@ -15,7 +15,14 @@ use async_trait::async_trait;
 use tracing::{info, instrument, warn};
 
 use crate::schema::{FunctionCallRequest, FunctionCallResponse};
-use mcp_adapter::account::{fetch_account_state, AccountStateRequest};
+use mcp_adapter::{
+    account::{fetch_account_state, AccountStateRequest},
+    market::{fetch_market_data, MarketDataRequest},
+    trade::{
+        execute_trade as execute_trade_tool, update_exit_plan, ExecuteTradeRequest,
+        UpdateExitPlanRequest,
+    },
+};
 use okx::OkxRestClient;
 use serde_json::{self, json, Value};
 
@@ -38,7 +45,6 @@ pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的�
 2. get_account_state：查询账户状态与持仓
 3. execute_trade：执行交易（开/平仓）
 4. update_exit_plan：更新已有仓位的退出计划
-5. get_performance_metrics：查看账户表现数据
 
 输出要求（每次响应）：
 1. 思考总结（≤200 字）：概述市场状况、持仓状态、下一步计划。
@@ -126,15 +132,11 @@ impl FunctionCaller for DeepSeekClient {
                 })
             });
 
-        let build_function_object = || -> Result<FunctionObject> {
-            let mut function_builder = FunctionObjectArgs::default();
-            function_builder.name(request.function.clone());
-            if let Some(desc) = &function_description {
-                function_builder.description(desc.clone());
-            }
-            function_builder.parameters(Some(parameters_schema.clone()));
-            function_builder.build().context("构建函数描述失败")
-        };
+        let tool_catalog = build_tool_catalog(
+            &request.function,
+            function_description.as_deref(),
+            &parameters_schema,
+        )?;
 
         let system_message = ChatCompletionRequestSystemMessageArgs::default()
             .content(system_prompt)
@@ -159,16 +161,12 @@ impl FunctionCaller for DeepSeekClient {
         let mut force_tool_choice = true;
 
         for turn in 0..8 {
-            let tool = ChatCompletionToolArgs::default()
-                .function(build_function_object()?)
-                .build()
-                .context("构建工具描述失败")?;
-
+            let chat_tools = build_chat_tools(&tool_catalog)?;
             let mut request_builder = CreateChatCompletionRequestArgs::default();
             request_builder
                 .model(self.config.model.clone())
                 .messages(messages.clone())
-                .tools(vec![tool])
+                .tools(chat_tools)
                 .temperature(0_f32);
 
             if force_tool_choice {
@@ -377,6 +375,106 @@ impl DeepSeekClient {
 
                 Ok(Some(value))
             }
+            "get_market_data" => {
+                let request: MarketDataRequest =
+                    serde_json::from_value(arguments.clone()).unwrap_or_default();
+
+                info!(
+                    tool = name,
+                    simulated = request.simulated_trading,
+                    coins = ?request.coins,
+                    "Executing local tool handler"
+                );
+
+                let app_config = match &self.app_config {
+                    Some(cfg) => cfg,
+                    None => return Ok(None),
+                };
+
+                let okx_client = if request.simulated_trading {
+                    OkxRestClient::from_config_simulated(app_config)
+                } else {
+                    OkxRestClient::from_config(app_config)
+                }
+                .context("初始化 OKX 客户端失败")?;
+
+                let response = fetch_market_data(&okx_client, &request)
+                    .await
+                    .context("拉取行情数据失败")?;
+
+                let value = serde_json::to_value(response).context("序列化行情结果失败")?;
+
+                info!(tool = name, "Local tool completed successfully");
+
+                Ok(Some(value))
+            }
+            "execute_trade" => {
+                let request: ExecuteTradeRequest =
+                    serde_json::from_value(arguments.clone()).unwrap_or_default();
+
+                info!(
+                    tool = name,
+                    action = ?request.action,
+                    coin = %request.coin,
+                    simulated = request.simulated_trading,
+                    "Executing local tool handler"
+                );
+
+                let app_config = match &self.app_config {
+                    Some(cfg) => cfg,
+                    None => return Ok(None),
+                };
+
+                let okx_client = if request.simulated_trading {
+                    OkxRestClient::from_config_simulated(app_config)
+                } else {
+                    OkxRestClient::from_config(app_config)
+                }
+                .context("初始化 OKX 客户端失败")?;
+
+                let response = execute_trade_tool(&okx_client, &request)
+                    .await
+                    .context("执行交易失败")?;
+
+                let value = serde_json::to_value(response).context("序列化交易结果失败")?;
+
+                info!(tool = name, "Local tool completed successfully");
+
+                Ok(Some(value))
+            }
+            "update_exit_plan" => {
+                let request: UpdateExitPlanRequest =
+                    serde_json::from_value(arguments.clone()).unwrap_or_default();
+
+                info!(
+                    tool = name,
+                    position_id = %request.position_id,
+                    simulated = request.simulated_trading,
+                    "Executing local tool handler"
+                );
+
+                let app_config = match &self.app_config {
+                    Some(cfg) => cfg,
+                    None => return Ok(None),
+                };
+
+                let okx_client = if request.simulated_trading {
+                    OkxRestClient::from_config_simulated(app_config)
+                } else {
+                    OkxRestClient::from_config(app_config)
+                }
+                .context("初始化 OKX 客户端失败")?;
+
+                let response = update_exit_plan(&okx_client, &request)
+                    .await
+                    .context("更新退出计划失败")?;
+
+                let value = serde_json::to_value(response).context("序列化退出计划结果失败")?;
+
+                info!(tool = name, "Local tool completed successfully");
+
+                Ok(Some(value))
+            }
             _ => Ok(None),
         }
     }
@@ -426,4 +524,156 @@ fn truncate_for_log(text: &str, max_chars: usize) -> String {
     }
 
     text.chars().take(max_chars).collect::<String>() + "…"
+}
+
+fn build_tool_catalog(
+    primary_name: &str,
+    primary_description: Option<&str>,
+    primary_schema: &Value,
+) -> Result<Vec<FunctionObject>> {
+    let mut tools = Vec::new();
+
+    tools.push(build_function_object(
+        primary_name,
+        primary_description,
+        Some(primary_schema.clone()),
+    )?);
+
+    for (name, description, schema) in default_tool_definitions() {
+        if name == primary_name {
+            continue;
+        }
+        tools.push(build_function_object(
+            name,
+            Some(description),
+            Some(schema),
+        )?);
+    }
+
+    Ok(tools)
+}
+
+fn build_function_object(
+    name: &str,
+    description: Option<&str>,
+    parameters: Option<Value>,
+) -> Result<FunctionObject> {
+    let mut builder = FunctionObjectArgs::default();
+    builder.name(name.to_string());
+    if let Some(desc) = description {
+        builder.description(desc.to_string());
+    }
+    if let Some(schema) = parameters {
+        builder.parameters(Some(schema));
+    }
+    builder.build().context("构建函数描述失败")
+}
+
+fn build_chat_tools(
+    tools: &[FunctionObject],
+) -> Result<Vec<async_openai::types::ChatCompletionTool>> {
+    tools
+        .iter()
+        .map(|tool| {
+            ChatCompletionToolArgs::default()
+                .function(tool.clone())
+                .build()
+                .context("构建工具描述失败")
+        })
+        .collect()
+}
+
+fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
+    vec![
+        (
+            "get_market_data",
+            "Fetch recent market metrics, indicators, and optional order book snapshots for specified coins.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "coins": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1
+                    },
+                    "timeframe": { "type": "string", "default": "3m" },
+                    "quote": { "type": "string", "default": "USDT" },
+                    "indicators": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "default": ["price"]
+                    },
+                    "include_orderbook": { "type": "boolean", "default": false },
+                    "include_funding": { "type": "boolean", "default": false },
+                    "include_open_interest": { "type": "boolean", "default": false },
+                    "simulated_trading": { "type": "boolean", "default": true }
+                },
+                "required": ["coins"],
+                "additionalProperties": false
+            }),
+        ),
+        (
+            "get_account_state",
+            "Aggregate OKX account balances, active positions, and performance metrics.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "include_positions": { "type": "boolean", "default": true },
+                    "include_history": { "type": "boolean", "default": true },
+                    "include_performance": { "type": "boolean", "default": true },
+                    "simulated_trading": { "type": "boolean", "default": true }
+                },
+                "required": [
+                    "include_positions",
+                    "include_history",
+                    "include_performance",
+                    "simulated_trading"
+                ],
+                "additionalProperties": false
+            }),
+        ),
+        (
+            "execute_trade",
+            "Place or close a leveraged trade on OKX using either live or simulated credentials.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["open_long", "open_short", "close_position"] },
+                    "coin": { "type": "string" },
+                    "instrument_id": { "type": "string" },
+                    "instrument_type": { "type": "string" },
+                    "quote": { "type": "string", "default": "USDT" },
+                    "td_mode": { "type": "string", "default": "cross" },
+                    "margin_currency": { "type": "string" },
+                    "leverage": { "type": "number" },
+                    "margin_amount": { "type": "number" },
+                    "quantity": { "type": "number" },
+                    "position_id": { "type": "string" },
+                    "exit_plan": { "type": "object" },
+                    "confidence": { "type": "integer" },
+                    "simulated_trading": { "type": "boolean", "default": true }
+                },
+                "required": ["action", "coin", "simulated_trading"],
+                "additionalProperties": true
+            }),
+        ),
+        (
+            "update_exit_plan",
+            "Adjust take-profit and stop-loss parameters for an existing position.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "position_id": { "type": "string" },
+                    "new_profit_target": { "type": "number" },
+                    "new_stop_loss": { "type": "number" },
+                    "new_invalidation": { "type": "string" },
+                    "instrument_id": { "type": "string" },
+                    "td_mode": { "type": "string" },
+                    "simulated_trading": { "type": "boolean", "default": true }
+                },
+                "required": ["position_id", "simulated_trading"],
+                "additionalProperties": false
+            }),
+        ),
+    ]
 }
