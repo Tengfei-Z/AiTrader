@@ -419,9 +419,20 @@ impl OkxRestClient {
             return Err(OkxError::HttpStatusWithBody { status, body }.into());
         }
 
-        response
-            .json::<T>()
+        // Read the response body as text first
+        let body = response
+            .text()
             .await
+            .map_err(|err| OkxError::Deserialize(err.into()))?;
+        
+        // Trim any trailing whitespace or newlines that might cause deserialization issues
+        let body = body.trim();
+        
+        // Log the raw response for debugging
+        tracing::debug!("OKX response body: {}", body);
+        
+        // Deserialize from the trimmed text
+        serde_json::from_str::<T>(body)
             .map_err(|err| OkxError::Deserialize(err.into()).into())
     }
 }
