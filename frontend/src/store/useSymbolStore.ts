@@ -6,6 +6,6 @@ interface SymbolState {
 }
 
 export const useSymbolStore = create<SymbolState>((set) => ({
-  symbol: 'BTC-USDT',
+  symbol: 'BTC-USDT-SWAP',
   setSymbol: (symbol) => set({ symbol })
 }));

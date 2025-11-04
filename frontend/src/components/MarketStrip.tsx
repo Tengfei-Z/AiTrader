@@ -10,10 +10,7 @@ type CoinConfig = {
 };
 
 const coins: CoinConfig[] = [
-  { symbol: 'BTC-USDT', code: 'BTC', name: 'Bitcoin', color: '#f97316' },
-  { symbol: 'ETH-USDT', code: 'ETH', name: 'Ethereum', color: '#6366f1' },
-  { symbol: 'SOL-USDT', code: 'SOL', name: 'Solana', color: '#0ea5e9' },
-  { symbol: 'BNB-USDT', code: 'BNB', name: 'BNB', color: '#facc15' }
+  { symbol: 'BTC-USDT-SWAP', code: 'BTC', name: 'Bitcoin Perp', color: '#f97316' }
 ];
 
 const formatNumber = (value?: number) =>

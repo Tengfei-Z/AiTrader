@@ -14,6 +14,8 @@ use serde_json::json;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, info, warn, Level};
+use std::time::{Duration, Instant};
+use tokio::time::timeout;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::layer::SubscriberExt;
@@ -31,25 +33,13 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 #[derive(Clone)]
 struct AppState {
-    inner: Arc<RwLock<MockDataStore>>,
     okx: Option<OkxRestClient>,
     okx_simulated: Option<OkxRestClient>,
     deepseek: Option<DeepSeekClient>,
-}
-
-#[derive(Debug)]
-struct MockDataStore {
-    tickers: HashMap<String, Ticker>,
-    orderbooks: HashMap<String, OrderBook>,
-    trades: HashMap<String, Vec<Trade>>,
-    balances: Vec<Balance>,
-    positions: Vec<Position>,
-    position_history: Vec<PositionHistory>,
-    open_orders: Vec<Order>,
-    fills: Vec<Fill>,
-    next_order_id: u64,
-    strategy_messages: Vec<StrategyMessage>,
-    strategy_run_counter: u64,
+    strategy_messages: Arc<RwLock<Vec<StrategyMessage>>>,
+    strategy_run_counter: Arc<RwLock<u64>>,
+    next_order_id: Arc<RwLock<u64>>, // reserved for future local bookkeeping
+    last_run_status: Arc<RwLock<Option<StrategyRunStatus>>>,
 }
 
 fn format_amount(value: f64) -> String {
@@ -240,6 +230,26 @@ struct PlaceOrderResponse {
     status: OrderStatus,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StrategyOutcome {
+    Ok,
+    TimeoutStage1,
+    TimeoutStage2,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StrategyRunStatus {
+    run_id: u64,
+    started_at: String,
+    ended_at: Option<String>,
+    stage1_elapsed_ms: Option<u128>,
+    stage2_elapsed_ms: Option<u128>,
+    outcome: StrategyOutcome,
+    error: Option<String>,
+}
+
 fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/market/ticker", get(get_ticker))
@@ -254,6 +264,7 @@ fn api_routes() -> Router<AppState> {
         .route("/orders/:order_id", delete(cancel_order))
         .route("/model/strategy-chat", get(get_strategy_chat))
         .route("/model/strategy-run", post(trigger_strategy_run))
+        .route("/model/strategy-status", get(get_strategy_status))
 }
 
 #[tokio::main]
@@ -290,10 +301,13 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app_state = AppState {
-        inner: Arc::new(RwLock::new(MockDataStore::new())),
         okx: okx_client,
         okx_simulated,
         deepseek: deepseek_client,
+        strategy_messages: Arc::new(RwLock::new(Vec::new())),
+        strategy_run_counter: Arc::new(RwLock::new(0)),
+        next_order_id: Arc::new(RwLock::new(1)),
+        last_run_status: Arc::new(RwLock::new(None)),
     };
     let bind_addr = settings
         .bind_addr()
@@ -358,59 +372,23 @@ async fn get_ticker(
         }
     }
 
-    debug!(symbol = %symbol, "using mock ticker");
-    let store = state.inner.read().await;
-    let response = store
-        .tickers
-        .get(&symbol)
-        .cloned()
-        .map(ApiResponse::ok)
-        .unwrap_or_else(|| ApiResponse::error(format!("symbol {symbol} not found")));
-
-    Json(response)
+    Json(ApiResponse::<Ticker>::error(format!("symbol {symbol} not found")))
 }
 
 async fn get_orderbook(
-    State(state): State<AppState>,
-    Query(SymbolQuery { symbol, depth, .. }): Query<SymbolQuery>,
+    _state: State<AppState>,
+    Query(SymbolQuery { symbol, depth: _depth, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     tracing::info!(symbol = %symbol, "received orderbook request");
-    let store = state.inner.read().await;
-    let response = store
-        .orderbooks
-        .get(&symbol)
-        .cloned()
-        .map(|mut book| {
-            if let Some(depth) = depth {
-                book.bids.truncate(depth);
-                book.asks.truncate(depth);
-            }
-            ApiResponse::ok(book)
-        })
-        .unwrap_or_else(|| ApiResponse::error(format!("symbol {symbol} not found")));
-
-    Json(response)
+    Json(ApiResponse::<OrderBook>::error(format!("symbol {symbol} not found")))
 }
 
 async fn get_trades(
-    State(state): State<AppState>,
-    Query(SymbolQuery { symbol, limit, .. }): Query<SymbolQuery>,
+    _state: State<AppState>,
+    Query(SymbolQuery { symbol, limit: _limit, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     tracing::info!(symbol = %symbol, "received trades request");
-    let store = state.inner.read().await;
-    let response = store
-        .trades
-        .get(&symbol)
-        .cloned()
-        .map(|mut trades| {
-            if let Some(limit) = limit {
-                trades.truncate(limit);
-            }
-            ApiResponse::ok(trades)
-        })
-        .unwrap_or_else(|| ApiResponse::error(format!("symbol {symbol} not found")));
-
-    Json(response)
+    Json(ApiResponse::<Vec<Trade>>::ok(Vec::new()))
 }
 
 async fn get_balances(
@@ -444,8 +422,7 @@ async fn get_balances(
         }
     }
 
-    let store = state.inner.read().await;
-    Json(ApiResponse::ok(store.balances.clone()))
+    Json(ApiResponse::ok(Vec::<Balance>::new()))
 }
 
 async fn get_positions(
@@ -490,28 +467,15 @@ async fn get_positions(
         }
     }
 
-    let store = state.inner.read().await;
-    Json(ApiResponse::ok(store.positions.clone()))
+    Json(ApiResponse::ok(Vec::<Position>::new()))
 }
 
 async fn get_open_orders(
-    State(state): State<AppState>,
-    Query(SymbolOptionalQuery { symbol, .. }): Query<SymbolOptionalQuery>,
+    _state: State<AppState>,
+    Query(SymbolOptionalQuery { symbol: _symbol, .. }): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
-    tracing::info!(?symbol, "received open orders request");
-    let store = state.inner.read().await;
-    let mut orders: Vec<Order> = store
-        .open_orders
-        .iter()
-        .filter(|order| order.status == OrderStatus::Open)
-        .cloned()
-        .collect();
-
-    if let Some(symbol) = symbol {
-        orders.retain(|order| order.symbol == symbol);
-    }
-
-    Json(ApiResponse::ok(orders))
+    tracing::info!("received open orders request");
+    Json(ApiResponse::ok(Vec::<Order>::new()))
 }
 
 async fn get_fills(
@@ -548,20 +512,7 @@ async fn get_fills(
         }
     }
 
-    let mut fills = {
-        let store = state.inner.read().await;
-        store.fills.clone()
-    };
-
-    if let Some(symbol) = symbol_filter {
-        fills.retain(|fill| fill.symbol == symbol);
-    }
-
-    if let Some(limit) = limit {
-        fills.truncate(limit);
-    }
-
-    Json(ApiResponse::ok(fills))
+    Json(ApiResponse::ok(Vec::<Fill>::new()))
 }
 
 async fn get_positions_history(
@@ -614,20 +565,7 @@ async fn get_positions_history(
         }
     }
 
-    let mut history = {
-        let store = state.inner.read().await;
-        store.position_history.clone()
-    };
-
-    if let Some(symbol) = symbol_filter {
-        history.retain(|item| item.symbol == symbol);
-    }
-
-    if let Some(limit) = limit {
-        history.truncate(limit);
-    }
-
-    Json(ApiResponse::ok(history))
+    Json(ApiResponse::ok(Vec::<PositionHistory>::new()))
 }
 
 fn convert_okx_fill(detail: okx::models::FillDetail) -> Fill {
@@ -714,8 +652,8 @@ fn convert_okx_position_history(detail: okx::models::PositionHistoryDetail) -> P
 }
 
 async fn get_strategy_chat(State(state): State<AppState>) -> impl IntoResponse {
-    let store = state.inner.read().await;
-    Json(ApiResponse::ok(store.strategy_messages.clone()))
+    let messages = state.strategy_messages.read().await.clone();
+    Json(ApiResponse::ok(messages))
 }
 
 async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoResponse {
@@ -727,9 +665,9 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     };
 
     let run_id = {
-        let mut store = state.inner.write().await;
-        store.strategy_run_counter += 1;
-        store.strategy_run_counter
+        let mut counter = state.strategy_run_counter.write().await;
+        *counter += 1;
+        *counter
     };
 
     let parameters_schema = json!({
@@ -750,8 +688,9 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     });
 
     let system_prompt = format!(
-        "{}\n\n附加指引：当前为 Run #{run_id} 的策略执行，请首先调用工具获取账户与持仓数据，然后据此形成公开可展示的思考总结、决策与置信度。",
-        DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT
+        "{}\n\nRun #{} 规则（精简）：\n- 仅分析与交易 BTC 永续：BTC-USDT-SWAP（不涉现货）。\n- 建议下单默认标的：BTC-USDT-SWAP。\n- 先取账户/仓位，再给结论；输出含：思考、决策、置信度。",
+        DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT,
+        run_id
     );
 
     let function_request = FunctionCallRequest {
@@ -765,7 +704,6 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         metadata: json!({
             "source": "api-server",
             "description": "Retrieve aggregated OKX account snapshot for strategy engine.",
-            "parameters": parameters_schema,
             "system_prompt": system_prompt
         }),
     };
@@ -774,18 +712,131 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         run_id,
         "Triggering DeepSeek get_account_state function call"
     );
-    let function_response = match deepseek_client.call_function(function_request).await {
+    // Global deadline budget for the whole run
+    let budget_total = Duration::from_secs(20);
+    let start_time = Instant::now();
+    let started_at_iso = current_timestamp_iso();
+    {
+        let mut status = state.last_run_status.write().await;
+        *status = Some(StrategyRunStatus {
+            run_id,
+            started_at: started_at_iso.clone(),
+            ended_at: None,
+            stage1_elapsed_ms: None,
+            stage2_elapsed_ms: None,
+            outcome: StrategyOutcome::Ok,
+            error: None,
+        });
+    }
+
+    // Stage 1: function call with remaining budget (up to 10s)
+    let mut remaining = budget_total
+        .checked_sub(start_time.elapsed())
+        .unwrap_or_else(|| Duration::from_secs(0));
+    let stage1_timeout = remaining.min(Duration::from_secs(10));
+
+    let function_response = match timeout(stage1_timeout, deepseek_client.call_function(function_request)).await {
+        Err(_) => {
+            tracing::error!(run_id, "DeepSeek function call timed out");
+            let mut status = state.last_run_status.write().await;
+            if let Some(s) = status.as_mut() {
+                s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
+                s.ended_at = Some(current_timestamp_iso());
+                s.outcome = StrategyOutcome::TimeoutStage1;
+                s.error = Some("function_call_timeout".into());
+            }
+            return Json(ApiResponse::<Vec<StrategyMessage>>::error(
+                "DeepSeek 函数调用超时"
+            ));
+        }
+        Ok(result) => match result {
         Ok(resp) => resp,
         Err(err) => {
             tracing::error!(run_id, error = ?err, "DeepSeek function call failed");
+            let mut status = state.last_run_status.write().await;
+            if let Some(s) = status.as_mut() {
+                s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
+                s.ended_at = Some(current_timestamp_iso());
+                s.outcome = StrategyOutcome::Error;
+                s.error = Some(format!("function_call_error: {err}"));
+            }
             return Json(ApiResponse::<Vec<StrategyMessage>>::error(format!(
                 "DeepSeek 函数调用失败: {err}"
             )));
         }
+    }
     };
+    {
+        let mut status = state.last_run_status.write().await;
+        if let Some(s) = status.as_mut() {
+            s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
+        }
+    }
 
-    let account_state_json = serde_json::to_string_pretty(&function_response.output)
-        .unwrap_or_else(|_| function_response.output.to_string());
+    // Focus DeepSeek analysis on BTC-only data
+    let focus_coin = "BTC";
+
+    let mut filtered_output = function_response.output.clone();
+    if let serde_json::Value::Object(ref mut map) = filtered_output {
+        // Helper to check if a JSON value has coin/symbol fields containing focus_coin
+        let contains_focus_coin = |value: &serde_json::Value| -> bool {
+            let focus = focus_coin.to_uppercase();
+            match value {
+                serde_json::Value::Object(obj) => {
+                    let coin = obj.get("coin").and_then(|v| v.as_str()).unwrap_or("");
+                    let symbol = obj.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+                    coin.to_uppercase().contains(&focus) || symbol.to_uppercase().contains(&focus)
+                }
+                _ => false,
+            }
+        };
+
+        // Filter balances to BTC and USDT only if balances exist
+        if let Some(balances) = map.get_mut("balances").and_then(|v| v.as_array_mut()) {
+            balances.retain(|item| {
+                let asset = item
+                    .get("asset")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_uppercase();
+                asset == focus_coin || asset == "USDT"
+            });
+        }
+
+        // Filter active positions arrays by focus coin
+        if let Some(positions) = map
+            .get_mut("active_positions")
+            .and_then(|v| v.as_array_mut())
+        {
+            positions.retain(|item| contains_focus_coin(item));
+        }
+
+        // Filter positions history variants by focus coin
+        if let Some(history) = map
+            .get_mut("positions_history")
+            .and_then(|v| v.as_array_mut())
+        {
+            history.retain(|item| contains_focus_coin(item));
+        }
+        if let Some(history) = map
+            .get_mut("historical_positions")
+            .and_then(|v| v.as_array_mut())
+        {
+            history.retain(|item| contains_focus_coin(item));
+        }
+
+        // Optional: filter performance metrics per-coin if structured as an object of coins
+        if let Some(perf) = map.get_mut("performance").and_then(|v| v.as_object_mut()) {
+            perf.retain(|key, _| {
+                let k = key.to_uppercase();
+                k == focus_coin || k == "USDT" || k == "TOTAL"
+            });
+        }
+    }
+
+    // Use compact JSON to reduce tokens
+    let account_state_json = serde_json::to_string(&filtered_output)
+        .unwrap_or_else(|_| filtered_output.to_string());
 
     info!(
         run_id,
@@ -794,27 +845,64 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     );
 
     let summary_prompt = format!(
-        "你是一名专业的加密货币交易 AI。以下是通过 get_account_state 工具获得的账户与持仓数据（JSON 格式）：\n{}\n\n请基于这些数据生成公开展示用的策略输出，并满足：\n1. 输出必须包含【思考总结】【决策】【置信度】三段，且每段换行分隔。\n2. 思考总结控制在 200 字以内，描述市场洞察、仓位状态与下一步计划。\n3. 决策需明确是否开仓/平仓/调整计划，如需操作请说明工具与参数。\n4. 置信度为 0-100 的整数。\n",
+        "仅围绕 BTC 永续（BTC-USDT-SWAP）输出；不涉现货。账户数据（JSON）：\n{}\n\n请按以下格式简洁输出：\n【思考总结】≤200字；只谈 BTC 合约行情与仓位要点。\n【决策】是否开/平/调整；默认标的 BTC-USDT-SWAP；给关键参数。\n【置信度】0-100。",
         account_state_json
     );
 
     info!(run_id, "Requesting DeepSeek summary synthesis");
-    let summary_content = match deepseek_client.chat_completion(&summary_prompt).await {
+    // Stage 2: summary with remaining budget (up to 8s)
+    remaining = budget_total
+        .checked_sub(start_time.elapsed())
+        .unwrap_or_else(|| Duration::from_secs(0));
+    let stage2_timeout = if remaining.is_zero() { Duration::from_secs(1) } else { remaining.min(Duration::from_secs(8)) };
+
+    let summary_start = Instant::now();
+    let summary_content = match timeout(stage2_timeout, deepseek_client.chat_completion(&summary_prompt)).await {
+        Err(_) => {
+            tracing::error!(run_id, "DeepSeek summary generation timed out");
+            let mut status = state.last_run_status.write().await;
+            if let Some(s) = status.as_mut() {
+                s.stage2_elapsed_ms = Some(summary_start.elapsed().as_millis());
+                s.ended_at = Some(current_timestamp_iso());
+                s.outcome = StrategyOutcome::TimeoutStage2;
+                s.error = Some("summary_timeout".into());
+            }
+            format!(
+                "【思考总结】\n未能生成总结（超时），以下为账户数据：\n{}\n\n【决策】\n保持观望，待重新获取模型输出。\n\n【置信度】\n30",
+                account_state_json
+            )
+        }
+        Ok(result) => match result {
         Ok(text) => {
             info!(
                 run_id,
                 summary_preview = %truncate_for_log(&text, 256),
                 "DeepSeek summary generated"
             );
+            let mut status = state.last_run_status.write().await;
+            if let Some(s) = status.as_mut() {
+                s.stage2_elapsed_ms = Some(summary_start.elapsed().as_millis());
+                s.ended_at = Some(current_timestamp_iso());
+                s.outcome = StrategyOutcome::Ok;
+                s.error = None;
+            }
             text
         }
         Err(err) => {
             tracing::error!(run_id, error = ?err, "DeepSeek summary generation failed");
+            let mut status = state.last_run_status.write().await;
+            if let Some(s) = status.as_mut() {
+                s.stage2_elapsed_ms = Some(summary_start.elapsed().as_millis());
+                s.ended_at = Some(current_timestamp_iso());
+                s.outcome = StrategyOutcome::Error;
+                s.error = Some(format!("summary_error: {err}"));
+            }
             format!(
                 "【思考总结】\n未能生成总结，以下为账户数据：\n{}\n\n【决策】\n保持观望，待重新获取模型输出。\n\n【置信度】\n30",
                 account_state_json
             )
         }
+    }
     };
 
     let strategy_message = StrategyMessage {
@@ -831,12 +919,17 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     };
 
     let messages = {
-        let mut store = state.inner.write().await;
-        store.strategy_messages.push(strategy_message);
-        store.strategy_messages.clone()
+        let mut msgs = state.strategy_messages.write().await;
+        msgs.push(strategy_message);
+        msgs.clone()
     };
 
     Json(ApiResponse::ok(messages))
+}
+
+async fn get_strategy_status(State(state): State<AppState>) -> impl IntoResponse {
+    let status = state.last_run_status.read().await.clone();
+    Json(ApiResponse::ok(status))
 }
 
 fn truncate_for_log(text: &str, max_len: usize) -> String {
@@ -854,209 +947,25 @@ fn parse_optional_number(value: Option<String>) -> Option<f64> {
 }
 
 async fn place_order(
-    State(state): State<AppState>,
-    Json(payload): Json<PlaceOrderRequest>,
+    _state: State<AppState>,
+    Json(_payload): Json<PlaceOrderRequest>,
 ) -> impl IntoResponse {
-    let mut store = state.inner.write().await;
-
-    let order_id = store.next_order_id.to_string();
-    store.next_order_id += 1;
-
-    let order = Order {
-        order_id: order_id.clone(),
-        symbol: payload.symbol.clone(),
-        side: payload.side,
-        order_type: payload.order_type,
-        price: payload.price,
-        size: payload.size,
-        filled_size: "0".into(),
-        status: OrderStatus::Open,
-        created_at: current_timestamp(),
-    };
-
-    store.open_orders.push(order.clone());
-
-    Json(ApiResponse::ok(PlaceOrderResponse {
-        order_id,
-        status: OrderStatus::Open,
-    }))
-}
-
-async fn cancel_order(
-    State(state): State<AppState>,
-    Path(order_id): Path<String>,
-) -> impl IntoResponse {
-    let mut store = state.inner.write().await;
-    if let Some(order) = store
-        .open_orders
-        .iter_mut()
-        .find(|order| order.order_id == order_id)
-    {
-        order.status = OrderStatus::Canceled;
-        return (StatusCode::OK, Json(ApiResponse::ok(order.clone())));
-    }
-
     (
-        StatusCode::NOT_FOUND,
-        Json(ApiResponse::<Order>::error("订单不存在")),
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ApiResponse::<PlaceOrderResponse>::error(
+            "下单功能仅在接入真实交易所 API 时可用",
+        )),
     )
 }
 
-impl MockDataStore {
-    fn new() -> Self {
-        let mut tickers = HashMap::new();
-        tickers.insert(
-            "BTC-USDT".into(),
-            Ticker {
-                symbol: "BTC-USDT".into(),
-                last: "112391.1".into(),
-                bid_px: Some("112391.0".into()),
-                ask_px: Some("112391.2".into()),
-                high24h: Some("115590".into()),
-                low24h: Some("112084.7".into()),
-                vol24h: Some("8637.6433954".into()),
-                timestamp: current_timestamp(),
-            },
-        );
-
-        let orderbook = OrderBook {
-            bids: vec![
-                ("112391.0".into(), "0.52".into()),
-                ("112390.5".into(), "0.35".into()),
-                ("112388.0".into(), "0.71".into()),
-            ],
-            asks: vec![
-                ("112392.0".into(), "0.40".into()),
-                ("112395.0".into(), "0.22".into()),
-                ("112398.5".into(), "0.19".into()),
-            ],
-            timestamp: current_timestamp(),
-        };
-
-        let trades = vec![
-            Trade {
-                trade_id: "T20241127001".into(),
-                price: "112391.1".into(),
-                size: "0.01".into(),
-                side: "buy".into(),
-                timestamp: current_timestamp_minus(30_000),
-            },
-            Trade {
-                trade_id: "T20241127002".into(),
-                price: "112390.8".into(),
-                size: "0.03".into(),
-                side: "sell".into(),
-                timestamp: current_timestamp_minus(25_000),
-            },
-        ];
-
-        let balances = vec![
-            Balance {
-                asset: "BTC".into(),
-                available: "0.523".into(),
-                locked: "0.05".into(),
-                valuation_usdt: "58768.23".into(),
-            },
-            Balance {
-                asset: "USDT".into(),
-                available: "15432.5".into(),
-                locked: "1500".into(),
-                valuation_usdt: "16932.5".into(),
-            },
-        ];
-
-        let positions = vec![
-            Position {
-                symbol: "BTC-USDT-SWAP".into(),
-                side: "long".into(),
-                entry_price: Some(108_000.0),
-                current_price: Some(112_200.0),
-                quantity: Some(0.35),
-                leverage: Some(5.0),
-                liquidation_price: Some(98_500.0),
-                margin: Some(7_000.0),
-                unrealized_pnl: Some(1470.0),
-                entry_time: Some(current_timestamp_minus(86_400_000)),
-            },
-            Position {
-                symbol: "ETH-USDT-SWAP".into(),
-                side: "short".into(),
-                entry_price: Some(3_450.0),
-                current_price: Some(3_380.0),
-                quantity: Some(5.2),
-                leverage: Some(3.0),
-                liquidation_price: Some(3_880.0),
-                margin: Some(6_000.0),
-                unrealized_pnl: Some(364.0),
-                entry_time: Some(current_timestamp_minus(43_200_000)),
-            },
-        ];
-
-        let position_history = vec![
-            PositionHistory {
-                symbol: "BTC-USDT-SWAP".into(),
-                side: "long".into(),
-                quantity: Some(0.25),
-                leverage: Some(4.0),
-                entry_price: Some(99_800.0),
-                exit_price: Some(108_450.0),
-                margin: Some(5_500.0),
-                realized_pnl: Some(2150.0),
-                entry_time: Some(current_timestamp_minus(259_200_000)),
-                exit_time: Some(current_timestamp_minus(172_800_000)),
-            },
-            PositionHistory {
-                symbol: "ETH-USDT-SWAP".into(),
-                side: "short".into(),
-                quantity: Some(3.6),
-                leverage: Some(3.0),
-                entry_price: Some(3_580.0),
-                exit_price: Some(3_420.0),
-                margin: Some(4_200.0),
-                realized_pnl: Some(576.0),
-                entry_time: Some(current_timestamp_minus(432_000_000)),
-                exit_time: Some(current_timestamp_minus(216_000_000)),
-            },
-        ];
-
-        let open_orders = vec![Order {
-            order_id: "123456".into(),
-            symbol: "BTC-USDT".into(),
-            side: "buy".into(),
-            order_type: "limit".into(),
-            price: Some("110000".into()),
-            size: "0.05".into(),
-            filled_size: "0.02".into(),
-            status: OrderStatus::PartiallyFilled,
-            created_at: current_timestamp_minus(86_400_000),
-        }];
-
-        let fills = vec![Fill {
-            fill_id: "F20241127001".into(),
-            order_id: "123456".into(),
-            symbol: "BTC-USDT".into(),
-            side: "buy".into(),
-            price: "109500".into(),
-            size: "0.03".into(),
-            fee: "0.000015".into(),
-            pnl: Some("12.5".into()),
-            timestamp: current_timestamp_minus(43_200_000),
-        }];
-
-        Self {
-            tickers,
-            orderbooks: HashMap::from([("BTC-USDT".into(), orderbook)]),
-            trades: HashMap::from([("BTC-USDT".into(), trades)]),
-            balances,
-            positions,
-            position_history,
-            open_orders,
-            fills,
-            next_order_id: 200000,
-            strategy_messages: Vec::new(),
-            strategy_run_counter: 0,
-        }
-    }
+async fn cancel_order(
+    _state: State<AppState>,
+    Path(_order_id): Path<String>,
+) -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ApiResponse::<Order>::error("取消订单仅在接入真实交易所 API 时可用")),
+    )
 }
 
 fn current_timestamp_iso() -> String {

@@ -1,7 +1,7 @@
 import { Select } from 'antd';
 import { useSymbolStore } from '@store/useSymbolStore';
 
-const symbols = ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT'];
+const symbols = ['BTC-USDT-SWAP'];
 
 const SymbolSelector = () => {
   const symbol = useSymbolStore((state) => state.symbol);

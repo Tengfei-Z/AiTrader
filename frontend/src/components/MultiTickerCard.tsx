@@ -2,7 +2,7 @@ import { Card, Col, Row, Statistic, Typography } from 'antd';
 import dayjs from 'dayjs';
 import { useMultipleTickers } from '@hooks/useMultipleTickers';
 
-const symbols = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT'];
+const symbols = ['BTC-USDT-SWAP'];
 
 const MultiTickerCard = () => {
   const { data, isLoading } = useMultipleTickers(symbols);

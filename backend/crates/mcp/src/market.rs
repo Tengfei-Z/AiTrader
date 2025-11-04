@@ -344,9 +344,30 @@ async fn gather_coin_data(
 fn normalize_timeframe(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        DEFAULT_TIMEFRAME.to_string()
-    } else {
-        trimmed.to_lowercase()
+        return DEFAULT_TIMEFRAME.to_string();
+    }
+
+    let lower = trimmed.to_lowercase();
+    // OKX bar formats are case-sensitive for hours/days/weeks/months
+    // Allowed examples: 1m,3m,5m,15m,30m, 1H,2H,4H,6H,12H, 1D,2D,3D, 1W, 1M
+    match lower.as_str() {
+        // minutes (keep lowercase)
+        "1m" | "3m" | "5m" | "15m" | "30m" => lower,
+        // hours
+        "1h" => "1H".to_string(),
+        "2h" => "2H".to_string(),
+        "4h" => "4H".to_string(),
+        "6h" => "6H".to_string(),
+        "12h" => "12H".to_string(),
+        // days
+        "1d" => "1D".to_string(),
+        "2d" => "2D".to_string(),
+        "3d" => "3D".to_string(),
+        // weeks/months
+        "1w" => "1W".to_string(),
+        "1mo" | "1mth" | "1month" | "1mon" | "1m1" => "1M".to_string(),
+        // fallback: return as-is to avoid rejecting future valid values
+        _ => trimmed.to_string(),
     }
 }
 
