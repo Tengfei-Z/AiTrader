@@ -192,15 +192,34 @@ impl FunctionCaller for DeepSeekClient {
                 function = %request.function,
                 turn,
                 model = %self.config.model,
+                message_count = messages.len(),
                 "Sending DeepSeek chat completion request"
             );
 
-            let response = self
+            let response = match self
                 .client
                 .chat()
                 .create(chat_request)
                 .await
-                .context("调用 DeepSeek Chat 接口失败")?;
+            {
+                Ok(resp) => {
+                    info!(
+                        function = %request.function,
+                        turn,
+                        "Successfully received response from DeepSeek API"
+                    );
+                    resp
+                }
+                Err(e) => {
+                    warn!(
+                        function = %request.function,
+                        turn,
+                        error = %e,
+                        "Failed to call DeepSeek Chat API"
+                    );
+                    return Err(e).context("调用 DeepSeek Chat 接口失败");
+                }
+            };
 
             if let Some(usage) = response.usage.as_ref() {
                 if let Ok(value) = serde_json::to_value(usage) {
@@ -284,6 +303,7 @@ impl FunctionCaller for DeepSeekClient {
                     info!(
                         tool_name = %tool_call.function.name,
                         turn,
+                        tool_output_size_bytes = tool_content.len(),
                         tool_output_preview = %truncate_for_log(&tool_content, 240),
                         "Local tool execution completed"
                     );
@@ -301,6 +321,13 @@ impl FunctionCaller for DeepSeekClient {
                         .content(tool_content)
                         .build()
                         .context("构建 tool 消息失败")?;
+                    
+                    info!(
+                        tool_name = %tool_call.function.name,
+                        turn,
+                        "Tool message constructed, adding to conversation"
+                    );
+                    
                     messages.push(tool_message.into());
                 }
 
