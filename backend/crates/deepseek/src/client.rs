@@ -163,7 +163,7 @@ impl FunctionCaller for DeepSeekClient {
         let mut final_message: Option<String> = None;
         let mut force_tool_choice = true;
 
-        for turn in 0..8 {
+        for turn in 0..5 {  // 从8降到5，减少对话轮数
             let chat_tools = build_chat_tools(&tool_catalog)?;
             let mut request_builder = CreateChatCompletionRequestArgs::default();
             request_builder
@@ -197,8 +197,10 @@ impl FunctionCaller for DeepSeekClient {
                 "Sending DeepSeek chat completion request"
             );
 
-            // Set a 60 second timeout for the API call
-            let timeout_duration = Duration::from_secs(60);
+            // Set a 15 second timeout for the API call
+            let timeout_duration = Duration::from_secs(15);
+            
+            let start_time = std::time::Instant::now();
             
             let response = match tokio::time::timeout(
                 timeout_duration, 
@@ -206,9 +208,11 @@ impl FunctionCaller for DeepSeekClient {
             ).await {
                 Ok(result) => match result {
                     Ok(resp) => {
+                        let elapsed = start_time.elapsed();
                         info!(
                             function = %request.function,
                             turn,
+                            elapsed_secs = elapsed.as_secs_f64(),
                             "Successfully received response from DeepSeek API"
                         );
                         resp
@@ -227,10 +231,11 @@ impl FunctionCaller for DeepSeekClient {
                     warn!(
                         function = %request.function,
                         turn,
-                        timeout_secs = 60,
+                        timeout_secs = 15,
+                        message_count = messages.len(),
                         "DeepSeek API call timed out"
                     );
-                    return Err(anyhow!("DeepSeek API 调用超时（60秒）"));
+                    return Err(anyhow!("DeepSeek API 调用超时（15秒）"));
                 }
             };
 
