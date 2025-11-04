@@ -85,8 +85,10 @@ impl DeepSeekClient {
     pub fn new(config: DeepSeekConfig) -> Result<Self> {
         // 创建自定义 reqwest client，设置 HTTP 超时
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(20))  // HTTP 层面 20 秒超时
+            .timeout(Duration::from_secs(20))  // HTTP 层面 20 秒总超时
             .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
+            .read_timeout(Duration::from_secs(15))  // 读取超时 15 秒（防止流式响应卡住）
+            .pool_idle_timeout(Duration::from_secs(30))  // 连接池空闲超时
             .build()
             .context("创建 HTTP 客户端失败")?;
 
@@ -204,11 +206,25 @@ impl FunctionCaller for DeepSeekClient {
 
             force_tool_choice = false;
 
+            // 计算并记录发送给 DeepSeek 的消息统计
+            let mut total_chars = 0;
+            let mut message_details = Vec::new();
+            for (idx, msg) in messages.iter().enumerate() {
+                let msg_json = serde_json::to_string(msg).unwrap_or_default();
+                let char_count = msg_json.chars().count();
+                total_chars += char_count;
+                message_details.push(format!("msg[{}]: {} chars", idx, char_count));
+            }
+            let estimated_tokens = total_chars / 4; // 粗略估算：平均 4 字符 ≈ 1 token
+
             info!(
                 function = %request.function,
                 turn,
                 model = %self.config.model,
                 message_count = messages.len(),
+                total_chars,
+                estimated_tokens,
+                message_breakdown = ?message_details,
                 "Sending DeepSeek chat completion request"
             );
 
@@ -378,13 +394,14 @@ impl FunctionCaller for DeepSeekClient {
 
                     let tool_message = ChatCompletionRequestToolMessageArgs::default()
                         .tool_call_id(tool_call.id.clone())
-                        .content(tool_content)
+                        .content(tool_content.clone())
                         .build()
                         .context("构建 tool 消息失败")?;
                     
                     info!(
                         tool_name = %tool_call.function.name,
                         turn,
+                        tool_content_chars = tool_content.chars().count(),
                         "Tool message constructed, adding to conversation"
                     );
                     
