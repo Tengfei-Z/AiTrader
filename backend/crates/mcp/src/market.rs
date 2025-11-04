@@ -9,7 +9,7 @@ use tracing::warn;
 
 const DEFAULT_TIMEFRAME: &str = "3m";
 const DEFAULT_QUOTE: &str = "USDT";
-const DEFAULT_CANDLE_LIMIT: usize = 200;
+const DEFAULT_CANDLE_LIMIT: usize = 50;  // 从200减少到50，减少数据量
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
