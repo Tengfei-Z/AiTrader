@@ -24,6 +24,18 @@ enum Command {
         #[arg(long, short = 's')]
         symbol: String,
     },
+    /// 查询K线数据
+    Candles {
+        /// 交易对标识，例如 BTC-USDT-SWAP
+        #[arg(long, short = 's')]
+        symbol: String,
+        /// 时间周期，例如 3m, 5m, 1H
+        #[arg(long, short = 't', default_value = "3m")]
+        timeframe: String,
+        /// 数据条数
+        #[arg(long, short = 'l', default_value = "10")]
+        limit: usize,
+    },
     /// 查询账户权益与可用余额
     Balance,
 }
@@ -48,6 +60,15 @@ async fn main() -> Result<()> {
         Command::Ticker { symbol } => {
             let ticker = client.get_ticker(&symbol).await?;
             println!("{}", serde_json::to_string_pretty(&ticker)?);
+        }
+        Command::Candles { symbol, timeframe, limit } => {
+            let candles = client.get_candles(&symbol, &timeframe, Some(limit)).await?;
+            println!("Retrieved {} candles:", candles.len());
+            for (i, candle) in candles.iter().enumerate() {
+                println!("  [{}] ts={}, o={}, h={}, l={}, c={}, v={:?}", 
+                    i, candle.timestamp, candle.open, candle.high, 
+                    candle.low, candle.close, candle.volume);
+            }
         }
         Command::Balance => {
             let balance = client.get_account_balance().await?;
