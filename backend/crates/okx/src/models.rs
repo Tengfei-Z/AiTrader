@@ -140,6 +140,8 @@ impl<'de> serde::Deserialize<'de> for Candle {
             where
                 A: SeqAccess<'de>,
             {
+                // OKX K线数据格式: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
+                // 我们只需要前6个字段
                 let ts: String = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::custom("missing timestamp"))?;
@@ -156,6 +158,11 @@ impl<'de> serde::Deserialize<'de> for Candle {
                     .next_element()?
                     .ok_or_else(|| de::Error::custom("missing close price"))?;
                 let volume: Option<String> = seq.next_element()?;
+                
+                // 消费掉剩余的字段（volCcy, volCcyQuote, confirm等）
+                while seq.next_element::<serde_json::Value>()?.is_some() {
+                    // 继续读取直到序列结束
+                }
 
                 let timestamp = ts.parse::<i64>().map_err(|err| {
                     de::Error::custom(format!("invalid timestamp: {err} (value: {ts})"))
