@@ -198,10 +198,12 @@ impl FunctionCaller for DeepSeekClient {
             );
 
             // Set a 60 second timeout for the API call
-            let api_future = self.client.chat().create(chat_request);
             let timeout_duration = Duration::from_secs(60);
             
-            let response = match tokio::time::timeout(timeout_duration, api_future).await {
+            let response = match tokio::time::timeout(
+                timeout_duration, 
+                self.client.chat().create(chat_request)
+            ).await {
                 Ok(result) => match result {
                     Ok(resp) => {
                         info!(
