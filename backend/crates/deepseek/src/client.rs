@@ -31,48 +31,41 @@ use serde_json::{self, json, Value};
 
 const ALLOWED_COINS: &[&str] = &["BTC", "ETH", "SOL", "BNB"];
 
-pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的加密货币交易助手，严格遵循两步工作流程。
+pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的加密货币交易助手。
+
+资金限制：
+- 可操作金额：1000 USDT
+- 请根据此资金量合理计算仓位大小和杠杆
 
 工具说明：
-1. get_account_state：
-   参数要求：{
-     "include_history": true,
-     "include_performance": true,
-     "include_positions": true,
+execute_trade - 执行交易操作
+   参数格式：{
+     "action": "open_long"/"open_short"/"close_position",
+     "instrument_id": "BTC-USDT-SWAP",
+     "quantity": <number>,
+     "leverage": <1-25>,
+     "position_id": <string, 仅平仓时需要>,
      "simulated_trading": true
    }
-   用途：仅用于首次获取账户状态
-
-2. execute_trade：
-   参数格式：{
-     "instrument_id": "BTC-USDT-SWAP",
-     "direction": "buy"/"sell",
-     "size": <number>,
-     "take_profit": <number>,
-     "stop_loss": <number>
-   }
-   用途：执行交易决策
-
-强制执行流程：
-1. 第一步：调用 get_account_state（仅限一次）
-2. 第二步：分析账户状态后必须调用 execute_trade
+   用途：执行交易决策（开多、开空或平仓）
 
 交易规则：
 - 合约品种：BTC-USDT-SWAP
-- 仓位控制：≤账户30%
-- 止损范围：2-3%
-- 禁止重复查询账户
-- 必须完成交易决策
+- 杠杆范围：1-25倍
+- 仓位控制：基于 1000 USDT 资金量合理分配
+- 止损范围：建议 2-3%
+- 必须使用模拟账户（simulated_trading: true）
 
-回复要求：
-1. 分析：说明当前账户状态
-2. 决策：给出具体交易行动
-3. 执行：调用 execute_trade
+决策要求：
+1. 分析：说明当前市场状态和交易理由
+2. 计算：基于 1000 USDT 资金量计算合理的交易数量和杠杆
+3. 执行：调用 execute_trade 执行交易
+4. 风险：明确止盈止损计划
 
 输出格式：
-1. 操作结果：简述本次操作的执行结果
-2. 账户信息：显示关键的账户数据
-3. 注意事项：如有风险提示则展示"#;
+1. 市场分析：简述行情判断
+2. 交易计划：具体操作方案（方向、数量、杠杆、止盈止损）
+3. 风险提示：可能的风险点"#;
 
 #[async_trait]
 pub trait FunctionCaller: Send + Sync {
@@ -183,7 +176,8 @@ impl FunctionCaller for DeepSeekClient {
         let mut tool_history: Vec<Value> = Vec::new();
         let mut usage_log: Vec<Value> = Vec::new();
         let mut final_message: Option<String> = None;
-        let mut force_tool_choice = true;
+        // 只有当明确指定了函数名时才强制第一次调用
+        let mut force_tool_choice = !request.function.is_empty();
         let mut final_turn = 0;
 
         for turn in 0..5 {  // 从8降到5，减少对话轮数
@@ -550,33 +544,33 @@ impl FunctionCaller for DeepSeekClient {
 impl DeepSeekClient {
     async fn execute_local_tool(&self, name: &str, arguments: &Value) -> Result<Option<Value>> {
         match name {
-            "get_account_state" => {
-                let mut request: AccountStateRequest =
-                    serde_json::from_value(arguments.clone()).unwrap_or_default();
+            // "get_account_state" => {
+            //     let mut request: AccountStateRequest =
+            //         serde_json::from_value(arguments.clone()).unwrap_or_default();
 
-                info!(
-                    tool = name,
-                    arguments = %arguments,
-                    "Executing local tool handler"
-                );
+            //     info!(
+            //         tool = name,
+            //         arguments = %arguments,
+            //         "Executing local tool handler"
+            //     );
 
-                enforce_simulated(&mut request.simulated_trading);
+            //     enforce_simulated(&mut request.simulated_trading);
 
-                let app_config = get_app_config(&self.app_config)?;
+            //     let app_config = get_app_config(&self.app_config)?;
 
-                let okx_client = OkxRestClient::from_config_simulated(app_config)
-                    .context("初始化 OKX 客户端失败")?;
+            //     let okx_client = OkxRestClient::from_config_simulated(app_config)
+            //         .context("初始化 OKX 客户端失败")?;
 
-                let account_state = fetch_account_state(&okx_client, &request)
-                    .await
-                    .context("执行本地账户聚合失败")?;
+            //     let account_state = fetch_account_state(&okx_client, &request)
+            //         .await
+            //         .context("执行本地账户聚合失败")?;
 
-                let value = serde_json::to_value(account_state).context("序列化账户结果失败")?;
+            //     let value = serde_json::to_value(account_state).context("序列化账户结果失败")?;
 
-                info!(tool = name, "Local tool completed successfully");
+            //     info!(tool = name, "Local tool completed successfully");
 
-                Ok(Some(value))
-            }
+            //     Ok(Some(value))
+            // }
             "get_market_data" => {
                 let mut request: MarketDataRequest =
                     serde_json::from_value(arguments.clone()).unwrap_or_default();
@@ -742,6 +736,184 @@ impl DeepSeekClient {
             .and_then(|choice| choice.message.content.clone())
             .ok_or_else(|| anyhow!("DeepSeek Chat 返回结果为空"))
     }
+
+    /// 自主分析和决策 - AI 可以自主选择是否调用工具
+    #[instrument(skip(self, system_prompt, user_prompt), fields(model = %self.config.model))]
+    pub async fn autonomous_analyze(&self, system_prompt: &str, user_prompt: &str) -> Result<FunctionCallResponse> {
+        info!("Starting autonomous analysis with tool calling capability");
+
+        // 构建工具目录（所有可用工具）
+        let tool_catalog = default_tool_definitions()
+            .into_iter()
+            .map(|(name, desc, schema)| build_function_object(name, Some(desc), Some(schema)))
+            .collect::<Result<Vec<_>>>()?;
+
+        let system_message = ChatCompletionRequestSystemMessageArgs::default()
+            .content(system_prompt)
+            .build()
+            .context("构建 system 消息失败")?;
+
+        let user_message = ChatCompletionRequestUserMessageArgs::default()
+            .content(user_prompt)
+            .build()
+            .context("构建 user 消息失败")?;
+
+        let mut messages = vec![system_message.into(), user_message.into()];
+        let mut tool_history: Vec<Value> = Vec::new();
+        let mut usage_log: Vec<Value> = Vec::new();
+        let mut final_message: Option<String> = None;
+
+        for turn in 0..5 {
+            info!(
+                turn,
+                total_messages = messages.len(),
+                tool_history_count = tool_history.len(),
+                "Starting autonomous analysis turn"
+            );
+
+            let chat_tools = build_chat_tools(&tool_catalog)?;
+            let chat_request = CreateChatCompletionRequestArgs::default()
+                .model(self.config.model.clone())
+                .messages(messages.clone())
+                .tools(chat_tools)
+                .temperature(0_f32)
+                .build()
+                .context("构建 ChatCompletion 请求失败")?;
+
+            let timeout_duration = Duration::from_secs(15);
+            let start_time = std::time::Instant::now();
+
+            let response = match tokio::time::timeout(
+                timeout_duration,
+                self.client.chat().create(chat_request)
+            ).await {
+                Ok(result) => match result {
+                    Ok(resp) => {
+                        info!(
+                            turn,
+                            elapsed_secs = start_time.elapsed().as_secs_f64(),
+                            "Received response from DeepSeek API"
+                        );
+                        resp
+                    }
+                    Err(e) => {
+                        warn!(
+                            turn,
+                            error = %e,
+                            "Failed to call DeepSeek API"
+                        );
+                        return Err(e).context("调用 DeepSeek API 失败");
+                    }
+                },
+                Err(_) => {
+                    warn!(turn, "DeepSeek API call timed out");
+                    return Err(anyhow!("DeepSeek API 调用超时（15秒）"));
+                }
+            };
+
+            if let Some(usage) = response.usage.as_ref() {
+                if let Ok(value) = serde_json::to_value(usage) {
+                    usage_log.push(value);
+                }
+            }
+
+            let choice = response
+                .choices
+                .first()
+                .ok_or_else(|| anyhow!("DeepSeek 返回结果为空"))?;
+
+            // 处理工具调用
+            if let Some(tool_calls) = &choice.message.tool_calls {
+                if turn >= 4 {
+                    warn!(turn, "Reached maximum turns, forcing completion");
+                    final_message = Some(format!(
+                        "已达到最大对话轮数，工具历史：{:?}",
+                        tool_history
+                    ));
+                    break;
+                }
+
+                for tool_call in tool_calls {
+                    let arguments_raw = tool_call.function.arguments.clone();
+                    let parsed_arguments: Value = serde_json::from_str(&arguments_raw)
+                        .unwrap_or_else(|_| Value::String(arguments_raw.clone()));
+
+                    info!(
+                        tool_name = %tool_call.function.name,
+                        tool_arguments = %parsed_arguments,
+                        turn,
+                        "AI autonomously chose to call tool"
+                    );
+
+                    let execution = self
+                        .execute_local_tool(&tool_call.function.name, &parsed_arguments)
+                        .await?;
+
+                    let Some(result) = execution else {
+                        warn!(tool_name = %tool_call.function.name, "Tool not found");
+                        continue;
+                    };
+
+                    let tool_content = serde_json::to_string(&result).unwrap_or_default();
+                    info!(
+                        tool_name = %tool_call.function.name,
+                        output_size = tool_content.len(),
+                        "Tool executed successfully"
+                    );
+
+                    tool_history.push(json!({
+                        "id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "arguments": parsed_arguments,
+                        "output": result
+                    }));
+
+                    let user_message = ChatCompletionRequestUserMessageArgs::default()
+                        .content(format!("工具执行结果：{}", tool_content))
+                        .build()
+                        .context("构建工具结果消息失败")?;
+
+                    messages.push(user_message.into());
+                }
+
+                continue;
+            }
+
+            // 没有工具调用，获取最终回复
+            if let Some(content) = &choice.message.content {
+                if !content.trim().is_empty() {
+                    final_message = Some(content.clone());
+                    break;
+                }
+            }
+            final_message = choice.message.content.clone();
+            break;
+        }
+
+        let final_message_value = final_message.unwrap_or_else(|| 
+            "AI 未能提供有效的分析结果。".to_string()
+        );
+
+        info!("Autonomous analysis completed");
+
+        let output = json!({
+            "tool_results": tool_history,
+            "final_message": final_message_value,
+            "execution_info": {
+                "tool_calls_made": tool_history.len()
+            }
+        });
+
+        Ok(FunctionCallResponse {
+            output,
+            usage: if usage_log.is_empty() {
+                None
+            } else {
+                Some(Value::Array(usage_log))
+            },
+            message: Some(final_message_value),
+        })
+    }
 }
 
 fn truncate_for_log(text: &str, max_chars: usize) -> String {
@@ -860,26 +1032,6 @@ fn build_chat_tools(tools: &[FunctionObject]) -> Result<Vec<ChatCompletionTool>>
 
 fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
     vec![
-        (
-            "get_account_state",
-            "查询账户余额、当前持仓和交易历史。",
-            json!({
-                "type": "object",
-                "properties": {
-                    "include_positions": { "type": "boolean", "default": true },
-                    "include_history": { "type": "boolean", "default": true },
-                    "include_performance": { "type": "boolean", "default": true },
-                    "simulated_trading": { "type": "boolean", "default": true }
-                },
-                "required": [
-                    "include_positions",
-                    "include_history",
-                    "include_performance",
-                    "simulated_trading"
-                ],
-                "additionalProperties": false
-            }),
-        ),
         (
             "execute_trade",
             "执行交易操作，包括开仓或平仓 BTC 永续合约。",
