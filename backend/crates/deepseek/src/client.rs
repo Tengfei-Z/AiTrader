@@ -97,9 +97,9 @@ impl DeepSeekClient {
     pub fn new(config: DeepSeekConfig) -> Result<Self> {
         // 创建自定义 reqwest client，设置 HTTP 超时
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(40))  // HTTP 总超时 40 秒，比 tokio timeout (45s) 稍短
+            .timeout(Duration::from_secs(30))  // HTTP 总超时 30 秒，强制超时避免挂死
             .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
-            .pool_idle_timeout(Duration::from_secs(30))  // 空闲 30 秒后关闭连接，避免 IncompleteMessage
+            .pool_idle_timeout(Duration::from_secs(20))  // 空闲 20 秒后关闭连接
             .pool_max_idle_per_host(1)  // 每个 host 最多保留 1 个空闲连接
             .tcp_nodelay(true)  // 启用 TCP_NODELAY，减少延迟
             .build()
@@ -787,25 +787,38 @@ impl DeepSeekClient {
                 .build()
                 .context("构建 ChatCompletion 请求失败")?;
 
-            // 记录发送的消息内容
-            let messages_summary: Vec<String> = messages.iter().enumerate().map(|(idx, msg)| {
+            // DEBUG: 打印完整请求 JSON（仅 Turn 1）
+            if turn == 1 {
+                if let Ok(request_json) = serde_json::to_string_pretty(&chat_request) {
+                    warn!(
+                        "!!! TURN 1 COMPLETE REQUEST JSON !!!\n{}",
+                        request_json
+                    );
+                }
+            }
+
+            // 记录发送的消息内容 - 完整版本，不截断
+            let messages_full: Vec<String> = messages.iter().enumerate().map(|(idx, msg)| {
                 let msg_json = serde_json::to_string(msg).unwrap_or_default();
-                let preview = if msg_json.len() > 300 {
-                    format!("{}... ({} chars)", &msg_json[..300], msg_json.len())
-                } else {
-                    msg_json
-                };
-                format!("msg[{}]: {}", idx, preview)
+                format!("msg[{}]: {}", idx, msg_json)
             }).collect();
+            
+            // 特别关注 Turn 1
+            if turn == 1 {
+                warn!(
+                    "!!! TURN 1 FULL REQUEST !!!\n{}",
+                    messages_full.join("\n")
+                );
+            }
             
             info!(
                 turn,
                 message_count = messages.len(),
-                messages_detail = ?messages_summary,
+                total_size = messages_full.iter().map(|s| s.len()).sum::<usize>(),
                 "Prepared messages for DeepSeek API"
             );
 
-            let timeout_duration = Duration::from_secs(45);
+            let timeout_duration = Duration::from_secs(35);  // 35秒，让 HTTP 的 30 秒超时先触发
             let start_time = std::time::Instant::now();
 
             // 重试逻辑：最多重试 2 次
@@ -841,7 +854,7 @@ impl DeepSeekClient {
                     let turn = turn;
                     let retry = retry;
                     tokio::spawn(async move {
-                        for tick in 1..=9 {
+                        for tick in 1..=7 {  // 35 秒 (7 * 5)
                             tokio::time::sleep(Duration::from_secs(5)).await;
                             warn!(
                                 turn,
