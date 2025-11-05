@@ -790,31 +790,62 @@ impl DeepSeekClient {
             let timeout_duration = Duration::from_secs(45);
             let start_time = std::time::Instant::now();
 
-            let response = match tokio::time::timeout(
-                timeout_duration,
-                self.client.chat().create(chat_request)
-            ).await {
-                Ok(result) => match result {
-                    Ok(resp) => {
-                        info!(
-                            turn,
-                            elapsed_secs = start_time.elapsed().as_secs_f64(),
-                            "Received response from DeepSeek API"
-                        );
-                        resp
-                    }
-                    Err(e) => {
+            // 重试逻辑：最多重试 2 次
+            let mut response = None;
+            let mut last_error = None;
+            
+            for retry in 0..3 {
+                if retry > 0 {
+                    warn!(
+                        turn,
+                        retry,
+                        "Retrying DeepSeek API call after error"
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                
+                match tokio::time::timeout(
+                    timeout_duration,
+                    self.client.chat().create(chat_request.clone())
+                ).await {
+                    Ok(result) => match result {
+                        Ok(resp) => {
+                            info!(
+                                turn,
+                                retry,
+                                elapsed_secs = start_time.elapsed().as_secs_f64(),
+                                "Received response from DeepSeek API"
+                            );
+                            response = Some(resp);
+                            break;
+                        }
+                        Err(e) => {
+                            warn!(
+                                turn,
+                                retry,
+                                error = %e,
+                                error_debug = ?e,
+                                "DeepSeek API call failed"
+                            );
+                            last_error = Some(e);
+                        }
+                    },
+                    Err(_) => {
                         warn!(
                             turn,
-                            error = %e,
-                            "Failed to call DeepSeek API"
+                            retry,
+                            "DeepSeek API call timed out after 45 seconds"
                         );
-                        return Err(e).context("调用 DeepSeek API 失败");
+                        last_error = Some(anyhow!("API 调用超时（45秒）"));
                     }
-                },
-                Err(_) => {
-                    warn!(turn, "DeepSeek API call timed out after 45 seconds");
-                    return Err(anyhow!("DeepSeek API 调用超时（45秒）"));
+                }
+            }
+            
+            let response = match response {
+                Some(r) => r,
+                None => {
+                    let err = last_error.unwrap_or_else(|| anyhow!("未知错误"));
+                    return Err(err).context("DeepSeek API 调用失败（已重试3次）");
                 }
             };
 
