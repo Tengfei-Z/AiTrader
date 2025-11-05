@@ -97,9 +97,10 @@ impl DeepSeekClient {
     pub fn new(config: DeepSeekConfig) -> Result<Self> {
         // 创建自定义 reqwest client，设置 HTTP 超时
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))  // HTTP 层面 60 秒总超时，给 AI 足够思考时间
+            .timeout(Duration::from_secs(40))  // HTTP 总超时 40 秒，比 tokio timeout (45s) 稍短
             .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
-            .pool_idle_timeout(Duration::from_secs(90))  // 连接池空闲超时
+            .pool_idle_timeout(Duration::from_secs(30))  // 空闲 30 秒后关闭连接，避免 IncompleteMessage
+            .pool_max_idle_per_host(1)  // 每个 host 最多保留 1 个空闲连接
             .tcp_nodelay(true)  // 启用 TCP_NODELAY，减少延迟
             .build()
             .context("创建 HTTP 客户端失败")?;
