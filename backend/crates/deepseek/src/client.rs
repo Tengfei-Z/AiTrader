@@ -896,7 +896,6 @@ impl DeepSeekClient {
                         // 超时情况，已经在 select! 中记录了日志
                         last_error = Some(anyhow!("API 调用超时（{}秒）", timeout_duration.as_secs()));
                     }
-                    }
                 }
             }
             
