@@ -804,16 +804,48 @@ impl DeepSeekClient {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
                 
-                match tokio::time::timeout(
+                info!(
+                    turn,
+                    retry,
+                    timeout_secs = timeout_duration.as_secs(),
+                    "About to call DeepSeek API"
+                );
+                
+                let api_call_start = std::time::Instant::now();
+                
+                // 添加看门狗定时器，每 5 秒打印一次等待日志
+                let watchdog = {
+                    let turn = turn;
+                    let retry = retry;
+                    tokio::spawn(async move {
+                        for tick in 1..=9 {  // 最多 45 秒
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            warn!(
+                                turn,
+                                retry,
+                                waiting_secs = tick * 5,
+                                "Still waiting for DeepSeek API response..."
+                            );
+                        }
+                    })
+                };
+                
+                let api_result = tokio::time::timeout(
                     timeout_duration,
                     self.client.chat().create(chat_request.clone())
-                ).await {
+                ).await;
+                
+                // 停止看门狗
+                watchdog.abort();
+                
+                match api_result {
                     Ok(result) => match result {
                         Ok(resp) => {
                             info!(
                                 turn,
                                 retry,
                                 elapsed_secs = start_time.elapsed().as_secs_f64(),
+                                api_call_secs = api_call_start.elapsed().as_secs_f64(),
                                 "Received response from DeepSeek API"
                             );
                             response = Some(resp);
@@ -823,6 +855,7 @@ impl DeepSeekClient {
                             warn!(
                                 turn,
                                 retry,
+                                elapsed_secs = api_call_start.elapsed().as_secs_f64(),
                                 error = %e,
                                 error_debug = ?e,
                                 "DeepSeek API call failed"
@@ -834,9 +867,11 @@ impl DeepSeekClient {
                         warn!(
                             turn,
                             retry,
-                            "DeepSeek API call timed out after 45 seconds"
+                            elapsed_secs = api_call_start.elapsed().as_secs_f64(),
+                            timeout_secs = timeout_duration.as_secs(),
+                            "DeepSeek API call timed out"
                         );
-                        last_error = Some(anyhow!("API 调用超时（45秒）"));
+                        last_error = Some(anyhow!("API 调用超时（{}秒）", timeout_duration.as_secs()));
                     }
                 }
             }
