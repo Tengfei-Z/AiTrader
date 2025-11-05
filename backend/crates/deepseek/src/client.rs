@@ -591,6 +591,18 @@ impl DeepSeekClient {
 
                 enforce_simulated(&mut request.simulated_trading);
                 request.coins = sanitize_coins(request.coins)?;
+                
+                // 强制启用关键数据字段，确保 AI 能获得足够的交易决策信息
+                if request.indicators.is_empty() {
+                    request.indicators = vec![
+                        "price".to_string(),
+                        "ema".to_string(),
+                        "macd".to_string(),
+                        "rsi".to_string(),
+                    ];
+                }
+                request.include_funding = true;        // 强制包含资金费率
+                request.include_open_interest = true;  // 强制包含持仓量
 
                 let app_config = get_app_config(&self.app_config)?;
 
@@ -1188,6 +1200,22 @@ fn default_tool_definitions() -> Vec<(&'static str, &'static str, Value)> {
                         "items": { "type": "string" },
                         "description": "币种列表，如 [\"BTC\", \"ETH\"]",
                         "default": ["BTC"]
+                    },
+                    "indicators": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "技术指标列表，如 [\"price\", \"ema\", \"macd\", \"rsi\"]",
+                        "default": ["price", "ema", "macd", "rsi"]
+                    },
+                    "include_funding": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "是否包含资金费率"
+                    },
+                    "include_open_interest": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "是否包含持仓量"
                     },
                     "simulated_trading": {
                         "type": "boolean",
