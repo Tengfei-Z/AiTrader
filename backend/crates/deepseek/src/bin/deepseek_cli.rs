@@ -1,14 +1,14 @@
 use ai_core::config::{AppConfig, CONFIG};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use deepseek::{DeepSeekClient, FunctionCallRequest, FunctionCaller};
+use deepseek::DeepSeekClient; // ✅ 只需要 DeepSeekClient
 use serde_json::Value;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "deepseek-cli",
-    about = "DeepSeek Function Call 测试工具",
+    about = "DeepSeek Autonomous Analyze 测试工具",
     version
 )]
 struct Cli {
@@ -18,26 +18,19 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// 调用指定函数
-    Call {
-        /// 函数名称
-        #[arg(long, short = 'f')]
-        function: String,
-        /// 参数（JSON 字符串），例如 '{"symbol":"BTC-USDT"}'
-        #[arg(long, short = 'a', default_value = "null")]
-        arguments: String,
-        /// 附加元数据（JSON 字符串）
-        #[arg(long, default_value = "null")]
-        metadata: String,
+    /// 自主分析（模型可自由选择是否/哪个工具）
+    Analyze {
+        /// system prompt
+        #[arg(long, default_value = "你是一个专业的加密货币交易助手。若需要实时数据或交易操作，请调用相应工具。")]
+        system: String,
+        /// 用户问题（user prompt）
+        #[arg(long, short = 'p', default_value = "请评价一下当前的 BTC 行情，给出风险提示。")]
+        prompt: String,
     },
-    /// 发送一条简单聊天消息
+
+    /// 发送一条简单聊天消息（不使用工具）
     Chat {
-        /// 用户消息内容
-        #[arg(
-            long,
-            short = 'p',
-            default_value = "请评价一下当前的 BTC 行情，给出风险提示。"
-        )]
+        #[arg(long, short = 'p', default_value = "请评价一下当前的 BTC 行情，给出风险提示。")]
         prompt: String,
     },
 }
@@ -51,19 +44,9 @@ async fn main() -> Result<()> {
     let client = DeepSeekClient::from_app_config(app_config)?;
 
     match cli.command {
-        Command::Call {
-            function,
-            arguments,
-            metadata,
-        } => {
-            let request = FunctionCallRequest {
-                function,
-                arguments: parse_json(&arguments, "arguments")?,
-                metadata: parse_json(&metadata, "metadata")?,
-            };
-
-            let response = client.call_function(request).await?;
-            println!("{}", serde_json::to_string_pretty(&response)?);
+        Command::Analyze { system, prompt } => {
+            let resp = client.autonomous_analyze(&system, &prompt).await?;
+            println!("{}", serde_json::to_string_pretty(&resp)?);
         }
         Command::Chat { prompt } => {
             let reply = client.chat_completion(&prompt).await?;
@@ -79,9 +62,7 @@ fn init_tracing() -> Result<()> {
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::from_default_env())
             .finish(),
-    )
-    .is_err()
-    {
+    ).is_err() {
         // tracing already initialised; ignore.
     }
     Ok(())

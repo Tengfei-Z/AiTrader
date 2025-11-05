@@ -1,4 +1,6 @@
 use ai_core::config::{AppConfig, DeepSeekConfig};
+use async_openai::types::ChatCompletionRequestToolMessageArgs;
+use async_openai::types::ChatCompletionRequestAssistantMessageArgs;
 use anyhow::{anyhow, ensure, Context, Result};
 use async_openai::{
     config::OpenAIConfig,
@@ -74,10 +76,6 @@ pub const DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT: &str = r#"你是一个专业的�
 2. 交易计划：具体操作方案（方向、数量、杠杆、止盈止损）
 3. 风险提示：可能的风险点"#;
 
-#[async_trait]
-pub trait FunctionCaller: Send + Sync {
-    async fn call_function(&self, request: FunctionCallRequest) -> Result<FunctionCallResponse>;
-}
 
 #[derive(Debug, Clone)]
 pub struct DeepSeekClient {
@@ -113,437 +111,6 @@ impl DeepSeekClient {
             client: OpenAIClient::with_config(openai_config).with_http_client(http_client),
             config,
             app_config: None,
-        })
-    }
-}
-
-#[async_trait]
-impl FunctionCaller for DeepSeekClient {
-    #[instrument(skip(self, request), fields(model = %self.config.model))]
-    async fn call_function(&self, request: FunctionCallRequest) -> Result<FunctionCallResponse> {
-        info!(
-            function = %request.function,
-            arguments = %request.arguments,
-            metadata = %request.metadata,
-            "Preparing DeepSeek function call"
-        );
-
-        let system_prompt = request
-            .metadata
-            .get("system_prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or(DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT);
-
-        info!(
-            function = %request.function,
-            system_prompt_preview = %truncate_for_log(system_prompt, 240),
-            "Using system prompt for DeepSeek request"
-        );
-
-        let function_description = request
-            .metadata
-            .get("description")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let parameters_schema = request
-            .metadata
-            .get("parameters")
-            .cloned()
-            .unwrap_or_else(|| {
-                json!({
-                    "type": "object",
-                    "additionalProperties": true
-                })
-            });
-
-        let tool_catalog = build_tool_catalog(
-            &request.function,
-            function_description.as_deref(),
-            &parameters_schema,
-        )?;
-
-        let system_message = ChatCompletionRequestSystemMessageArgs::default()
-            .content(system_prompt)
-            .build()
-            .context("构建 system 消息失败")?;
-
-        let user_payload = json!({
-            "function": request.function,
-            "arguments": request.arguments,
-            "metadata": request.metadata,
-        });
-
-        let user_message = ChatCompletionRequestUserMessageArgs::default()
-            .content(serde_json::to_string(&user_payload).unwrap_or_default())
-            .build()
-            .context("构建 user 消息失败")?;
-
-        let mut messages = vec![system_message.into(), user_message.into()];
-        let mut tool_history: Vec<Value> = Vec::new();
-        let mut usage_log: Vec<Value> = Vec::new();
-        let mut final_message: Option<String> = None;
-        // 只有当明确指定了函数名时才强制第一次调用
-        let mut force_tool_choice = !request.function.is_empty();
-        let mut final_turn = 0;
-
-        for turn in 0..5 {  // 从8降到5，减少对话轮数
-            final_turn = turn;
-            info!(
-                function = %request.function,
-                turn,
-                total_messages = messages.len(),
-                tool_history_count = tool_history.len(),
-                "Starting conversation turn"
-            );
-
-            let chat_tools = build_chat_tools(&tool_catalog)?;
-            let mut request_builder = CreateChatCompletionRequestArgs::default();
-            request_builder
-                .model(self.config.model.clone())
-                .messages(messages.clone())
-                .tools(chat_tools)
-                .temperature(0_f32);
-
-            if force_tool_choice {
-                request_builder.tool_choice(ChatCompletionToolChoiceOption::Named(
-                    ChatCompletionNamedToolChoice {
-                        r#type: ChatCompletionToolType::Function,
-                        function: FunctionName {
-                            name: request.function.clone(),
-                        },
-                    },
-                ));
-            }
-
-            let chat_request = request_builder
-                .build()
-                .context("构建 ChatCompletion 请求失败")?;
-
-            force_tool_choice = false;
-
-            // 计算并记录发送给 DeepSeek 的消息统计
-            let mut total_chars = 0;
-            let mut total_tools = 0;
-            let mut message_details = Vec::new();
-            let mut message_types = Vec::new();
-
-            for (idx, msg) in messages.iter().enumerate() {
-                let msg_json = serde_json::to_string(msg).unwrap_or_default();
-                let char_count = msg_json.chars().count();
-                total_chars += char_count;
-
-                // 分析消息类型和内容
-                let msg_type = if msg_json.contains("\"role\":\"system\"") {
-                    "system"
-                } else if msg_json.contains("\"role\":\"user\"") {
-                    "user"
-                } else if msg_json.contains("\"role\":\"assistant\"") {
-                    "assistant"
-                } else if msg_json.contains("\"role\":\"tool\"") {
-                    total_tools += 1;
-                    "tool"
-                } else {
-                    "unknown"
-                };
-
-                message_types.push(msg_type);
-                message_details.push(format!("msg[{}]: {} chars ({})", idx, char_count, msg_type));
-            }
-
-            let estimated_tokens = total_chars / 4; // 粗略估算：平均 4 字符 ≈ 1 token
-            
-            info!(
-                function = %request.function,
-                turn,
-                model = %self.config.model,
-                message_count = messages.len(),
-                total_chars,
-                estimated_tokens,
-                total_tools,
-                message_types = ?message_types,
-                message_details = ?message_details,
-                "Sending DeepSeek chat completion request"
-            );
-
-            // Set a 15 second timeout for the API call
-            let timeout_duration = Duration::from_secs(15);
-            
-            let start_time = std::time::Instant::now();
-            
-            info!(
-                function = %request.function,
-                turn,
-                timeout_secs = 15,
-                "About to call DeepSeek API with timeout"
-            );
-            
-            let response = match tokio::time::timeout(
-                timeout_duration, 
-                self.client.chat().create(chat_request)
-            ).await {
-                Ok(result) => match result {
-                    Ok(resp) => {
-                        let elapsed = start_time.elapsed();
-                        info!(
-                            function = %request.function,
-                            turn,
-                            elapsed_secs = elapsed.as_secs_f64(),
-                            "Successfully received response from DeepSeek API"
-                        );
-                        resp
-                    }
-                    Err(e) => {
-                        let elapsed = start_time.elapsed();
-                        warn!(
-                            function = %request.function,
-                            turn,
-                            elapsed_secs = elapsed.as_secs_f64(),
-                            error = %e,
-                            "Failed to call DeepSeek Chat API"
-                        );
-                        return Err(e).context("调用 DeepSeek Chat 接口失败");
-                    }
-                },
-                Err(_) => {
-                    let elapsed = start_time.elapsed();
-                    warn!(
-                        function = %request.function,
-                        turn,
-                        timeout_secs = 15,
-                        elapsed_secs = elapsed.as_secs_f64(),
-                        message_count = messages.len(),
-                        "DeepSeek API call timed out after waiting"
-                    );
-                    return Err(anyhow!("DeepSeek API 调用超时（15秒）"));
-                }
-            };
-
-            if let Some(usage) = response.usage.as_ref() {
-                if let Ok(value) = serde_json::to_value(usage) {
-                    usage_log.push(value);
-                }
-            }
-
-            let choice = response
-                .choices
-                .first()
-                .ok_or_else(|| anyhow!("DeepSeek 返回结果为空"))?;
-
-            info!(
-                function = %request.function,
-                turn,
-                response_message = ?choice.message,
-                "Received DeepSeek response"
-            );
-
-            // 优化消息处理
-            if let Some(tool_calls) = &choice.message.tool_calls {
-                // 如果即将超过最大轮数，拒绝继续执行工具
-                if turn >= 4 {
-                    warn!(
-                        function = %request.function,
-                        turn,
-                        tool_calls_count = tool_calls.len(),
-                        "Reached maximum turns, ignoring tool calls and forcing completion"
-                    );
-                    final_message = Some(format!(
-                        "已达到最大对话轮数（{}），无法继续执行工具调用。当前工具历史：{:?}",
-                        turn + 1,
-                        tool_history
-                    ));
-                    break;
-                }
-                
-                // 记录当前工具调用数量
-                let tool_count = tool_calls.len();
-                if tool_count > 1 {
-                    warn!(
-                        function = %request.function,
-                        turn,
-                        tool_count,
-                        "Multiple tool calls in single turn"
-                    );
-                }
-
-                for tool_call in tool_calls {
-                    let arguments_raw = tool_call.function.arguments.clone();
-                    let parsed_arguments: Value = serde_json::from_str(&arguments_raw)
-                        .unwrap_or_else(|_| Value::String(arguments_raw.clone()));
-
-                    info!(
-                        tool_name = %tool_call.function.name,
-                        tool_arguments = %parsed_arguments,
-                        tool_call_id = %tool_call.id,
-                        turn,
-                        "DeepSeek suggested tool invocation"
-                    );
-
-                    let execution = self
-                        .execute_local_tool(&tool_call.function.name, &parsed_arguments)
-                        .await?;
-
-                    let Some(result) = execution else {
-                        warn!(
-                            tool_name = %tool_call.function.name,
-                            "No local executor found for suggested tool, returning payload"
-                        );
-                        let output = json!({
-                            "tool_call": {
-                                "id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "arguments": parsed_arguments,
-                            }
-                        });
-                        return Ok(FunctionCallResponse {
-                            output,
-                            usage: if usage_log.is_empty() {
-                                None
-                            } else {
-                                Some(Value::Array(usage_log))
-                            },
-                            message: choice.message.content.clone(),
-                        });
-                    };
-
-                    info!(
-                        tool_name = %tool_call.function.name,
-                        turn,
-                        "Executed local tool for DeepSeek request"
-                    );
-
-                    let tool_content = serde_json::to_string(&result).unwrap_or_default();
-
-                    info!(
-                        tool_name = %tool_call.function.name,
-                        turn,
-                        tool_output_size_bytes = tool_content.len(),
-                        tool_output_preview = %truncate_for_log(&tool_content, 240),
-                        "Local tool execution completed"
-                    );
-
-                    let record = json!({
-                        "id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "arguments": parsed_arguments,
-                        "output": result
-                    });
-                    tool_history.push(record);
-
-                    // 优化结果消息格式
-                    // 先计算字符数以供日志使用
-                    let content_length = tool_content.chars().count();
-
-                    // 构造消息内容
-                    let (msg_prefix, msg_content) = match tool_call.function.name.as_str() {
-                        "get_market_data" => {
-                            // 对市场数据做特殊处理，突出显示关键信息
-                            let value: Value = serde_json::from_str(&tool_content).unwrap_or_default();
-                            let coins = value.get("coins").and_then(|v| v.as_object());
-                            if let Some(coin_data) = coins {
-                                let mut summary = Vec::new();
-                                for (coin, data) in coin_data {
-                                    if let Some(data_obj) = data.as_object() {
-                                        let price = data_obj.get("current_price")
-                                            .and_then(|v| v.as_f64())
-                                            .unwrap_or_default();
-                                        let funding = data_obj.get("funding_rate")
-                                            .and_then(|v| v.as_f64())
-                                            .map(|f| format!("资金费率:{:.4}%", f * 100.0))
-                                            .unwrap_or_default();
-                                        summary.push(format!("{}=${:.2} {}", coin, price, funding));
-                                    }
-                                }
-                                ("市场概况", summary.join(", "))
-                            } else {
-                                ("市场数据", tool_content.clone())
-                            }
-                        }
-                        "get_account_state" => ("账户状态", tool_content.clone()),
-                        "execute_trade" => ("交易执行", tool_content.clone()),
-                        "update_exit_plan" => ("退出计划", tool_content.clone()),
-                        _ => ("工具执行结果", tool_content.clone())
-                    };
-                    
-                    let user_message = ChatCompletionRequestUserMessageArgs::default()
-                        .content(format!("{}：{}", msg_prefix, msg_content))
-                        .build()
-                        .context("构建数据消息失败")?;
-                    
-                    info!(
-                        tool_name = %tool_call.function.name,
-                        turn,
-                        msg_prefix = %msg_prefix,
-                        content_chars = content_length,
-                        "Data message constructed, adding to conversation"
-                    );
-                    
-                    messages.push(user_message.into());
-                }
-
-                continue;
-            }
-
-            // 检查是否有有效的响应内容
-            if let Some(content) = &choice.message.content {
-                if !content.trim().is_empty() {
-                    final_message = Some(content.clone());
-                    break;
-                }
-                // 如果内容为空且是工具调用，记录警告
-                if choice.message.tool_calls.is_some() {
-                    warn!(
-                        function = %request.function,
-                        turn,
-                        "Empty response with tool call, requiring explanation"
-                    );
-                    // 加入提醒消息
-                    let reminder = ChatCompletionRequestUserMessageArgs::default()
-                        .content("请提供具体的分析和决策说明，不要重复调用相同的工具。每次工具调用都必须有明确的目的和解释。")
-                        .build()
-                        .context("构建提醒消息失败")?;
-                    messages.push(reminder.into());
-                    continue;
-                }
-            }
-            final_message = choice.message.content.clone();
-            break;
-        }
-
-        if final_message.is_none() || final_message.as_ref().map_or(true, |s| s.trim().is_empty()) {
-            warn!(
-                function = %request.function,
-                "DeepSeek conversation ended without valid assistant message"
-            );
-            // 如果没有有效回复，返回一个错误信息
-            final_message = Some("错误：模型未能提供有效的分析和决策说明。请重试。".to_string());
-        }
-
-        let final_message_value = final_message.unwrap_or_default();
-
-        info!(
-            function = %request.function,
-            "DeepSeek conversation completed"
-        );
-
-        let output = json!({
-            "tool_results": tool_history,
-            "final_message": final_message_value,
-            "execution_info": {
-                "turns_completed": final_turn + 1,
-                "messages_exchanged": messages.len(),
-                "tool_calls_made": tool_history.len()
-            }
-        });
-
-        Ok(FunctionCallResponse {
-            output,
-            usage: if usage_log.is_empty() {
-                None
-            } else {
-                Some(Value::Array(usage_log))
-            },
-            message: Some(final_message_value),
         })
     }
 }
@@ -791,6 +358,7 @@ impl DeepSeekClient {
             );
 
             let chat_tools = build_chat_tools(&tool_catalog)?;
+            let mut req_builder = CreateChatCompletionRequestArgs::default();
             let chat_request = CreateChatCompletionRequestArgs::default()
                 .model(self.config.model.clone())
                 .messages(messages.clone())
@@ -987,14 +555,13 @@ impl DeepSeekClient {
 
             // 处理工具调用
             if let Some(tool_calls) = &choice.message.tool_calls {
-                if turn >= 4 {
-                    warn!(turn, "Reached maximum turns, forcing completion");
-                    final_message = Some(format!(
-                        "已达到最大对话轮数，工具历史：{:?}",
-                        tool_history
-                    ));
-                    break;
-                }
+
+                let assistant_msg = ChatCompletionRequestAssistantMessageArgs::default()
+                    .content(choice.message.content.clone().unwrap_or_default()) // 可能为空，没关系
+                    .tool_calls(tool_calls.clone())
+                    .build()
+                    .context("构建 assistant(tool_calls) 消息失败")?;
+                messages.push(assistant_msg.into());
 
                 for tool_call in tool_calls {
                     let arguments_raw = tool_call.function.arguments.clone();
@@ -1032,12 +599,13 @@ impl DeepSeekClient {
                         "output": result
                     }));
 
-                    let user_message = ChatCompletionRequestUserMessageArgs::default()
-                        .content(format!("工具执行结果：{}", tool_content))
+                    let tool_msg = ChatCompletionRequestToolMessageArgs::default()
+                        .tool_call_id(tool_call.id.clone())
+                        .content(tool_content)               // 注意是字符串
                         .build()
-                        .context("构建工具结果消息失败")?;
+                        .context("构建 tool 消息失败")?;
 
-                    messages.push(user_message.into());
+                    messages.push(tool_msg.into());          // 别再用 user/assistant 角色
                 }
 
                 continue;
@@ -1140,33 +708,7 @@ fn get_app_config(app_config: &Option<AppConfig>) -> Result<&AppConfig> {
         .ok_or_else(|| anyhow!("AppConfig 未初始化，无法执行本地工具"))
 }
 
-fn build_tool_catalog(
-    primary_name: &str,
-    primary_description: Option<&str>,
-    primary_schema: &Value,
-) -> Result<Vec<FunctionObject>> {
-    let mut tools = Vec::new();
-
-    tools.push(build_function_object(
-        primary_name,
-        primary_description,
-        Some(primary_schema.clone()),
-    )?);
-
-                    // 针对每个时间周期生成工具定义
-                    for (name, description, schema) in default_tool_definitions() {
-                        if name == primary_name {
-                            continue;
-                        }
-                        tools.push(build_function_object(
-                            name,
-                            Some(description),
-                            Some(schema),
-                        )?);
-                    }
-
-                    Ok(tools)
-                }fn build_function_object(
+fn build_function_object(
     name: &str,
     description: Option<&str>,
     parameters: Option<Value>,
