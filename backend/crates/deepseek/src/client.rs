@@ -90,10 +90,9 @@ impl DeepSeekClient {
     pub fn new(config: DeepSeekConfig) -> Result<Self> {
         // 创建自定义 reqwest client，设置 HTTP 超时
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))  // HTTP 层面 15 秒总超时，与 API 调用超时一致
-            .connect_timeout(Duration::from_secs(5))  // 连接超时 5 秒
-            .read_timeout(Duration::from_secs(10))  // 读取超时 10 秒（降低流式响应卡住的风险）
-            .pool_idle_timeout(Duration::from_secs(20))  // 连接池空闲超时，降低资源占用
+            .timeout(Duration::from_secs(60))  // HTTP 层面 60 秒总超时，给 AI 足够思考时间
+            .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
+            .pool_idle_timeout(Duration::from_secs(90))  // 连接池空闲超时
             .tcp_nodelay(true)  // 启用 TCP_NODELAY，减少延迟
             .build()
             .context("创建 HTTP 客户端失败")?;
@@ -780,7 +779,7 @@ impl DeepSeekClient {
                 .build()
                 .context("构建 ChatCompletion 请求失败")?;
 
-            let timeout_duration = Duration::from_secs(15);
+            let timeout_duration = Duration::from_secs(45);
             let start_time = std::time::Instant::now();
 
             let response = match tokio::time::timeout(
@@ -806,8 +805,8 @@ impl DeepSeekClient {
                     }
                 },
                 Err(_) => {
-                    warn!(turn, "DeepSeek API call timed out");
-                    return Err(anyhow!("DeepSeek API 调用超时（15秒）"));
+                    warn!(turn, "DeepSeek API call timed out after 45 seconds");
+                    return Err(anyhow!("DeepSeek API 调用超时（45秒）"));
                 }
             };
 
