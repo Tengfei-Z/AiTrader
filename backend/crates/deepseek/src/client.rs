@@ -19,7 +19,6 @@ use tracing::{info, instrument, warn};
 
 use crate::schema::{FunctionCallRequest, FunctionCallResponse};
 use mcp_adapter::{
-    account::{fetch_account_state, AccountStateRequest},
     market::{fetch_market_data, MarketDataRequest},
     trade::{
         execute_trade as execute_trade_tool, update_exit_plan, ExecuteTradeRequest,
@@ -792,7 +791,7 @@ impl DeepSeekClient {
 
             // 重试逻辑：最多重试 2 次
             let mut response = None;
-            let mut last_error = None;
+            let mut last_error: Option<anyhow::Error> = None;
             
             for retry in 0..3 {
                 if retry > 0 {
@@ -860,7 +859,7 @@ impl DeepSeekClient {
                                 error_debug = ?e,
                                 "DeepSeek API call failed"
                             );
-                            last_error = Some(e);
+                            last_error = Some(anyhow::Error::from(e));
                         }
                     },
                     Err(_) => {
