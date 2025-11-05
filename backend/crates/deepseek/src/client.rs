@@ -900,6 +900,8 @@ impl DeepSeekClient {
                 }
             }
             
+            info!(turn, "Retry loop completed, processing response");
+            
             let response = match response {
                 Some(r) => r,
                 None => {
@@ -907,6 +909,13 @@ impl DeepSeekClient {
                     return Err(err).context("DeepSeek API 调用失败（已重试3次）");
                 }
             };
+
+            info!(
+                turn,
+                has_usage = response.usage.is_some(),
+                choices_count = response.choices.len(),
+                "Processing DeepSeek response"
+            );
 
             if let Some(usage) = response.usage.as_ref() {
                 if let Ok(value) = serde_json::to_value(usage) {
