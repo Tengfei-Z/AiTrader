@@ -679,12 +679,12 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     };
 
     let system_prompt = format!(
-        "{}\n\nRun #{} 任务要求：\n- 交易品种：BTC 永续合约（BTC-USDT-SWAP）\n- 资金限制：1000 USDT\n- 请分析市场并**自主决定**是否交易\n- 如市场合适，调用 execute_trade 工具执行交易\n- 如不适合交易，请说明观望理由\n- 输出包含：市场分析、决策理由、置信度",
+        "{}\n\nRun #{} 任务要求：\n- 交易品种：BTC 永续合约（BTC-USDT-SWAP）\n- 资金限制：1000 USDT\n- 先调用 get_market_data 获取市场数据\n- 基于市场数据分析行情\n- **必须执行一次交易**（开多或开空，自主选择方向）\n- 合理控制仓位和杠杆\n- 输出包含：市场分析、交易决策、风险控制",
         DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT,
         run_id
     );
 
-    let user_prompt = "请分析当前 BTC 市场状况，并自主决定是否需要执行交易。";
+    let user_prompt = "请先获取 BTC 市场数据，然后分析行情并执行一次交易（开多或开空）。";
 
     info!(
         run_id,
