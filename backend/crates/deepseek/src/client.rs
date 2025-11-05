@@ -99,8 +99,7 @@ impl DeepSeekClient {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))  // HTTP 总超时 30 秒，强制超时避免挂死
             .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
-            .pool_idle_timeout(Duration::from_secs(20))  // 空闲 20 秒后关闭连接
-            .pool_max_idle_per_host(1)  // 每个 host 最多保留 1 个空闲连接
+            .pool_max_idle_per_host(0)  // ✅ 禁用连接池，每次都用新连接，避免 idle 连接问题
             .tcp_nodelay(true)  // 启用 TCP_NODELAY，减少延迟
             .build()
             .context("创建 HTTP 客户端失败")?;
