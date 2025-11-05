@@ -782,20 +782,10 @@ impl DeepSeekClient {
             let chat_request = CreateChatCompletionRequestArgs::default()
                 .model(self.config.model.clone())
                 .messages(messages.clone())
-                .tools(chat_tools)
+                .tools(chat_tools.clone())
                 .temperature(0_f32)
                 .build()
                 .context("构建 ChatCompletion 请求失败")?;
-
-            // DEBUG: 打印完整请求 JSON（仅 Turn 1）
-            if turn == 1 {
-                if let Ok(request_json) = serde_json::to_string_pretty(&chat_request) {
-                    warn!(
-                        "!!! TURN 1 COMPLETE REQUEST JSON !!!\n{}",
-                        request_json
-                    );
-                }
-            }
 
             // 记录发送的消息内容 - 完整版本，不截断
             let messages_full: Vec<String> = messages.iter().enumerate().map(|(idx, msg)| {
@@ -803,17 +793,35 @@ impl DeepSeekClient {
                 format!("msg[{}]: {}", idx, msg_json)
             }).collect();
             
-            // 特别关注 Turn 1
+            // 特别关注 Turn 1 - 打印完整的消息和工具定义
             if turn == 1 {
                 warn!(
-                    "!!! TURN 1 FULL REQUEST !!!\n{}",
+                    "!!! TURN 1 FULL MESSAGES !!!\n{}",
                     messages_full.join("\n")
+                );
+                
+                // 打印工具定义
+                let tools_json = serde_json::to_string_pretty(&chat_tools).unwrap_or_default();
+                warn!(
+                    "!!! TURN 1 TOOLS DEFINITIONS !!!\nTool count: {}\n{}",
+                    chat_tools.len(),
+                    tools_json
+                );
+                
+                // 打印请求摘要
+                warn!(
+                    "!!! TURN 1 REQUEST SUMMARY !!!\nModel: {}\nMessage count: {}\nTool count: {}\nTotal message size: {} bytes",
+                    self.config.model,
+                    messages.len(),
+                    chat_tools.len(),
+                    messages_full.iter().map(|s| s.len()).sum::<usize>()
                 );
             }
             
             info!(
                 turn,
                 message_count = messages.len(),
+                tool_count = chat_tools.len(),
                 total_size = messages_full.iter().map(|s| s.len()).sum::<usize>(),
                 "Prepared messages for DeepSeek API"
             );
