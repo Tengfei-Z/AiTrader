@@ -100,6 +100,7 @@ impl DeepSeekClient {
             .timeout(Duration::from_secs(30))  // HTTP 总超时 30 秒，强制超时避免挂死
             .connect_timeout(Duration::from_secs(10))  // 连接超时 10 秒
             .pool_max_idle_per_host(0)  // ✅ 禁用连接池，每次都用新连接，避免 idle 连接问题
+            .no_proxy()  // ✅ 禁用代理，直连 DeepSeek API，避免代理超时问题
             .tcp_nodelay(true)  // 启用 TCP_NODELAY，减少延迟
             .build()
             .context("创建 HTTP 客户端失败")?;
@@ -851,7 +852,7 @@ impl DeepSeekClient {
                         retry,
                         "Retrying DeepSeek API call after error"
                     );
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::time::sleep(Duration::from_secs(2)).await;  // 增加重试间隔到2秒
                 }
                 
                 info!(
@@ -868,17 +869,17 @@ impl DeepSeekClient {
                 let api_future = chat_api.create(chat_request.clone());
                 let timeout_future = tokio::time::sleep(timeout_duration);
                 
-                // 看门狗：每 5 秒打印一次
+                // 看门狗：每 3 秒打印一次（缩短间隔以便更快发现问题）
                 let watchdog = {
                     let turn = turn;
                     let retry = retry;
                     tokio::spawn(async move {
-                        for tick in 1..=7 {  // 35 秒 (7 * 5)
-                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        for tick in 1..=12 {  // 35 秒 (12 * 3)
+                            tokio::time::sleep(Duration::from_secs(3)).await;
                             warn!(
                                 turn,
                                 retry,
-                                waiting_secs = tick * 5,
+                                waiting_secs = tick * 3,
                                 "Still waiting for DeepSeek API response..."
                             );
                         }
@@ -921,13 +922,20 @@ impl DeepSeekClient {
                             elapsed_secs = api_call_start.elapsed().as_secs_f64(),
                             error = %e,
                             error_debug = ?e,
-                            "DeepSeek API call failed"
+                            "DeepSeek API call failed, will retry if attempts remaining"
                         );
                         last_error = Some(anyhow::Error::from(e));
+                        // 继续重试
                     }
                     None => {
                         // 超时情况，已经在 select! 中记录了日志
+                        warn!(
+                            turn,
+                            retry,
+                            "API call timed out, will retry if attempts remaining"
+                        );
                         last_error = Some(anyhow!("API 调用超时（{}秒）", timeout_duration.as_secs()));
+                        // 继续重试
                     }
                 }
             }
