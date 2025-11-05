@@ -832,7 +832,8 @@ impl DeepSeekClient {
                 let api_call_start = std::time::Instant::now();
                 
                 // 使用 select! 强制超时，而不是 tokio::timeout
-                let api_future = self.client.chat().create(chat_request.clone());
+                let chat_api = self.client.chat();
+                let api_future = chat_api.create(chat_request.clone());
                 let timeout_future = tokio::time::sleep(timeout_duration);
                 
                 // 看门狗：每 5 秒打印一次
