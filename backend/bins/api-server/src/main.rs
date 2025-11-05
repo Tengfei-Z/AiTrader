@@ -336,7 +336,11 @@ fn init_tracing() {
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     let _ = LOG_GUARD.set(guard);
 
-    let env_filter = EnvFilter::from_default_env().add_directive(Level::INFO.into());
+    let env_filter = EnvFilter::from_default_env()
+        .add_directive(Level::INFO.into())
+        .add_directive("async_openai=debug".parse().unwrap())  // async-openai 详细日志
+        .add_directive("reqwest=debug".parse().unwrap())       // reqwest HTTP 详细日志
+        .add_directive("hyper=debug".parse().unwrap());        // hyper HTTP 底层日志
 
     let fmt_stdout = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
     let fmt_file = tracing_subscriber::fmt::layer()
@@ -687,7 +691,7 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         "Triggering DeepSeek autonomous trading decision"
     );
     
-    let budget_total = Duration::from_secs(15);
+    let budget_total = Duration::from_secs(50);
     let start_time = Instant::now();
     let started_at_iso = current_timestamp_iso();
     {
@@ -704,7 +708,7 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     }
 
     // AI 自主分析和决策
-    let execution_timeout = budget_total.min(Duration::from_secs(15));
+    let execution_timeout = budget_total.min(Duration::from_secs(50));
 
     let function_response = match timeout(
         execution_timeout, 
