@@ -22,9 +22,7 @@ use tracing_subscriber::{EnvFilter, Registry};
 
 mod config;
 use config::load_app_config;
-use deepseek::{
-    DeepSeekClient, FunctionCallRequest, FunctionCaller, DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT,
-};
+use deepseek::{DeepSeekClient, DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT};
 use mcp_adapter::account::{fetch_account_state, AccountStateRequest};
 use okx::OkxRestClient;
 
@@ -677,32 +675,19 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     };
 
     let system_prompt = format!(
-        "{}\n\nRun #{} 规则（精简）：\n- 仅分析与交易 BTC 永续：BTC-USDT-SWAP（不涉现货）。\n- 建议下单默认标的：BTC-USDT-SWAP。\n- 先取账户/仓位，再给结论；输出含：思考、决策、置信度。",
+        "{}\n\nRun #{} 任务要求：\n- 交易品种：BTC 永续合约（BTC-USDT-SWAP）\n- 资金限制：1000 USDT\n- 请分析市场并**自主决定**是否交易\n- 如市场合适，调用 execute_trade 工具执行交易\n- 如不适合交易，请说明观望理由\n- 输出包含：市场分析、决策理由、置信度",
         DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT,
         run_id
     );
 
-    let function_request = FunctionCallRequest {
-        function: "get_account_state".to_string(),
-        arguments: json!({
-            "include_positions": true,
-            "include_history": true,
-            "include_performance": true,
-            "simulated_trading": true
-        }),
-        metadata: json!({
-            "source": "api-server",
-            "description": "Retrieve aggregated OKX account snapshot for strategy engine.",
-            "system_prompt": system_prompt
-        }),
-    };
+    let user_prompt = "请分析当前 BTC 市场状况，并自主决定是否需要执行交易。";
 
     info!(
         run_id,
-        "Triggering DeepSeek get_account_state function call"
+        "Triggering DeepSeek autonomous trading decision"
     );
-    // Global deadline budget for the whole run
-    let budget_total = Duration::from_secs(20);
+    
+    let budget_total = Duration::from_secs(15);
     let start_time = Instant::now();
     let started_at_iso = current_timestamp_iso();
     {
@@ -718,181 +703,69 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         });
     }
 
-    // Stage 1: function call with remaining budget (up to 10s)
-    let mut remaining = budget_total
-        .checked_sub(start_time.elapsed())
-        .unwrap_or_else(|| Duration::from_secs(0));
-    let stage1_timeout = remaining.min(Duration::from_secs(10));
+    // AI 自主分析和决策
+    let execution_timeout = budget_total.min(Duration::from_secs(15));
 
-    let function_response = match timeout(stage1_timeout, deepseek_client.call_function(function_request)).await {
+    let function_response = match timeout(
+        execution_timeout, 
+        deepseek_client.autonomous_analyze(&system_prompt, user_prompt)
+    ).await {
         Err(_) => {
-            tracing::error!(run_id, "DeepSeek function call timed out");
+            tracing::error!(run_id, "DeepSeek autonomous decision timed out");
             let mut status = state.last_run_status.write().await;
             if let Some(s) = status.as_mut() {
                 s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
                 s.ended_at = Some(current_timestamp_iso());
                 s.outcome = StrategyOutcome::TimeoutStage1;
-                s.error = Some("function_call_timeout".into());
+                s.error = Some("autonomous_decision_timeout".into());
             }
             return Json(ApiResponse::<Vec<StrategyMessage>>::error(
-                "DeepSeek 函数调用超时"
+                "DeepSeek 自主决策超时"
             ));
         }
         Ok(result) => match result {
-        Ok(resp) => resp,
-        Err(err) => {
-            tracing::error!(run_id, error = ?err, "DeepSeek function call failed");
-            let mut status = state.last_run_status.write().await;
-            if let Some(s) = status.as_mut() {
-                s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
-                s.ended_at = Some(current_timestamp_iso());
-                s.outcome = StrategyOutcome::Error;
-                s.error = Some(format!("function_call_error: {err}"));
+            Ok(resp) => resp,
+            Err(err) => {
+                tracing::error!(run_id, error = ?err, "DeepSeek autonomous decision failed");
+                let mut status = state.last_run_status.write().await;
+                if let Some(s) = status.as_mut() {
+                    s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
+                    s.ended_at = Some(current_timestamp_iso());
+                    s.outcome = StrategyOutcome::Error;
+                    s.error = Some(format!("autonomous_decision_error: {err}"));
+                }
+                return Json(ApiResponse::<Vec<StrategyMessage>>::error(format!(
+                    "DeepSeek 自主决策失败: {err}"
+                )));
             }
-            return Json(ApiResponse::<Vec<StrategyMessage>>::error(format!(
-                "DeepSeek 函数调用失败: {err}"
-            )));
         }
-    }
     };
     {
         let mut status = state.last_run_status.write().await;
         if let Some(s) = status.as_mut() {
             s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
+            s.ended_at = Some(current_timestamp_iso());
+            s.outcome = StrategyOutcome::Ok;
         }
     }
 
-    // Focus DeepSeek analysis on BTC-only data
-    let focus_coin = "BTC";
-
-    let mut filtered_output = function_response.output.clone();
-    if let serde_json::Value::Object(ref mut map) = filtered_output {
-        // Helper to check if a JSON value has coin/symbol fields containing focus_coin
-        let contains_focus_coin = |value: &serde_json::Value| -> bool {
-            let focus = focus_coin.to_uppercase();
-            match value {
-                serde_json::Value::Object(obj) => {
-                    let coin = obj.get("coin").and_then(|v| v.as_str()).unwrap_or("");
-                    let symbol = obj.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
-                    coin.to_uppercase().contains(&focus) || symbol.to_uppercase().contains(&focus)
-                }
-                _ => false,
-            }
-        };
-
-        // Filter balances to BTC and USDT only if balances exist
-        if let Some(balances) = map.get_mut("balances").and_then(|v| v.as_array_mut()) {
-            balances.retain(|item| {
-                let asset = item
-                    .get("asset")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_uppercase();
-                asset == focus_coin || asset == "USDT"
-            });
-        }
-
-        // Filter active positions arrays by focus coin
-        if let Some(positions) = map
-            .get_mut("active_positions")
-            .and_then(|v| v.as_array_mut())
-        {
-            positions.retain(|item| contains_focus_coin(item));
-        }
-
-        // Filter positions history variants by focus coin
-        if let Some(history) = map
-            .get_mut("positions_history")
-            .and_then(|v| v.as_array_mut())
-        {
-            history.retain(|item| contains_focus_coin(item));
-        }
-        if let Some(history) = map
-            .get_mut("historical_positions")
-            .and_then(|v| v.as_array_mut())
-        {
-            history.retain(|item| contains_focus_coin(item));
-        }
-
-        // Optional: filter performance metrics per-coin if structured as an object of coins
-        if let Some(perf) = map.get_mut("performance").and_then(|v| v.as_object_mut()) {
-            perf.retain(|key, _| {
-                let k = key.to_uppercase();
-                k == focus_coin || k == "USDT" || k == "TOTAL"
-            });
-        }
-    }
-
-    // Use compact JSON to reduce tokens
-    let account_state_json = serde_json::to_string(&filtered_output)
-        .unwrap_or_else(|_| filtered_output.to_string());
+    // 使用 AI 返回的完整结果
+    let result_json = serde_json::to_string_pretty(&function_response.output)
+        .unwrap_or_else(|_| function_response.output.to_string());
 
     info!(
         run_id,
-        output_preview = %truncate_for_log(&account_state_json, 512),
-        "DeepSeek tool call succeeded"
+        output_preview = %truncate_for_log(&result_json, 512),
+        "DeepSeek autonomous decision completed"
     );
 
-    let summary_prompt = format!(
-        "仅围绕 BTC 永续（BTC-USDT-SWAP）输出；不涉现货。账户数据（JSON）：\n{}\n\n请按以下格式简洁输出：\n【思考总结】≤200字；只谈 BTC 合约行情与仓位要点。\n【决策】是否开/平/调整；默认标的 BTC-USDT-SWAP；给关键参数。\n【置信度】0-100。",
-        account_state_json
-    );
-
-    info!(run_id, "Requesting DeepSeek summary synthesis");
-    // Stage 2: summary with remaining budget (up to 8s)
-    remaining = budget_total
-        .checked_sub(start_time.elapsed())
-        .unwrap_or_else(|| Duration::from_secs(0));
-    let stage2_timeout = if remaining.is_zero() { Duration::from_secs(1) } else { remaining.min(Duration::from_secs(8)) };
-
-    let summary_start = Instant::now();
-    let summary_content = match timeout(stage2_timeout, deepseek_client.chat_completion(&summary_prompt)).await {
-        Err(_) => {
-            tracing::error!(run_id, "DeepSeek summary generation timed out");
-            let mut status = state.last_run_status.write().await;
-            if let Some(s) = status.as_mut() {
-                s.stage2_elapsed_ms = Some(summary_start.elapsed().as_millis());
-                s.ended_at = Some(current_timestamp_iso());
-                s.outcome = StrategyOutcome::TimeoutStage2;
-                s.error = Some("summary_timeout".into());
-            }
-            format!(
-                "【思考总结】\n未能生成总结（超时），以下为账户数据：\n{}\n\n【决策】\n保持观望，待重新获取模型输出。\n\n【置信度】\n30",
-                account_state_json
-            )
-        }
-        Ok(result) => match result {
-        Ok(text) => {
-            info!(
-                run_id,
-                summary_preview = %truncate_for_log(&text, 256),
-                "DeepSeek summary generated"
-            );
-            let mut status = state.last_run_status.write().await;
-            if let Some(s) = status.as_mut() {
-                s.stage2_elapsed_ms = Some(summary_start.elapsed().as_millis());
-                s.ended_at = Some(current_timestamp_iso());
-                s.outcome = StrategyOutcome::Ok;
-                s.error = None;
-            }
-            text
-        }
-        Err(err) => {
-            tracing::error!(run_id, error = ?err, "DeepSeek summary generation failed");
-            let mut status = state.last_run_status.write().await;
-            if let Some(s) = status.as_mut() {
-                s.stage2_elapsed_ms = Some(summary_start.elapsed().as_millis());
-                s.ended_at = Some(current_timestamp_iso());
-                s.outcome = StrategyOutcome::Error;
-                s.error = Some(format!("summary_error: {err}"));
-            }
-            format!(
-                "【思考总结】\n未能生成总结，以下为账户数据：\n{}\n\n【决策】\n保持观望，待重新获取模型输出。\n\n【置信度】\n30",
-                account_state_json
-            )
-        }
-    }
-    };
+    // AI 的分析和决策（如果有交易则包含交易结果）
+    let content = function_response.message.unwrap_or_else(|| {
+        format!(
+            "【AI 自主决策】\n\n{}\n\n【资金限制】\n可操作金额：1000 USDT",
+            result_json
+        )
+    });
 
     let strategy_message = StrategyMessage {
         id: format!(
@@ -904,7 +777,7 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         created_at: current_timestamp_iso(),
         summary: Some(format!("第 {} 次策略执行", run_id)),
         tags: Some(vec!["auto-run".into(), "deepseek".into()]),
-        content: summary_content,
+        content,
     };
 
     let messages = {
