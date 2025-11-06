@@ -51,7 +51,7 @@ def configure_logging() -> None:
     console_formatter = structlog.stdlib.ProcessorFormatter(
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.dict_traceback,
+            structlog.processors.dict_tracebacks,
             structlog.dev.ConsoleRenderer(colors=settings.app_env == "development"),
         ],
     )
@@ -70,7 +70,7 @@ def configure_logging() -> None:
         file_formatter = structlog.stdlib.ProcessorFormatter(
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                structlog.processors.dict_traceback,
+                structlog.processors.dict_tracebacks,
                 structlog.processors.JSONRenderer(),
             ],
         )

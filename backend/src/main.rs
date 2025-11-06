@@ -332,8 +332,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_tracing() {
-    let log_dir = std::path::Path::new("logs");
-    if let Err(err) = fs::create_dir_all(log_dir) {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|path| path.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let log_dir = repo_root.join("log");
+
+    if let Err(err) = fs::create_dir_all(&log_dir) {
         eprintln!("failed to create log directory {log_dir:?}: {err}");
     }
 

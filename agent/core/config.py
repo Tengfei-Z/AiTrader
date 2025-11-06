@@ -4,7 +4,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, AnyHttpUrl, BaseSettings, Field, SecretStr
+from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_DIR = Path(__file__).resolve().parents[1]
@@ -22,7 +23,7 @@ class AgentSettings(BaseSettings):
     app_env: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_file: str | None = Field(
-        "logs/agent.log",
+        str(_REPO_ROOT / "log" / "agent.log"),
         description="日志文件路径，设为 None 或空字符串禁用文件输出",
     )
 
@@ -51,12 +52,12 @@ class AgentSettings(BaseSettings):
     )
     okx_base_url: AnyHttpUrl = Field("https://www.okx.com", description="OKX REST base URL")
 
-    sentry_dsn: str | None = Field(None, description="Optional Sentry DSN")
-
-    class Config:
-        env_file = _ENV_FILE_CANDIDATES
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE_CANDIDATES,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 @lru_cache

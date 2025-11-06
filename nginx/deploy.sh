@@ -126,9 +126,19 @@ if agent_log_file_cfg:
     if agent_log_path.is_absolute():
         agent_log_file = str(agent_log_path)
     else:
-        agent_log_file = str(pathlib.Path(agent_dir) / agent_log_path)
+        agent_log_file = str(pathlib.Path(repo_root) / agent_log_path)
 else:
-    agent_log_file = str(pathlib.Path(agent_dir) / "logs" / "agent.log")
+    agent_log_file = str(pathlib.Path(repo_root) / "log" / "agent.log")
+
+agent_work_dir_cfg = agent_cfg.get("working_dir")
+if agent_work_dir_cfg:
+    agent_work_dir_path = pathlib.Path(agent_work_dir_cfg)
+    if agent_work_dir_path.is_absolute():
+        agent_work_dir = str(agent_work_dir_path)
+    else:
+        agent_work_dir = str(pathlib.Path(repo_root) / agent_work_dir_path)
+else:
+    agent_work_dir = str(pathlib.Path(repo_root))
 
 assignments = {
     "APP_USER": dig(deployment, "app_user") or os.getenv("USER", "root"),
@@ -161,6 +171,7 @@ assignments = {
     "AGENT_SYSTEMD_UNIT_PATH": agent_unit_path,
     "AGENT_ENV_FILE": agent_env_file,
     "AGENT_LOG_FILE": agent_log_file,
+    "AGENT_WORK_DIR": agent_work_dir,
 }
 
 if http_redirect_port is not None:
@@ -448,7 +459,7 @@ After=network.target
 [Service]
 User=${APP_USER}
 Group=${APP_USER}
-WorkingDirectory=${AGENT_DIR}
+WorkingDirectory=${AGENT_WORK_DIR}
 EOF
     if [[ -n "${AGENT_ENV_FILE:-}" ]]; then
       echo "EnvironmentFile=${AGENT_ENV_FILE}"

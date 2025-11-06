@@ -130,6 +130,28 @@ class OKXClient:
         params = {"instType": inst_type} if inst_type else None
         return await self._request("GET", "/api/v5/trade/orders-pending", params=params)
 
+    async def get_order_history(
+        self,
+        *,
+        inst_type: str | None = None,
+        inst_id: str | None = None,
+        state: str | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        """Fetch historical orders."""
+
+        params: dict[str, Any] = {}
+        if inst_type:
+            params["instType"] = inst_type
+        if inst_id:
+            params["instId"] = inst_id
+        if state:
+            params["state"] = state
+        if limit:
+            params["limit"] = limit
+
+        return await self._request("GET", "/api/v5/trade/orders-history", params=params or None)
+
     async def place_order(self, order: dict[str, Any]) -> Any:
         """Submit an order payload to OKX."""
 

@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 
 @asynccontextmanager
-def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):
     """FastAPI lifespan handler."""
 
     settings = get_settings()
@@ -25,7 +25,7 @@ def lifespan(app: FastAPI):
         env=settings.app_env,
         log_level=settings.log_level,
     )
-    refresh_tools_schema()
+    await refresh_tools_schema()
     yield
     logger.info("agent_shutdown")
 

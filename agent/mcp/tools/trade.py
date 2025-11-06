@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ...core.okx_client import okx_client
 from ..registry import mcp
-from .market import _wrap_response
+from .utils import wrap_response
 
 
 class PlaceOrderInput(BaseModel):
@@ -41,13 +41,24 @@ class CancelOrderInput(BaseModel):
         return self
 
 
+class OrderHistoryQuery(BaseModel):
+    """查询历史订单的筛选条件。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    inst_type: str | None = Field(None, alias="instType", description="产品类型，如 SWAP/SPOT")
+    inst_id: str | None = Field(None, alias="instId", description="交易产品 ID")
+    state: str | None = Field(None, alias="state", description="订单状态过滤，例如 filled/canceled")
+    limit: int | None = Field(None, alias="limit", ge=1, le=100, description="返回条数，1-100")
+
+
 @mcp.tool(name="place_order")
 async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
     """提交交易订单。"""
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
     response = await okx_client.place_order(payload)
-    return _wrap_response(response)
+    return wrap_response(response)
 
 
 @mcp.tool(name="cancel_order")
@@ -60,4 +71,19 @@ async def cancel_order_tool(order: CancelOrderInput) -> dict[str, Any]:
         order_id=payload.get("ordId"),
         client_order_id=payload.get("clOrdId"),
     )
-    return _wrap_response(response)
+    return wrap_response(response)
+
+
+@mcp.tool()
+async def get_order_history(query: OrderHistoryQuery | None = None) -> dict[str, Any]:
+    """查询历史订单记录。"""
+
+    query = query or OrderHistoryQuery()
+    payload = query.model_dump(by_alias=True, exclude_none=True)
+    response = await okx_client.get_order_history(
+        inst_type=payload.get("instType"),
+        inst_id=payload.get("instId"),
+        state=payload.get("state"),
+        limit=payload.get("limit"),
+    )
+    return wrap_response(response)

@@ -50,7 +50,11 @@ def ensure_virtualenv() -> None:
 
     env = os.environ.copy()
     env[_REEXEC_FLAG] = "1"
-    cmd = [str(python_bin), __file__]
+    cmd = [
+        str(python_bin),
+        "-m",
+        "agent.scripts.run_agent",
+    ]
     subprocess.run(cmd, check=True, cwd=str(_REPO_ROOT), env=env)
     raise SystemExit(0)
 
@@ -64,12 +68,21 @@ def main() -> None:
     from agent.llm.main import app
 
     settings = get_settings()
-    uvicorn.run(
-        app,
-        host=settings.agent_host,
-        port=settings.agent_port,
-        reload=settings.app_env == "development",
-    )
+    reload_enabled = settings.app_env == "development"
+    if reload_enabled:
+        uvicorn.run(
+            "agent.llm.main:app",
+            host=settings.agent_host,
+            port=settings.agent_port,
+            reload=True,
+        )
+    else:
+        uvicorn.run(
+            app,
+            host=settings.agent_host,
+            port=settings.agent_port,
+            reload=False,
+        )
 
 
 if __name__ == "__main__":
