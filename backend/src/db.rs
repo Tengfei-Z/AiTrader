@@ -1,12 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 use std::{
     collections::HashSet,
     env, fs,
-    future::Future,
     path::{Path, PathBuf},
 };
-use tokio::runtime::{Builder, Handle};
 use tokio_postgres::{Client, NoTls};
 use tracing::{info, warn};
 
@@ -153,22 +151,6 @@ fn push_candidate(path: &Path, candidates: &mut Vec<PathBuf>, seen: &mut HashSet
 
     if seen.insert(canonical.clone()) {
         candidates.push(canonical);
-    }
-}
-
-fn block_on_db<F, T>(future: F) -> Result<T>
-where
-    F: Future<Output = Result<T>> + Send + 'static,
-    T: Send + 'static,
-{
-    if let Ok(handle) = Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        let runtime = Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to build Tokio runtime for database operation")?;
-        Ok(runtime.block_on(future)?)
     }
 }
 

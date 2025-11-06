@@ -60,25 +60,6 @@ impl AppConfig {
         })
     }
 
-    /// Helper that forces the presence of OKX credentials.
-    pub fn require_okx_credentials(&self) -> Result<&OkxCredentials> {
-        let credentials = self
-            .okx_credentials
-            .as_ref()
-            .context(
-                "未找到 OKX 凭证：请在当前目录创建 .env（可参考 .env.example），并设置 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE",
-            )?;
-
-        ensure!(
-            !credentials.api_key.trim().is_empty()
-                && !credentials.api_secret.trim().is_empty()
-                && !credentials.passphrase.trim().is_empty(),
-            "OKX 凭证不能为空：请在 .env 中填写 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE"
-        );
-
-        Ok(credentials)
-    }
-
     pub fn require_okx_simulated_credentials(&self) -> Result<&OkxCredentials> {
         let credentials = self
             .okx_simulated_credentials

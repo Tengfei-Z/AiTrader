@@ -24,6 +24,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
+use chrono::TimeZone;
 
 use agent_client::{AgentAnalysisRequest, AgentClient};
 use okx::OkxRestClient;
@@ -34,12 +35,10 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 #[derive(Clone)]
 struct AppState {
-    okx: Option<OkxRestClient>,
     okx_simulated: Option<OkxRestClient>,
     agent: Option<AgentClient>,
     strategy_messages: Arc<RwLock<Vec<StrategyMessage>>>,
     strategy_run_counter: Arc<RwLock<u64>>,
-    next_order_id: Arc<RwLock<u64>>, // reserved for future local bookkeeping
     last_run_status: Arc<RwLock<Option<StrategyRunStatus>>>,
 }
 
@@ -290,7 +289,6 @@ async fn main() -> anyhow::Result<()> {
         http: http_proxy,
         https: https_proxy,
     };
-    let okx_client = None;
     let okx_simulated =
         OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options.clone()).ok();
 
@@ -309,12 +307,10 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app_state = AppState {
-        okx: okx_client,
         okx_simulated,
         agent: agent_client,
         strategy_messages: Arc::new(RwLock::new(Vec::new())),
         strategy_run_counter: Arc::new(RwLock::new(0)),
-        next_order_id: Arc::new(RwLock::new(1)),
         last_run_status: Arc::new(RwLock::new(None)),
     };
     let bind_addr = settings
@@ -514,22 +510,6 @@ async fn get_positions(
 
     Json(ApiResponse::ok(Vec::<Position>::new()))
 }
-                let balances = vec![Balance {
-                    asset: "USDT".into(),
-                    available: format_amount(account_state.available_cash),
-                    locked: format_amount(locked),
-                    valuation_usdt: format_amount(account_state.account_value),
-                }];
-                return Json(ApiResponse::ok(balances));
-            }
-            Err(err) => {
-                tracing::warn!(use_simulated, error = ?err, "failed to fetch OKX balances");
-            }
-        }
-    }
-
-    Json(ApiResponse::ok(Vec::<Balance>::new()))
-}
 
 async fn get_open_orders(
     _state: State<AppState>,
@@ -714,7 +694,9 @@ fn convert_okx_position_history(detail: okx::models::PositionHistoryDetail) -> P
 
 fn parse_timestamp_millis(value: Option<String>) -> Option<String> {
     let millis = value?.parse::<i64>().ok()?;
-    chrono::Utc::from_timestamp_millis(millis)
+    chrono::Utc
+        .timestamp_millis_opt(millis)
+        .single()
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
@@ -755,8 +737,7 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
 
     let session_id = format!("strategy-auto-{run_id}");
     let context = format!(
-        "Run #{run_id}: 请结合最新行情给出可执行的量化交易建议，"
-            "账户资金为 1000 USDT，需涵盖市场分析、仓位建议和风险提示。"
+        "Run #{run_id}: 请结合最新行情给出可执行的量化交易建议，账户资金为 1000 USDT，需涵盖市场分析、仓位建议和风险提示。"
     );
     let request = AgentAnalysisRequest {
         session_id: session_id.clone(),
@@ -809,6 +790,10 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
 
     info!(
         run_id,
+        session_id = %response.session_id,
+        instrument_id = %response.instrument_id,
+        analysis_type = %response.analysis_type,
+        completed_at = %response.created_at,
         summary_preview = %truncate_for_log(&response.summary, 256),
         suggestions = response.suggestions.len(),
         "Agent analysis completed"
@@ -867,8 +852,17 @@ fn parse_optional_number(value: Option<String>) -> Option<f64> {
 
 async fn place_order(
     _state: State<AppState>,
-    Json(_payload): Json<PlaceOrderRequest>,
+    Json(payload): Json<PlaceOrderRequest>,
 ) -> impl IntoResponse {
+    info!(
+        symbol = %payload.symbol,
+        side = %payload.side,
+        order_type = %payload.order_type,
+        price = payload.price.as_deref().unwrap_or("market"),
+        size = %payload.size,
+        "Received simulated place-order request; feature not implemented"
+    );
+
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(ApiResponse::<PlaceOrderResponse>::error(
@@ -889,14 +883,6 @@ async fn cancel_order(
 
 fn current_timestamp_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
-
-fn current_timestamp() -> String {
-    chrono::Utc::now().timestamp_millis().to_string()
-}
-
-fn current_timestamp_minus(ms: i64) -> String {
-    (chrono::Utc::now().timestamp_millis() - ms).to_string()
 }
 
 impl std::fmt::Display for OrderStatus {

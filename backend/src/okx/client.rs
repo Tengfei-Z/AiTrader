@@ -25,31 +25,6 @@ pub struct ProxyOptions {
 }
 
 impl OkxRestClient {
-    pub fn from_config(config: &AppConfig) -> Result<Self> {
-        let credentials = config.require_okx_credentials()?.clone();
-        Self::new_with_proxy(
-            config.okx_rest_endpoint.clone(),
-            credentials,
-            ProxyOptions::default(),
-            false,
-        )
-    }
-
-    pub fn from_config_with_proxy(config: &AppConfig, proxy: ProxyOptions) -> Result<Self> {
-        let credentials = config.require_okx_credentials()?.clone();
-        Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy, false)
-    }
-
-    pub fn from_config_simulated(config: &AppConfig) -> Result<Self> {
-        let credentials = config.require_okx_simulated_credentials()?.clone();
-        Self::new_with_proxy(
-            config.okx_rest_endpoint.clone(),
-            credentials,
-            ProxyOptions::default(),
-            true,
-        )
-    }
-
     pub fn from_config_simulated_with_proxy(
         config: &AppConfig,
         proxy: ProxyOptions,
@@ -58,15 +33,7 @@ impl OkxRestClient {
         Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy, true)
     }
 
-    pub fn new(base_url: impl Into<String>, credentials: OkxCredentials) -> Result<Self> {
-        Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), false)
-    }
-
-    pub fn new_simulated(base_url: impl Into<String>, credentials: OkxCredentials) -> Result<Self> {
-        Self::new_with_proxy(base_url, credentials, ProxyOptions::default(), true)
-    }
-
-    pub fn new_with_proxy(
+    fn new_with_proxy(
         base_url: impl Into<String>,
         credentials: OkxCredentials,
         proxy: ProxyOptions,
@@ -96,31 +63,6 @@ impl OkxRestClient {
             credentials,
             simulated_trading,
         })
-    }
-
-    #[instrument(skip(self))]
-    pub async fn get_server_time(&self) -> Result<u64> {
-        #[derive(serde::Deserialize)]
-        struct TimeResponse {
-            data: Vec<TimeData>,
-        }
-
-        #[derive(serde::Deserialize)]
-        struct TimeData {
-            ts: String,
-        }
-
-        let url = format!("{API_PREFIX}/public/time");
-        let response: TimeResponse = self.get(&url, None).await?;
-        let timestamp = response
-            .data
-            .first()
-            .ok_or_else(|| OkxError::EmptyResponse("public/time".into()))?;
-
-        timestamp
-            .ts
-            .parse::<u64>()
-            .map_err(|err| OkxError::Deserialize(err.into()).into())
     }
 
     #[instrument(skip(self), fields(inst_id = %inst_id))]
@@ -225,71 +167,6 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
-    #[instrument(skip(self), fields(inst_id = %inst_id, timeframe = %timeframe, limit))]
-    pub async fn get_candles(
-        &self,
-        inst_id: &str,
-        timeframe: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<super::models::Candle>> {
-        let mut params = vec![
-            ("instId".to_string(), inst_id.to_string()),
-            ("bar".to_string(), timeframe.to_string()),
-        ];
-        if let Some(limit) = limit {
-            params.push(("limit".to_string(), limit.min(300).to_string()));
-        }
-
-        let query = params
-            .into_iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let path = format!("{API_PREFIX}/market/candles?{query}");
-        let response: super::models::RestResponse<super::models::Candle> =
-            self.get(&path, None).await?;
-        Ok(response.ensure_success()?)
-    }
-
-    #[instrument(skip(self), fields(inst_id = %inst_id, depth))]
-    pub async fn get_order_book(
-        &self,
-        inst_id: &str,
-        depth: Option<usize>,
-    ) -> Result<super::models::OrderBookSnapshot> {
-        let depth = depth.unwrap_or(5).min(100);
-        let path = format!("{API_PREFIX}/market/books?instId={inst_id}&sz={depth}");
-        let response: super::models::RestResponse<super::models::OrderBookSnapshot> =
-            self.get(&path, None).await?;
-        let mut items = response.ensure_success()?;
-        Ok(items
-            .pop()
-            .ok_or_else(|| OkxError::EmptyResponse("market/books".into()))?)
-    }
-
-    #[instrument(skip(self), fields(inst_id = %inst_id))]
-    pub async fn get_funding_rate(&self, inst_id: &str) -> Result<super::models::FundingRate> {
-        let path = format!("{API_PREFIX}/public/funding-rate?instId={inst_id}");
-        let response: super::models::RestResponse<super::models::FundingRate> =
-            self.get(&path, None).await?;
-        let mut items = response.ensure_success()?;
-        Ok(items
-            .pop()
-            .ok_or_else(|| OkxError::EmptyResponse("public/funding-rate".into()))?)
-    }
-
-    #[instrument(skip(self), fields(inst_id = %inst_id))]
-    pub async fn get_open_interest(&self, inst_id: &str) -> Result<super::models::OpenInterest> {
-        let path = format!("{API_PREFIX}/public/open-interest?instId={inst_id}");
-        let response: super::models::RestResponse<super::models::OpenInterest> =
-            self.get(&path, None).await?;
-        let mut items = response.ensure_success()?;
-        Ok(items
-            .pop()
-            .ok_or_else(|| OkxError::EmptyResponse("public/open-interest".into()))?)
-    }
-
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
         T: DeserializeOwned,
@@ -297,66 +174,6 @@ impl OkxRestClient {
         tracing::debug!("OKX GET {}", path_and_query);
         let builder = self.prepare_request(Method::GET, path_and_query, body)?;
         self.execute(builder).await
-    }
-
-    async fn post<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        tracing::debug!("OKX POST {}", path_and_query);
-        let builder = self.prepare_request(Method::POST, path_and_query, body)?;
-        self.execute(builder).await
-    }
-
-    pub async fn place_order(
-        &self,
-        request: &super::models::PlaceOrderRequest,
-    ) -> Result<super::models::OrderResponseItem> {
-        let payload = serde_json::to_value(request)?;
-        let response: super::models::RestResponse<super::models::OrderResponseItem> = self
-            .post(&format!("{API_PREFIX}/trade/order"), Some(payload))
-            .await?;
-        let mut items = response.ensure_success()?;
-        let item = items
-            .pop()
-            .ok_or_else(|| OkxError::EmptyResponse("trade/order".into()))?;
-        item.ensure_success()?;
-        Ok(item)
-    }
-
-    pub async fn close_position(
-        &self,
-        request: &super::models::ClosePositionRequest,
-    ) -> Result<super::models::ClosePositionResponseItem> {
-        let payload = serde_json::to_value(request)?;
-        let response: super::models::RestResponse<super::models::ClosePositionResponseItem> = self
-            .post(&format!("{API_PREFIX}/trade/close-position"), Some(payload))
-            .await?;
-        let mut items = response.ensure_success()?;
-        let item = items
-            .pop()
-            .ok_or_else(|| OkxError::EmptyResponse("trade/close-position".into()))?;
-        item.ensure_success()?;
-        Ok(item)
-    }
-
-    pub async fn set_trading_stop(
-        &self,
-        request: &super::models::SetTradingStopRequest,
-    ) -> Result<super::models::SetTradingStopResponseItem> {
-        let payload = serde_json::to_value(request)?;
-        let response: super::models::RestResponse<super::models::SetTradingStopResponseItem> = self
-            .post(
-                &format!("{API_PREFIX}/trade/set-trading-stop"),
-                Some(payload),
-            )
-            .await?;
-        let mut items = response.ensure_success()?;
-        let item = items
-            .pop()
-            .ok_or_else(|| OkxError::EmptyResponse("trade/set-trading-stop".into()))?;
-        item.ensure_success()?;
-        Ok(item)
     }
 
     fn prepare_request(

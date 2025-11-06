@@ -5,8 +5,6 @@ use thiserror::Error;
 pub enum OkxError {
     #[error("http client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-    #[error("unexpected http status: {0}")]
-    HttpStatus(StatusCode),
     #[error("unexpected http status: {status}, body: {body}")]
     HttpStatusWithBody { status: StatusCode, body: String },
     #[error("failed to serialize or deserialize payload: {0}")]
@@ -17,10 +15,6 @@ pub enum OkxError {
     Signature(String),
     #[error("empty response from {0}")]
     EmptyResponse(String),
-    #[error("okx api error {code}: {msg}")]
-    Api { code: String, msg: String },
-    #[error("okx api sub-error {code}: {msg}")]
-    ApiSub { code: String, msg: String },
     #[error("invalid header value: {0}")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
 }
