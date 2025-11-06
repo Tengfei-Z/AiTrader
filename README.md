@@ -39,7 +39,6 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
 - `frontend/`：前端单页应用，展示行情、账户以及与 Agent 的对话窗口。
 - `backend/`：单一 Rust crate，`src/` 下包含 Axum 入口、配置加载、PostgreSQL 初始化与 OKX 客户端实现。
 - `agent/`：Python 端 Agent，包含 FastAPI 服务、DeepSeek 接入、FastMCP 工具与测试脚本。
-- `new.md`：Agent 设计与实施细节（重构完成后可合并进正式文档）。
 
 ## 关键能力
 
