@@ -36,9 +36,16 @@ agent/.venv/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-.venv/
-agent/.venv/
 
-# Python cache
+# Python cache & tooling outputs
 __pycache__/
 **/__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+agent/.mypy_cache/
+agent/.pytest_cache/
+agent/.ruff_cache/
