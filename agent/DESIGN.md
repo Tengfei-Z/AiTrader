@@ -194,6 +194,10 @@ ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
 ## 6. 部署方案
 
 ```bash
+# 0. 配置环境变量（在仓库根目录）
+cp agent/.env.example .env
+# 编辑 .env 文件后再进入 agent 目录（只用模拟盘时可仅填写 OKX_SIM_*）
+
 # 1. 创建虚拟环境
 cd agent
 python -m venv .venv
@@ -207,11 +211,7 @@ source .venv/bin/activate
 # 3. 安装依赖
 pip install -r requirements.txt
 
-# 4. 配置环境变量
-cp .env.example .env
-# 编辑 .env 文件
-
-# 5. 启动服务
+# 4. 启动服务
 python -m llm.main
 # 或使用脚本
 ./scripts/start.sh

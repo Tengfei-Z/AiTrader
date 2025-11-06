@@ -67,21 +67,23 @@ agent/
 
 ## 快速开始
 
-1. 准备虚拟环境并安装依赖：
+1. 复制环境变量示例（在仓库根目录执行）：
 
    ```bash
+   cp agent/.env.example .env
+   # 按需填入 DEEPSEEK、OKX 等密钥
+    # 如需自定义日志文件，设置 LOG_FILE=/path/to/agent.log
+    # 只使用 OKX 模拟盘时，可只填写 OKX_SIM_*，Agent 会自动使用这些值
+   ```
+
+2. 准备虚拟环境并安装依赖（切换到 agent 目录）：
+
+   ```bash
+   cd agent
    uv venv
    source .venv/bin/activate
    uv pip install -r requirements.txt
    uv pip install -r requirements-dev.txt
-   ```
-
-2. 复制环境变量示例：
-
-   ```bash
-   cp .env.example .env
-   # 按需填入 DEEPSEEK、OKX 等密钥
-   # 如需自定义日志文件，设置 LOG_FILE=/path/to/agent.log
    ```
 
 3. 启动服务：

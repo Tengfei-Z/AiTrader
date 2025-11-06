@@ -1,9 +1,19 @@
 """Configuration management for the Agent service."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import AnyHttpUrl, BaseSettings, Field, SecretStr
+from pydantic import AliasChoices, AnyHttpUrl, BaseSettings, Field, SecretStr
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_AGENT_DIR = Path(__file__).resolve().parents[1]
+# 把仓库根目录的 .env 作为默认来源，同时保留 agent 目录与运行时当前目录的回退
+_ENV_FILE_CANDIDATES: tuple[str, ...] = (
+    str(_REPO_ROOT / ".env"),
+    str(_AGENT_DIR / ".env"),
+    ".env",
+)
 
 
 class AgentSettings(BaseSettings):
@@ -24,15 +34,27 @@ class AgentSettings(BaseSettings):
         "https://api.deepseek.com/v1", description="DeepSeek API endpoint"
     )
 
-    okx_api_key: SecretStr = Field(..., description="OKX API key")
-    okx_secret_key: SecretStr = Field(..., description="OKX secret key")
-    okx_passphrase: SecretStr = Field(..., description="OKX passphrase")
+    okx_api_key: SecretStr = Field(
+        ...,
+        description="OKX API key",
+        validation_alias=AliasChoices("OKX_API_KEY", "OKX_SIM_API_KEY"),
+    )
+    okx_secret_key: SecretStr = Field(
+        ...,
+        description="OKX secret key",
+        validation_alias=AliasChoices("OKX_SECRET_KEY", "OKX_SIM_API_SECRET"),
+    )
+    okx_passphrase: SecretStr = Field(
+        ...,
+        description="OKX passphrase",
+        validation_alias=AliasChoices("OKX_PASSPHRASE", "OKX_SIM_PASSPHRASE"),
+    )
     okx_base_url: AnyHttpUrl = Field("https://www.okx.com", description="OKX REST base URL")
 
     sentry_dsn: str | None = Field(None, description="Optional Sentry DSN")
 
     class Config:
-        env_file = ".env"
+        env_file = _ENV_FILE_CANDIDATES
         env_file_encoding = "utf-8"
         case_sensitive = False
 
