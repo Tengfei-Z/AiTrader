@@ -38,6 +38,7 @@ class OKXClient:
             "Content-Type": "application/json",
             "OK-ACCESS-PASSPHRASE": self._settings.okx_passphrase.get_secret_value(),
             "OK-ACCESS-TIMESTAMP": timestamp,
+            "x-simulated-trading": "1",
         }
 
         if auth:

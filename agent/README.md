@@ -96,7 +96,7 @@ agent/
 
 - `core.config`: 基于 `pydantic-settings` 读取环境变量，统一配置入口。  
 - `core.logging_config`: structlog 日志配置，支持同时输出到标准输出与 `logs/agent.log`。  
-- `core.okx_client`: HTTP 请求签名、重试与错误封装，提供行情/账户/交易接口。  
+- `core.okx_client`: HTTP 请求签名、重试与错误封装（默认加 `x-simulated-trading: 1`，仅支持 OKX 模拟盘），提供行情/账户/交易接口。  
 - `llm.services.deepseek_client`: 使用 `httpx` + `tenacity` 对 DeepSeek 进行多次重试。  
 - `llm.services.conversation_manager`: 内存会话存储，支持按 session_id 限制历史长度。  
 - `llm.api.chat`: 对话主入口，自动处理工具调用与历史上下文。  
@@ -130,4 +130,4 @@ pytest
 - `GET /health`: 服务健康检查。  
 - `POST /chat`: 对话接口，支持自动工具调用与历史追踪。  
 - `POST /analysis`: 市场分析接口（复用对话能力）。  
-- FastMCP 工具：行情、订单簿、K 线、账户、持仓、委托、下单、撤单。
+- FastMCP 工具：行情、订单簿、K 线、账户、持仓、委托、下单、撤单（仅向 OKX 模拟盘发起操作）。
