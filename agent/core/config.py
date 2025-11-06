@@ -11,6 +11,10 @@ class AgentSettings(BaseSettings):
 
     app_env: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_file: str | None = Field(
+        "logs/agent.log",
+        description="日志文件路径，设为 None 或空字符串禁用文件输出",
+    )
 
     agent_host: str = Field("0.0.0.0", description="FastAPI bind host")
     agent_port: int = Field(8001, description="FastAPI bind port")
