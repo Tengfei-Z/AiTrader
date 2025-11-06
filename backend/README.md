@@ -1,13 +1,15 @@
 # AiTrader 后端
 
-这个工作区包含 AiTrader 的 Rust 后端代码。目录划分旨在让不同模块（交易所接入、AI 集成、工具链）彼此独立开发，同时共用核心类型与配置。
+这个目录现在只包含一个 Rust crate（`src/`），负责提供 REST API、加载配置以及访问 OKX。
 
-## Workspace 结构
+## 目录结构
 
-- `crates/ai_core`：公共配置、领域类型与工具函数。
-- `crates/okx`：OKX REST/WebSocket 客户端（已实现 REST 骨架）。
-- `crates/deepseek`：DeepSeek Function Call 封装（结构就绪）。
-- `crates/mcp`：MCP 工具适配层，包含进程管理的基础代码。
+- `src/main.rs`：Axum 入口，路由、状态管理、Agent 转发逻辑。
+- `src/agent_client.rs`：与 Python Agent 交互的 HTTP 客户端封装。
+- `src/server_config.rs`：读取 `config/config.yaml` 的可选绑定/代理配置。
+- `src/settings.rs`：环境变量与 `.env` 加载，提供全局 `CONFIG`。
+- `src/db.rs`：PostgreSQL 初始化与迁移工具（当前主要用于账户/策略相关表）。
+- `src/okx/`：OKX REST 客户端、模型与签名逻辑。
 
 ## 运行服务
 
@@ -16,14 +18,12 @@ cd backend
 cargo run -p api-server
 ```
 
-api-server 提供统一的 REST API，供前端调用。运行前需要配置相应的环境变量：
-- OKX API：需要配置 `OKX_*` 凭证
-- DeepSeek：需要配置 `DEEPSEEK_*` 
-- MCP：需要配置 `MCP_*`
+服务启动前需要准备环境变量：
+- `OKX_*` / `OKX_SIM_*`：OKX 主账户与模拟账户凭证
+- `AGENT_BASE_URL`：Python Agent 服务地址（例如 `http://localhost:8001`）
 
 ## 下一步建议
 
-1. 在 `crates/okx` 中扩充更多 REST 接口（账户、交易、WebSocket 订阅等）。
-2. 在 `crates/deepseek` 中完善 DeepSeek Function Call 流程。
-3. 根据实际接入方案完善 `crates/mcp`。
-4. 当接口稳定后，补充集成测试与 CI 工作流。
+1. 在 `src/okx` 中扩充更多 REST 接口（账户、交易、WebSocket 订阅等）。
+2. 将 Python Agent 的更多工具能力暴露为 REST 端点，并完善端到端测试。
+3. 当接口稳定后，补充集成测试与 CI 工作流。

@@ -1,0 +1,14 @@
+# Generated build artifacts
+/target
+
+# Environment / credentials
+.env
+.config.env
+
+# Logs and runtime files
+*.log
+logs/
+
+# Editor settings
+.idea/
+.vscode/
