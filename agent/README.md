@@ -85,6 +85,7 @@ agent/
    uv pip install -r requirements.txt
    uv pip install -r requirements-dev.txt
    ```
+   如果已经运行过 `bash nginx/build.sh`，上述虚拟环境与依赖安装步骤会自动完成，可直接进入下一步。
 
 3. 启动服务：
 

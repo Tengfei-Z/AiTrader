@@ -79,6 +79,12 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
    pnpm dev
    ```
 
+5. **部署构建（可选）**
+   ```bash
+   bash nginx/build.sh
+   ```
+   该脚本会同时编译后端、构建前端，并在 `agent/.venv` 中安装 Agent 所需依赖，为后续 `deploy.sh`/systemd 启动做好准备。
+
 ## 后续工作
 
 - 为 API Server 增加更多 OKX 账户与交易端点，并补齐测试。
