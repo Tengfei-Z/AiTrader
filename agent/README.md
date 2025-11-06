@@ -92,6 +92,7 @@ agent/
    uvicorn llm.main:app --reload --host 0.0.0.0 --port 8001
    # 或使用脚本：
    python -m agent.scripts.run_agent
+   # 脚本会自动创建/使用 agent/.venv，但依赖需手动安装
    ```
 
 ## 核心模块说明
