@@ -32,7 +32,7 @@ class AgentSettings(BaseSettings):
 
     deepseek_api_key: SecretStr = Field(..., description="DeepSeek API key")
     deepseek_api_base: AnyHttpUrl = Field(
-        "https://api.deepseek.com/v1", description="DeepSeek API endpoint"
+        "https://api.deepseek.com/", description="DeepSeek API endpoint"
     )
 
     okx_api_key: SecretStr = Field(
@@ -65,3 +65,19 @@ def get_settings() -> AgentSettings:
     """Return a cached AgentSettings instance."""
 
     return AgentSettings()  # type: ignore[call-arg]
+
+
+def resolved_env_file() -> str | None:
+    """Return the first readable .env file from the candidate list."""
+
+    for candidate in _ENV_FILE_CANDIDATES:
+        path = Path(candidate).expanduser()
+        if path.is_file():
+            return str(path)
+    return None
+
+
+def env_file_candidates() -> tuple[str, ...]:
+    """Expose configured env file search order for diagnostics."""
+
+    return _ENV_FILE_CANDIDATES

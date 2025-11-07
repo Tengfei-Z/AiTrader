@@ -711,6 +711,8 @@ async fn get_strategy_chat(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoResponse {
+    tracing::info!("HTTP POST /model/strategy-run invoked from UI");
+
     let Some(agent_client) = state.agent.clone() else {
         tracing::error!("Agent client not initialised");
         return Json(ApiResponse::<Vec<StrategyMessage>>::error(
@@ -750,6 +752,13 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         analysis_type: "market_overview".to_string(),
         context: Some(context),
     };
+    tracing::info!(
+        run_id,
+        session_id = %session_id,
+        instrument_id = %request.instrument_id,
+        analysis_type = %request.analysis_type,
+        "Dispatching agent analysis request"
+    );
 
     let timeout_budget = Duration::from_secs(20);
     let start_time = Instant::now();
@@ -827,12 +836,15 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         content,
     };
 
+    tracing::debug!(run_id, "Appending strategy message to shared state");
+
     let messages = {
         let mut msgs = state.strategy_messages.write().await;
         msgs.push(strategy_message);
         msgs.clone()
     };
 
+    tracing::info!(run_id, "Strategy run completed and chat history returned to UI");
     Json(ApiResponse::ok(messages))
 }
 

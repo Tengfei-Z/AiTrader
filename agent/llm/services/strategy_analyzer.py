@@ -20,6 +20,7 @@ class StrategyAnalyzer:
     async def _market_snapshot(self, instrument_id: str) -> str:
         """Gather key OKX metrics for prompting."""
 
+        logger.info("market_snapshot_collecting", instrument=instrument_id)
         try:
             ticker = await okx_client.get_ticker(instrument_id)
             raw_ticker = (ticker.get("data") or [{}])[0] if isinstance(ticker, dict) else {}
@@ -45,7 +46,9 @@ class StrategyAnalyzer:
             f"Change since UTC open: {change_pct}",
             f"Recent candles: {candles}",
         ]
-        return "\n".join(part for part in parts if part)
+        snapshot = "\n".join(part for part in parts if part)
+        logger.info("market_snapshot_ready", instrument=instrument_id, length=len(snapshot))
+        return snapshot
 
     async def analyze(self, request: AnalysisRequest) -> AnalysisResponse:
         system_prompt = (
@@ -54,6 +57,11 @@ class StrategyAnalyzer:
         )
 
         history = await conversation_manager.get_history(request.session_id, limit=5)
+        logger.info(
+            "analysis_history_loaded",
+            session_id=request.session_id,
+            history_messages=len(history),
+        )
 
         messages: list[ChatMessage] = [ChatMessage(role="system", content=system_prompt)]
         messages.extend(history)
@@ -72,6 +80,12 @@ class StrategyAnalyzer:
             )
         )
 
+        logger.info(
+            "deepseek_analysis_dispatch",
+            session_id=request.session_id,
+            instrument=request.instrument_id,
+            history=len(history),
+        )
         result = await deepseek_client.chat_completion(messages, temperature=0.4)
 
         choice = result.get("choices", [{}])[0].get("message", {})
@@ -97,6 +111,12 @@ class StrategyAnalyzer:
         await conversation_manager.add_message(
             request.session_id,
             ChatMessage(role="assistant", content=summary),
+        )
+
+        logger.info(
+            "analysis_response_prepared",
+            session_id=request.session_id,
+            suggestions=len(response.suggestions),
         )
 
         return response

@@ -96,6 +96,10 @@ http_proxy = runtime_env.get("http_proxy") or os.getenv("http_proxy") or os.gete
 https_proxy = runtime_env.get("https_proxy") or os.getenv("https_proxy") or os.getenv("HTTPS_PROXY")
 if isinstance(log_level, dict):
     log_level = log_level.get("value", "info")
+if isinstance(log_level, str):
+    log_level = log_level.strip().upper()
+else:
+    log_level = "INFO"
 
 service_name = dig(deployment, "systemd.service_name") or "aitrader-backend.service"
 unit_path = dig(deployment, "systemd.unit_path") or f"/etc/systemd/system/{service_name}"
@@ -214,6 +218,32 @@ if [[ -z "${python_eval}" ]]; then
 fi
 
 eval "${python_eval}"
+
+ensure_log_dir() {
+  local logfile="$1"
+  local owner="$2"
+  if [[ -z "${logfile}" ]]; then
+    return
+  fi
+
+  local dir
+  dir="$(dirname "${logfile}")"
+  if [[ ! -d "${dir}" ]]; then
+    echo "[deploy] Creating log directory ${dir}"
+    mkdir -p "${dir}"
+  fi
+
+  if [[ -n "${owner}" ]]; then
+    if chown "${owner}:${owner}" "${dir}" 2>/dev/null; then
+      echo "[deploy] Ensured ownership ${owner}:${owner} on ${dir}"
+    else
+      echo "[deploy] Warning: failed to chown ${dir} to ${owner}, continuing" >&2
+    fi
+  fi
+}
+
+ensure_log_dir "${LOG_FILE_PATH}" "${APP_USER}"
+ensure_log_dir "${AGENT_LOG_FILE}" "${APP_USER}"
 
 if [[ -n "${AGENT_EXEC_START_B64:-}" ]]; then
   AGENT_EXEC_START="$(printf '%s' "${AGENT_EXEC_START_B64}" | base64 --decode)"
@@ -517,7 +547,7 @@ backend_service_stop() {
 }
 
 backend_service_status() {
-  systemctl status "${SYSTEMD_SERVICE_NAME}"
+  summarize_service_status "${SYSTEMD_SERVICE_NAME}" "Backend API"
 }
 
 agent_service_start() {
@@ -538,8 +568,38 @@ agent_service_stop() {
   fi
 }
 
+summarize_service_status() {
+  local service_name="$1"
+  local label="$2"
+
+  local props
+  if ! props=$(systemctl show "${service_name}" --property=ActiveState,SubState,Description,ExecMainPID,MainPID,FragmentPath --no-pager 2>/dev/null); then
+    echo "[${label}] Unable to inspect ${service_name}."
+    echo "Hint: check logs with 'sudo journalctl -u ${service_name} --no-pager'."
+    return
+  fi
+
+  local active_state sub_state description main_pid fragment_path
+  active_state=$(printf '%s\n' "${props}" | awk -F= '$1=="ActiveState"{print $2}')
+  sub_state=$(printf '%s\n' "${props}" | awk -F= '$1=="SubState"{print $2}')
+  description=$(printf '%s\n' "${props}" | awk -F= '$1=="Description"{print $2}')
+  main_pid=$(printf '%s\n' "${props}" | awk -F= '$1=="MainPID" || $1=="ExecMainPID"{print $2}' | head -n1)
+  fragment_path=$(printf '%s\n' "${props}" | awk -F= '$1=="FragmentPath"{print $2}')
+
+  echo "[${label}] ${description:-${service_name}}"
+  echo "  Active: ${active_state:-unknown}${sub_state:+ (${sub_state})}"
+  echo "  Main PID: ${main_pid:-N/A}"
+  if [[ -n "${fragment_path}" ]]; then
+    echo "  Unit file: ${fragment_path}"
+  fi
+
+  if [[ "${active_state}" != "active" ]]; then
+    echo "  Hint: service not running; inspect 'sudo journalctl -u ${service_name} -n 100 --no-pager'."
+  fi
+}
+
 agent_service_status() {
-  systemctl status "${AGENT_SERVICE_NAME}"
+  summarize_service_status "${AGENT_SERVICE_NAME}" "Python Agent"
 }
 
 uninstall() {

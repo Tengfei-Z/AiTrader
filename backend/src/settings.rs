@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
+use tracing::info;
 
 /// Global configuration accessor to keep the rest of the application stateless.
 pub static CONFIG: Lazy<AppConfig> = Lazy::new(|| {
@@ -97,18 +98,24 @@ fn default_okx_rest_endpoint() -> String {
 
 fn preload_env_files() {
     // 自动加载当前目录或上层目录中的 .env 文件（如果存在）
-    let _ = dotenv();
+    let mut loaded_paths = Vec::new();
+    if dotenv().is_ok() {
+        loaded_paths.push(".env".to_string());
+    }
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidate_files = [
-        manifest_dir.join(".env"),
-        manifest_dir.join("../.env"),
-    ];
+    let candidate_files = [manifest_dir.join(".env"), manifest_dir.join("../.env")];
 
     for path in candidate_files {
-        if path.exists() {
-            let _ = dotenvy::from_path(path);
+        if path.exists() && dotenvy::from_path(&path).is_ok() {
+            loaded_paths.push(path.display().to_string());
         }
+    }
+
+    if loaded_paths.is_empty() {
+        info!(message = "falling back to process environment only", "env_files_not_found");
+    } else {
+        info!(paths = %loaded_paths.join(", "), "env_files_loaded");
     }
 }
 

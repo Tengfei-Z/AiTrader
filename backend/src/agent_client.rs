@@ -34,6 +34,7 @@ impl AgentClient {
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
+            .no_proxy()
             .build()
             .context("failed to build agent HTTP client")?;
 
@@ -53,6 +54,7 @@ impl AgentClient {
 
     pub async fn analysis(&self, request: AgentAnalysisRequest) -> Result<AgentAnalysisResponse> {
         let url = self.url("/analysis/");
+        tracing::info!(target: "agent_client", url = %url, "dispatching_agent_analysis");
         let response = self
             .http
             .post(url)

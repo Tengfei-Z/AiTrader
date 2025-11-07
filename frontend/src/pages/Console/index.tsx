@@ -37,13 +37,21 @@ const AiConsolePage = () => {
   );
 
   const handleStrategyStart = async () => {
+    const startedAt = new Date().toISOString();
+    console.info('[Strategy] Start button clicked, requesting /model/strategy-run', { startedAt });
     try {
-      await triggerStrategy();
+      const messages = await triggerStrategy();
+      console.info('[Strategy] Strategy run finished', {
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        messageCount: messages?.length ?? 0
+      });
       message.success('已触发策略运行');
     } catch (error) {
-      console.error(error);
+      console.error('[Strategy] Strategy run failed', error);
       message.error('策略运行失败，请稍后重试');
     } finally {
+      console.info('[Strategy] Refreshing chat history after trigger');
       await refetchStrategyChat();
     }
   };

@@ -68,7 +68,13 @@ def main() -> None:
     from agent.llm.main import app
 
     settings = get_settings()
-    reload_enabled = settings.app_env == "development"
+
+    reload_env = os.getenv("AGENT_RELOAD")
+    if reload_env is None:
+        reload_enabled = False
+    else:
+        reload_enabled = reload_env.strip().lower() in {"1", "true", "yes", "on"}
+
     if reload_enabled:
         uvicorn.run(
             "agent.llm.main:app",

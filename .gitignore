@@ -25,6 +25,8 @@ config/config.yaml
 logs/
 logs/*
 !logs/.gitkeep
+log/
+log/*
 
 # Python virtual environments
 .venv/

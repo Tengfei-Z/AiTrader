@@ -1,15 +1,14 @@
-"""DeepSeek API client abstraction."""
+"""DeepSeek API client abstraction backed by the OpenAI SDK."""
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Iterable
 
-import httpx
-from tenacity import AsyncRetrying, RetryError, retry_if_exception_type, stop_after_attempt, wait_exponential
+from openai import APIError as OpenAIError
+from openai import AsyncOpenAI
 
 from ...core.config import get_settings
-from ...core.exceptions import ExternalServiceError, RateLimitExceeded
-from ...core.http_client import async_http_client
+from ...core.exceptions import ExternalServiceError
 from ...core.logging_config import get_logger
 from ..schemas.chat import ChatMessage
 
@@ -17,48 +16,24 @@ logger = get_logger(__name__)
 
 
 class DeepSeekClient:
+    """Thin wrapper around the OpenAI-compatible DeepSeek chat API."""
+
     def __init__(self) -> None:
-        self._settings = get_settings()
-
-    async def _post(self, path: str, payload: dict[str, Any]) -> Any:
-        headers = {
-            "Authorization": f"Bearer {self._settings.deepseek_api_key.get_secret_value()}",
-            "Content-Type": "application/json",
-        }
-
-        response: httpx.Response | None = None
-
-        async for attempt in AsyncRetrying(
-            wait=wait_exponential(multiplier=1, min=1, max=8),
-            stop=stop_after_attempt(3),
-            retry=retry_if_exception_type((httpx.RequestError, RateLimitExceeded)),
-            reraise=True,
-        ):
-            with attempt:
-                async with async_http_client(
-                    base_url=str(self._settings.deepseek_api_base), timeout=30.0
-                ) as client:
-                    response = await client.post(path, json=payload, headers=headers)
-
-                if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
-                    raise RateLimitExceeded(response.text)
-
-                if response.is_error:
-                    raise ExternalServiceError(
-                        f"DeepSeek responded with {response.status_code}: {response.text}"
-                    )
-
-        if response is None:
-            raise ExternalServiceError("DeepSeek request failed without response")
-
-        logger.debug(
-            "deepseek_request",
-            path=path,
-            status_code=response.status_code,
-            remaining=response.headers.get("x-ratelimit-remaining"),
+        settings = get_settings()
+        masked_key = f"{settings.deepseek_api_key.get_secret_value()[:4]}***{settings.deepseek_api_key.get_secret_value()[-4:]}"
+        base_url_raw = str(settings.deepseek_api_base).rstrip("/")
+        base_url = base_url_raw
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        logger.info(
+            "deepseek_client_init",
+            base_url=base_url,
+            api_key_masked=masked_key,
         )
-
-        return response.json()
+        self._client = AsyncOpenAI(
+            api_key=settings.deepseek_api_key.get_secret_value(),
+            base_url=base_url,
+        )
 
     async def chat_completion(
         self,
@@ -69,19 +44,7 @@ class DeepSeekClient:
         temperature: float = 0.7,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Issue a chat completion request to DeepSeek."""
-
-        payload: dict[str, Any] = {
-            "model": "deepseek-chat",
-            "messages": [message.model_dump() for message in messages],
-            "temperature": temperature,
-        }
-        if tools:
-            payload["tools"] = tools
-        if tool_choice:
-            payload["tool_choice"] = tool_choice
-        if response_format:
-            payload["response_format"] = response_format
+        """Issue a chat completion request via the OpenAI SDK."""
 
         logger.info(
             "deepseek_chat_request",
@@ -90,10 +53,31 @@ class DeepSeekClient:
             temperature=temperature,
         )
 
+        payload_messages = [message.model_dump() for message in messages]
+        logger.info(
+            "deepseek_request_payload",
+            message_count=len(payload_messages),
+            preview=payload_messages[-1] if payload_messages else None,
+        )
+
         try:
-            return await self._post("/chat/completions", payload)
-        except RetryError as exc:
-            raise ExternalServiceError("DeepSeek request failed after retries") from exc
+            response = await self._client.chat.completions.create(
+                model="deepseek-chat",
+                messages=payload_messages,
+                temperature=temperature,
+                tools=tools,
+                tool_choice=tool_choice,
+                #response_format=response_format,
+            )
+        except OpenAIError as exc:  # pragma: no cover - network path
+            logger.error(
+                "deepseek_sdk_error",
+                error_type=type(exc).__name__,
+                message=str(exc),
+            )
+            raise ExternalServiceError(f"DeepSeek SDK error: {exc}") from exc
+
+        return response.model_dump()
 
 
 deepseek_client = DeepSeekClient()

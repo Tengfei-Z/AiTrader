@@ -53,6 +53,12 @@ async def _handle_tool_calls(
 
 @router.post("/", response_model=ChatResponse)
 async def create_chat_completion(request: ChatRequest) -> ChatResponse:
+    logger.info(
+        "chat_request_received",
+        session_id=request.session_id,
+        use_history=request.use_history,
+        history_limit=request.history_limit,
+    )
     history: list[ChatMessage] = []
     if request.use_history:
         history = await conversation_manager.get_history(request.session_id, request.history_limit)
@@ -75,6 +81,7 @@ async def create_chat_completion(request: ChatRequest) -> ChatResponse:
             tool_choice={"type": "auto"},
         )
     except Exception as exc:  # pragma: no cover
+        logger.exception("chat_completion_failed", session_id=request.session_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     choice = (result.get("choices") or [{}])[0].get("message") or {}
@@ -85,6 +92,7 @@ async def create_chat_completion(request: ChatRequest) -> ChatResponse:
         try:
             result = await deepseek_client.chat_completion(messages)
         except Exception as exc:  # pragma: no cover
+            logger.exception("chat_completion_followup_failed", session_id=request.session_id)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         choice = (result.get("choices") or [{}])[0].get("message") or {}
 
@@ -97,9 +105,18 @@ async def create_chat_completion(request: ChatRequest) -> ChatResponse:
         request.session_id, ChatMessage(role="assistant", content=reply)
     )
 
-    return ChatResponse(
+    reply_message = ChatResponse(
         session_id=request.session_id,
         reply=reply,
         usage=usage,
         created_at=datetime.now(tz=timezone.utc),
     )
+
+    logger.info(
+        "chat_request_completed",
+        session_id=request.session_id,
+        tool_calls=len(tool_calls),
+        tokens_total=usage.total_tokens,
+    )
+
+    return reply_message
