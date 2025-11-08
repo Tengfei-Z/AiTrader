@@ -47,6 +47,12 @@ export interface PositionItem {
   margin?: number;
   unrealized_pnl?: number;
   entry_time?: string;
+  take_profit_trigger?: number;
+  take_profit_price?: number;
+  take_profit_type?: string;
+  stop_loss_trigger?: number;
+  stop_loss_price?: number;
+  stop_loss_type?: string;
 }
 
 export interface PositionHistoryItem {

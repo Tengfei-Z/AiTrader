@@ -1,5 +1,6 @@
 import type { PositionItem } from '@api/types';
 import { Card, Table, Tag } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 
 interface Props {
   positions?: PositionItem[];
@@ -14,7 +15,24 @@ const formatNumber = (value?: number, fractionDigits = 2) =>
       })
     : '-';
 
-const columns = [
+const renderExitPlan = (trigger?: number, order?: number, triggerType?: string) => {
+  if (trigger === undefined && order === undefined) {
+    return '-';
+  }
+  const parts: string[] = [];
+  if (trigger !== undefined) {
+    parts.push(`触发 ${formatNumber(trigger)}`);
+  }
+  if (order !== undefined) {
+    parts.push(`委托 ${formatNumber(order)}`);
+  }
+  if (triggerType) {
+    parts.push(triggerType.toUpperCase());
+  }
+  return parts.join(' / ');
+};
+
+const columns: ColumnsType<PositionItem> = [
   {
     title: '合约',
     dataIndex: 'symbol',
@@ -70,6 +88,18 @@ const columns = [
     dataIndex: 'margin',
     key: 'margin',
     render: (value: number | undefined) => formatNumber(value)
+  },
+  {
+    title: '止盈',
+    key: 'take_profit',
+    render: (_: unknown, record) =>
+      renderExitPlan(record.take_profit_trigger, record.take_profit_price, record.take_profit_type)
+  },
+  {
+    title: '止损',
+    key: 'stop_loss',
+    render: (_: unknown, record) =>
+      renderExitPlan(record.stop_loss_trigger, record.stop_loss_price, record.stop_loss_type)
   }
 ];
 

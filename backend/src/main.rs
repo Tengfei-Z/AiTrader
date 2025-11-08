@@ -8,7 +8,7 @@ mod okx;
 mod server_config;
 mod settings;
 
-use crate::db::{init_database, insert_strategy_summary};
+use crate::db::{fetch_order_history, init_database, insert_strategy_summary};
 use anyhow::{anyhow, Result};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -147,6 +147,18 @@ struct Position {
     margin: Option<f64>,
     unrealized_pnl: Option<f64>,
     entry_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    take_profit_trigger: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    take_profit_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    take_profit_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_loss_trigger: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_loss_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_loss_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -522,6 +534,14 @@ async fn get_positions(
                             margin: parse_optional_number(detail.margin.clone()),
                             unrealized_pnl: parse_optional_number(detail.upl.clone()),
                             entry_time: parse_timestamp_millis(detail.c_time.clone()),
+                            take_profit_trigger: parse_optional_number(
+                                detail.tp_trigger_px.clone(),
+                            ),
+                            take_profit_price: parse_optional_number(detail.tp_ord_px.clone()),
+                            take_profit_type: optional_string(detail.tp_trigger_px_type.clone()),
+                            stop_loss_trigger: parse_optional_number(detail.sl_trigger_px.clone()),
+                            stop_loss_price: parse_optional_number(detail.sl_ord_px.clone()),
+                            stop_loss_type: optional_string(detail.sl_trigger_px_type.clone()),
                         });
                     }
                 }
@@ -590,56 +610,32 @@ async fn get_fills(
 }
 
 async fn get_positions_history(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = true;
+    let limit = params.limit.map(|v| v as i64);
     let symbol_filter = params.symbol.clone();
-    let limit = params.limit;
 
-    tracing::info!(
-        ?symbol_filter,
-        use_simulated,
-        limit,
-        "received positions history request"
-    );
+    tracing::info!(?symbol_filter, limit, "received positions history request");
 
-    if matches!(params.simulated, Some(false)) {
-        warn!("非模拟持仓历史查询已被禁用，自动切换到模拟账户");
-    }
-
-    if let Some(client) = state.okx_simulated.clone() {
-        match client
-            .get_positions_history(symbol_filter.as_deref(), limit)
-            .await
-        {
-            Ok(remote_history) => {
-                let mut history: Vec<PositionHistory> = remote_history
-                    .into_iter()
-                    .map(convert_okx_position_history)
-                    .collect();
-
-                if let Some(symbol) = symbol_filter.as_ref() {
-                    history.retain(|item| item.symbol == *symbol);
-                }
-
-                if let Some(limit) = limit {
-                    history.truncate(limit);
-                }
-
-                return Json(ApiResponse::ok(history));
+    match fetch_order_history(limit).await {
+        Ok(mut records) => {
+            if let Some(symbol) = symbol_filter {
+                records.retain(|record| record.symbol == symbol);
             }
-            Err(err) => {
-                tracing::warn!(
-                    use_simulated,
-                    error = ?err,
-                    "failed to fetch OKX historical positions"
-                );
-            }
+
+            let history: Vec<PositionHistory> = records
+                .into_iter()
+                .map(convert_order_history_record)
+                .collect();
+
+            Json(ApiResponse::ok(history))
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to fetch order history from database");
+            Json(ApiResponse::ok(Vec::<PositionHistory>::new()))
         }
     }
-
-    Json(ApiResponse::ok(Vec::<PositionHistory>::new()))
 }
 
 fn convert_okx_fill(detail: okx::models::FillDetail) -> Fill {
@@ -694,34 +690,43 @@ fn string_or_default(value: Option<String>, default: &str) -> String {
     optional_string(value).unwrap_or_else(|| default.to_string())
 }
 
-fn convert_okx_position_history(detail: okx::models::PositionHistoryDetail) -> PositionHistory {
-    let okx::models::PositionHistoryDetail {
-        inst_id,
-        pos_side,
-        close_pos,
-        open_avg_px,
-        close_avg_px,
-        lever,
-        margin,
-        pnl,
-        pnl_ratio: _,
-        c_time,
-        u_time,
-    } = detail;
+fn convert_order_history_record(record: db::OrderHistoryRecord) -> PositionHistory {
+    let exit_price = record
+        .metadata
+        .get("exit_price")
+        .and_then(|value| value.as_f64())
+        .or_else(|| {
+            record
+                .metadata
+                .get("avg_exit_price")
+                .and_then(|value| value.as_f64())
+        });
+    let margin = record
+        .metadata
+        .get("margin_usdt")
+        .and_then(|value| value.as_f64());
+    let realized_pnl = record
+        .metadata
+        .get("realized_pnl_usdt")
+        .and_then(|value| value.as_f64())
+        .or_else(|| {
+            record
+                .metadata
+                .get("pnl_usdt")
+                .and_then(|value| value.as_f64())
+        });
 
     PositionHistory {
-        symbol: inst_id,
-        side: pos_side
-            .map(|value| value.to_lowercase())
-            .unwrap_or_else(|| "net".to_string()),
-        quantity: parse_optional_number(close_pos),
-        leverage: parse_optional_number(lever),
-        entry_price: parse_optional_number(open_avg_px),
-        exit_price: parse_optional_number(close_avg_px),
-        margin: parse_optional_number(margin),
-        realized_pnl: parse_optional_number(pnl),
-        entry_time: parse_timestamp_millis(c_time),
-        exit_time: parse_timestamp_millis(u_time),
+        symbol: record.symbol,
+        side: record.side.to_lowercase(),
+        quantity: record.size,
+        leverage: record.leverage,
+        entry_price: record.price,
+        exit_price,
+        margin,
+        realized_pnl,
+        entry_time: Some(record.created_at.to_rfc3339()),
+        exit_time: record.closed_at.map(|dt| dt.to_rfc3339()),
     }
 }
 

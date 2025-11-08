@@ -94,6 +94,18 @@ pub struct PositionDetail {
     pub last: Option<String>,
     #[serde(default)]
     pub c_time: Option<String>,
+    #[serde(default)]
+    pub tp_trigger_px: Option<String>,
+    #[serde(default)]
+    pub tp_trigger_px_type: Option<String>,
+    #[serde(default)]
+    pub tp_ord_px: Option<String>,
+    #[serde(default)]
+    pub sl_trigger_px: Option<String>,
+    #[serde(default)]
+    pub sl_trigger_px_type: Option<String>,
+    #[serde(default)]
+    pub sl_ord_px: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]

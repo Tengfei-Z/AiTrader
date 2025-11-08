@@ -25,12 +25,18 @@ pub struct ProxyOptions {
 }
 
 impl OkxRestClient {
-    pub fn from_config_simulated_with_proxy(
+    pub fn from_config_with_proxy(
         config: &AppConfig,
         proxy: ProxyOptions,
+        simulated_trading: bool,
     ) -> Result<Self> {
-        let credentials = config.require_okx_simulated_credentials()?.clone();
-        Self::new_with_proxy(config.okx_rest_endpoint.clone(), credentials, proxy, true)
+        let credentials = config.require_okx_credentials(simulated_trading)?.clone();
+        Self::new_with_proxy(
+            config.okx_base_url.clone(),
+            credentials,
+            proxy,
+            simulated_trading,
+        )
     }
 
     fn new_with_proxy(
@@ -137,36 +143,6 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
-    #[instrument(skip(self), fields(inst_id = inst_id.unwrap_or("all"), limit))]
-    pub async fn get_positions_history(
-        &self,
-        inst_id: Option<&str>,
-        limit: Option<usize>,
-    ) -> Result<Vec<super::models::PositionHistoryDetail>> {
-        #[derive(serde::Deserialize)]
-        struct ResponseWrapper {
-            data: Vec<super::models::PositionHistoryDetail>,
-        }
-
-        let mut params = vec![("instType".to_string(), "SWAP".to_string())];
-        if let Some(inst_id) = inst_id {
-            params.push(("instId".to_string(), inst_id.to_string()));
-        }
-        if let Some(limit) = limit {
-            params.push(("limit".to_string(), limit.min(100).to_string()));
-        }
-
-        let query = params
-            .into_iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let path = format!("{API_PREFIX}/account/positions-history?{query}");
-        let response: ResponseWrapper = self.get(&path, None).await?;
-        Ok(response.data)
-    }
-
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
         T: DeserializeOwned,
@@ -241,16 +217,15 @@ impl OkxRestClient {
             .text()
             .await
             .map_err(|err| OkxError::Deserialize(err.into()))?;
-        
+
         // Trim any trailing whitespace or newlines that might cause deserialization issues
         let body = body.trim();
-        
+
         // Log the raw response for debugging
         tracing::debug!("OKX response body: {}", body);
-        
+
         // Deserialize from the trimmed text
-        serde_json::from_str::<T>(body)
-            .map_err(|err| OkxError::Deserialize(err.into()).into())
+        serde_json::from_str::<T>(body).map_err(|err| OkxError::Deserialize(err.into()).into())
     }
 }
 

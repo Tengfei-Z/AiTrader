@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     collections::HashSet,
     env, fs,
@@ -326,4 +328,69 @@ pub async fn insert_strategy_summary(
                 err.into()
             })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct OrderHistoryRecord {
+    pub symbol: String,
+    pub side: String,
+    pub price: Option<f64>,
+    pub size: Option<f64>,
+    pub leverage: Option<f64>,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
+}
+
+pub async fn fetch_order_history(limit: Option<i64>) -> Result<Vec<OrderHistoryRecord>> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("未配置数据库连接字符串，无法查询订单历史");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+
+    let base_sql = format!(
+        "SELECT
+            symbol,
+            side,
+            price,
+            size,
+            leverage,
+            metadata,
+            created_at,
+            closed_at
+        FROM {schema}.orders
+        WHERE closed_at IS NOT NULL
+        ORDER BY closed_at DESC NULLS LAST",
+        schema = schema,
+    );
+
+    let rows = if let Some(limit) = limit {
+        let sql = format!("{base_sql} LIMIT $1");
+        client.query(&sql, &[&limit]).await?
+    } else {
+        client.query(&base_sql, &[]).await?
+    };
+
+    let mut records = Vec::with_capacity(rows.len());
+    for row in rows {
+        records.push(OrderHistoryRecord {
+            symbol: row.get::<_, String>("symbol"),
+            side: row.get::<_, String>("side"),
+            price: row.get::<_, Option<f64>>("price"),
+            size: row.get::<_, Option<f64>>("size"),
+            leverage: row.get::<_, Option<f64>>("leverage"),
+            metadata: row.get::<_, Value>("metadata"),
+            created_at: row.get::<_, DateTime<Utc>>("created_at"),
+            closed_at: row.get::<_, Option<DateTime<Utc>>>("closed_at"),
+        });
+    }
+
+    Ok(records)
 }
