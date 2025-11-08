@@ -6,8 +6,8 @@ export const useStrategyRunner = () => {
 
   return useMutation({
     mutationFn: triggerStrategyRun,
-    onSuccess: (data) => {
-      queryClient.setQueryData(['strategy-chat'], data);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['strategy-chat'] });
     }
   });
 };

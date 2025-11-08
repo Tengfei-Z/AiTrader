@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::{
     collections::HashSet,
@@ -206,7 +206,6 @@ async fn run_migrations(client: &Client, schema: &str) -> Result<()> {
         }
     }
 
-    normalize_performance_snapshots(client, schema).await?;
     Ok(())
 }
 
@@ -215,31 +214,19 @@ fn migration_statements(schema: &str) -> Vec<String> {
         "CREATE EXTENSION IF NOT EXISTS pgcrypto;".to_string(),
         format!("CREATE SCHEMA IF NOT EXISTS {schema};", schema = schema),
         format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.accounts (
+            "CREATE TABLE IF NOT EXISTS {schema}.strategies (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                external_id     TEXT NOT NULL UNIQUE,
-                mode            TEXT NOT NULL CHECK (mode IN ('live', 'simulated')),
-                status          TEXT NOT NULL DEFAULT 'active',
+                session_id      TEXT NOT NULL,
+                summary         TEXT NOT NULL,
+                confidence      NUMERIC(5, 2),
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.balance_snapshots (
-                id              BIGSERIAL PRIMARY KEY,
-                account_id      UUID NOT NULL REFERENCES {schema}.accounts (id),
-                available_usdt  NUMERIC(24, 8) NOT NULL,
-                locked_usdt     NUMERIC(24, 8) NOT NULL DEFAULT 0,
-                as_of           TIMESTAMPTZ NOT NULL,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (account_id, as_of)
             );",
             schema = schema,
         ),
         format!(
             "CREATE TABLE IF NOT EXISTS {schema}.orders (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                account_id      UUID NOT NULL REFERENCES {schema}.accounts (id),
+                strategy_ids    UUID[] NOT NULL DEFAULT ARRAY[]::uuid[],
                 symbol          TEXT NOT NULL,
                 side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
                 order_type      TEXT NOT NULL,
@@ -249,150 +236,17 @@ fn migration_statements(schema: &str) -> Vec<String> {
                 status          TEXT NOT NULL,
                 leverage        NUMERIC(10, 2),
                 confidence      NUMERIC(5, 2),
-                tool_call_id    UUID,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.fills (
-                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                account_id      UUID NOT NULL REFERENCES {schema}.accounts (id),
-                order_id        UUID NOT NULL REFERENCES {schema}.orders (id),
-                symbol          TEXT NOT NULL,
-                side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
-                price           NUMERIC(20, 8) NOT NULL,
-                size            NUMERIC(20, 8) NOT NULL,
-                fee_usdt        NUMERIC(20, 8) NOT NULL DEFAULT 0,
-                pnl_usdt        NUMERIC(24, 8),
-                confidence      NUMERIC(5, 2),
-                timestamp       TIMESTAMPTZ NOT NULL
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.positions_open (
-                id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                account_id              UUID NOT NULL REFERENCES {schema}.accounts (id),
-                symbol                  TEXT NOT NULL,
-                side                    TEXT NOT NULL,
-                quantity                NUMERIC(20, 8) NOT NULL,
-                avg_entry_price         NUMERIC(20, 8),
-                leverage                NUMERIC(10, 2),
-                margin_usdt             NUMERIC(24, 8),
-                liquidation_price       NUMERIC(20, 8),
-                unrealized_pnl_usdt     NUMERIC(24, 8),
-                exit_plan               JSONB DEFAULT '{{}}'::jsonb,
-                opened_at               TIMESTAMPTZ,
-                updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (account_id, symbol, side)
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.positions_closed (
-                id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                account_id              UUID NOT NULL REFERENCES {schema}.accounts (id),
-                symbol                  TEXT NOT NULL,
-                side                    TEXT NOT NULL,
-                quantity                NUMERIC(20, 8) NOT NULL,
-                entry_price             NUMERIC(20, 8),
-                exit_price              NUMERIC(20, 8),
-                realized_pnl_usdt       NUMERIC(24, 8),
-                holding_minutes         NUMERIC(14, 4),
-                average_confidence      NUMERIC(5, 2),
-                entry_time              TIMESTAMPTZ,
-                exit_time               TIMESTAMPTZ NOT NULL,
-                created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.mcp_tool_calls (
-                id                  UUID PRIMARY KEY,
-                account_id          UUID REFERENCES {schema}.accounts (id),
-                tool_name           TEXT NOT NULL,
-                request_payload     JSONB NOT NULL,
-                response_payload    JSONB,
-                status              TEXT NOT NULL DEFAULT 'success',
-                latency_ms          INTEGER,
-                created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.market_snapshots (
-                id              BIGSERIAL PRIMARY KEY,
-                symbol          TEXT NOT NULL,
-                timeframe       TEXT NOT NULL,
-                as_of           TIMESTAMPTZ NOT NULL,
-                price           NUMERIC(20, 8),
-                ema20           NUMERIC(20, 8),
-                ema50           NUMERIC(20, 8),
-                macd            NUMERIC(20, 8),
-                rsi7            NUMERIC(8, 4),
-                rsi14           NUMERIC(8, 4),
-                funding_rate    NUMERIC(10, 8),
-                open_interest   NUMERIC(24, 4),
+                metadata        JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (symbol, timeframe, as_of)
-            );",
-            schema = schema,
-        ),
-        format!(
-            "CREATE TABLE IF NOT EXISTS {schema}.performance_snapshots (
-                id                      BIGSERIAL PRIMARY KEY,
-                account_id              UUID NOT NULL REFERENCES {schema}.accounts (id),
-                window_name             TEXT NOT NULL,
-                sharpe_ratio            NUMERIC(10, 6),
-                win_rate                NUMERIC(6, 4),
-                average_leverage        NUMERIC(10, 4),
-                average_confidence      NUMERIC(5, 2),
-                biggest_win_usdt        NUMERIC(24, 8),
-                biggest_loss_usdt       NUMERIC(24, 8),
-                hold_ratio_long         NUMERIC(6, 4),
-                hold_ratio_short        NUMERIC(6, 4),
-                hold_ratio_flat         NUMERIC(6, 4),
-                updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (account_id, window_name)
+                closed_at       TIMESTAMPTZ
             );",
             schema = schema,
         ),
     ]
 }
 
-async fn normalize_performance_snapshots(client: &Client, schema: &str) -> Result<()> {
-    let columns_query = r#"
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = $1
-          AND table_name = $2
-    "#;
-
-    let rows = client
-        .query(columns_query, &[&schema, &"performance_snapshots"])
-        .await?;
-    let columns: HashSet<String> = rows
-        .into_iter()
-        .map(|row| row.get::<_, String>("column_name"))
-        .collect();
-
-    if columns.contains("window") && !columns.contains("window_name") {
-        let sql = format!(
-            "ALTER TABLE {schema}.performance_snapshots RENAME COLUMN window TO window_name",
-            schema = schema,
-        );
-        client.execute(&sql, &[]).await?;
-    }
-
-    Ok(())
-}
-
 pub async fn init_database() -> Result<()> {
-    let DatabaseSettings {
-        url,
-        schema,
-    } = database_settings();
+    let DatabaseSettings { url, schema } = database_settings();
 
     let url = match url {
         Some(url) => url,
@@ -417,4 +271,59 @@ pub async fn init_database() -> Result<()> {
     info!("数据库初始化完成");
 
     Ok(())
+}
+
+pub async fn insert_strategy_summary(
+    session_id: &str,
+    summary: &str,
+    confidence: Option<f64>,
+) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("未配置数据库连接字符串，无法写入 strategy 记录");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = match connect_client(&url).await {
+        Ok(client) => client,
+        Err(err) => {
+            warn!(%err, "写入 strategy 记录时无法连接数据库");
+            return Err(err.into());
+        }
+    };
+
+    let session_owned = session_id.to_owned();
+    let summary_owned = summary.to_owned();
+
+    if let Some(conf) = confidence {
+        let sql = format!(
+            "INSERT INTO {schema}.strategies (session_id, summary, confidence) VALUES ($1, $2, $3);",
+            schema = schema,
+        );
+        client
+            .execute(&sql, &[&session_owned, &summary_owned, &conf])
+            .await
+            .map(|_| ())
+            .map_err(|err| {
+                warn!(%err, "插入 strategy 记录失败");
+                err.into()
+            })
+    } else {
+        let sql = format!(
+            "INSERT INTO {schema}.strategies (session_id, summary) VALUES ($1, $2);",
+            schema = schema,
+        );
+        client
+            .execute(&sql, &[&session_owned, &summary_owned])
+            .await
+            .map(|_| ())
+            .map_err(|err| {
+                warn!(%err, "插入 strategy 记录失败");
+                err.into()
+            })
+    }
 }

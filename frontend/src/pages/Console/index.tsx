@@ -40,13 +40,12 @@ const AiConsolePage = () => {
     const startedAt = new Date().toISOString();
     console.info('[Strategy] Start button clicked, requesting /model/strategy-run', { startedAt });
     try {
-      const messages = await triggerStrategy();
-      console.info('[Strategy] Strategy run finished', {
+      await triggerStrategy();
+      console.info('[Strategy] Strategy run dispatched', {
         startedAt,
-        finishedAt: new Date().toISOString(),
-        messageCount: messages?.length ?? 0
+        finishedAt: new Date().toISOString()
       });
-      message.success('已触发策略运行');
+      message.success('策略运行已提交');
     } catch (error) {
       console.error('[Strategy] Strategy run failed', error);
       message.error('策略运行失败，请稍后重试');

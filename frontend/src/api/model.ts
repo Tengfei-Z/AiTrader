@@ -7,6 +7,5 @@ export const fetchStrategyChat = async () => {
 };
 
 export const triggerStrategyRun = async () => {
-  const { data } = await client.post<ApiResponse<StrategyMessage[]>>('/model/strategy-run');
-  return data.data ?? [];
+  await client.post<ApiResponse<null>>('/model/strategy-run');
 };

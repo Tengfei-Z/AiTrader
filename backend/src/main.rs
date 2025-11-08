@@ -8,23 +8,24 @@ mod okx;
 mod server_config;
 mod settings;
 
-use crate::db::init_database;
+use crate::db::{init_database, insert_strategy_summary};
+use anyhow::{anyhow, Result};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tokio::sync::RwLock;
-use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, info, warn, Level};
-use std::time::{Duration, Instant};
 use tokio::time::timeout;
+use tower_http::cors::{Any, CorsLayer};
+use tracing::{error, info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
-use chrono::TimeZone;
 
 use agent_client::{AgentAnalysisRequest, AgentClient};
 use okx::OkxRestClient;
@@ -39,7 +40,6 @@ struct AppState {
     agent: Option<AgentClient>,
     strategy_messages: Arc<RwLock<Vec<StrategyMessage>>>,
     strategy_run_counter: Arc<RwLock<u64>>,
-    last_run_status: Arc<RwLock<Option<StrategyRunStatus>>>,
 }
 
 fn format_amount(value: f64) -> String {
@@ -231,26 +231,6 @@ struct PlaceOrderResponse {
     status: OrderStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum StrategyOutcome {
-    Ok,
-    TimeoutStage1,
-    TimeoutStage2,
-    Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StrategyRunStatus {
-    run_id: u64,
-    started_at: String,
-    ended_at: Option<String>,
-    stage1_elapsed_ms: Option<u128>,
-    stage2_elapsed_ms: Option<u128>,
-    outcome: StrategyOutcome,
-    error: Option<String>,
-}
-
 fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/market/ticker", get(get_ticker))
@@ -265,7 +245,6 @@ fn api_routes() -> Router<AppState> {
         .route("/orders/:order_id", delete(cancel_order))
         .route("/model/strategy-chat", get(get_strategy_chat))
         .route("/model/strategy-run", post(trigger_strategy_run))
-        .route("/model/strategy-status", get(get_strategy_status))
 }
 
 #[tokio::main]
@@ -283,14 +262,27 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(%err, "数据库初始化过程中出现错误");
     }
 
-    // 触发配置加载，确保 .env 生效
-    let _ = &CONFIG.okx_rest_endpoint;
     let proxy_options = okx::ProxyOptions {
         http: http_proxy,
         https: https_proxy,
     };
+    let simulated_flag = CONFIG.okx_use_simulated();
     let okx_simulated =
-        OkxRestClient::from_config_simulated_with_proxy(&CONFIG, proxy_options.clone()).ok();
+        match OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options.clone(), simulated_flag)
+        {
+            Ok(client) => {
+                info!(simulated = simulated_flag, "Initialized OKX client");
+                Some(client)
+            }
+            Err(err) => {
+                error!(
+                    error = ?err,
+                    simulated = simulated_flag,
+                    "Failed to initialise OKX client"
+                );
+                None
+            }
+        };
 
     let agent_client = match CONFIG.agent_base_url() {
         Some(base_url) => match AgentClient::new(base_url) {
@@ -311,7 +303,6 @@ async fn main() -> anyhow::Result<()> {
         agent: agent_client,
         strategy_messages: Arc::new(RwLock::new(Vec::new())),
         strategy_run_counter: Arc::new(RwLock::new(0)),
-        last_run_status: Arc::new(RwLock::new(None)),
     };
     let bind_addr = settings
         .bind_addr()
@@ -349,8 +340,8 @@ fn init_tracing() {
 
     let env_filter = EnvFilter::from_default_env()
         .add_directive(Level::INFO.into())
-        .add_directive("reqwest=debug".parse().unwrap())  // reqwest HTTP 详细日志
-        .add_directive("hyper=debug".parse().unwrap());   // hyper HTTP 底层日志
+        .add_directive("reqwest=debug".parse().unwrap()) // reqwest HTTP 详细日志
+        .add_directive("hyper=debug".parse().unwrap()); // hyper HTTP 底层日志
 
     let fmt_stdout = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
     let fmt_file = tracing_subscriber::fmt::layer()
@@ -369,41 +360,64 @@ fn init_tracing() {
 
 async fn get_ticker(
     State(state): State<AppState>,
-    Query(SymbolQuery { symbol, simulated, .. }): Query<SymbolQuery>,
+    Query(SymbolQuery {
+        symbol, simulated, ..
+    }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     let use_simulated = true;
     if matches!(simulated, Some(false)) {
         warn!("非模拟行情查询已被禁用，自动切换到模拟账户");
     }
-    debug!(symbol = %symbol, use_simulated, "received ticker request");
+    info!(symbol = %symbol, use_simulated, "received ticker request");
 
     // Try simulated client
     if let Some(client) = state.okx_simulated.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
-                debug!(symbol = %symbol, use_simulated, "okx ticker hit");
+                info!(
+                    symbol = %symbol,
+                    use_simulated,
+                    last = %remote.last,
+                    bid = remote.bid_px.as_deref().unwrap_or(""),
+                    ask = remote.ask_px.as_deref().unwrap_or(""),
+                    "okx ticker hit"
+                );
                 let mut ticker = Ticker::from(remote);
                 ticker.symbol = symbol.clone();
                 return Json(ApiResponse::ok(ticker));
             }
-            Err(err) => tracing::warn!(symbol = %symbol, error = ?err, use_simulated, "okx ticker fetch failed"),
+            Err(err) => {
+                tracing::warn!(symbol = %symbol, error = ?err, use_simulated, "okx ticker fetch failed")
+            }
         }
     }
 
-    Json(ApiResponse::<Ticker>::error(format!("symbol {symbol} not found")))
+    Json(ApiResponse::<Ticker>::error(format!(
+        "symbol {symbol} not found"
+    )))
 }
 
 async fn get_orderbook(
     _state: State<AppState>,
-    Query(SymbolQuery { symbol, depth: _depth, .. }): Query<SymbolQuery>,
+    Query(SymbolQuery {
+        symbol,
+        depth: _depth,
+        ..
+    }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     tracing::info!(symbol = %symbol, "received orderbook request");
-    Json(ApiResponse::<OrderBook>::error(format!("symbol {symbol} not found")))
+    Json(ApiResponse::<OrderBook>::error(format!(
+        "symbol {symbol} not found"
+    )))
 }
 
 async fn get_trades(
     _state: State<AppState>,
-    Query(SymbolQuery { symbol, limit: _limit, .. }): Query<SymbolQuery>,
+    Query(SymbolQuery {
+        symbol,
+        limit: _limit,
+        ..
+    }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     tracing::info!(symbol = %symbol, "received trades request");
     Json(ApiResponse::<Vec<Trade>>::ok(Vec::new()))
@@ -445,6 +459,13 @@ async fn get_balances(
                         locked: format_amount(locked),
                         valuation_usdt: format_amount(account_value),
                     }];
+                    tracing::info!(
+                        use_simulated,
+                        available = available_cash,
+                        locked,
+                        valuation = account_value,
+                        "okx balances parsed"
+                    );
                     return Json(ApiResponse::ok(balances));
                 } else {
                     tracing::warn!(use_simulated, "OKX balance response contained no data");
@@ -505,6 +526,11 @@ async fn get_positions(
                     }
                 }
 
+                tracing::info!(
+                    use_simulated,
+                    position_count = positions.len(),
+                    "okx positions parsed"
+                );
                 return Json(ApiResponse::ok(positions));
             }
             Err(err) => {
@@ -518,7 +544,9 @@ async fn get_positions(
 
 async fn get_open_orders(
     _state: State<AppState>,
-    Query(SymbolOptionalQuery { symbol: _symbol, .. }): Query<SymbolOptionalQuery>,
+    Query(SymbolOptionalQuery {
+        symbol: _symbol, ..
+    }): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
     tracing::info!("received open orders request");
     Json(ApiResponse::ok(Vec::<Order>::new()))
@@ -715,9 +743,7 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
 
     let Some(agent_client) = state.agent.clone() else {
         tracing::error!("Agent client not initialised");
-        return Json(ApiResponse::<Vec<StrategyMessage>>::error(
-            "AI Agent 未配置或初始化失败",
-        ));
+        return Json(ApiResponse::<()>::error("AI Agent 未配置或初始化失败"));
     };
 
     let run_id = {
@@ -728,79 +754,48 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
 
     info!(run_id, "Triggering agent strategy analysis");
 
-    let started_at_iso = current_timestamp_iso();
-    {
-        let mut status = state.last_run_status.write().await;
-        *status = Some(StrategyRunStatus {
-            run_id,
-            started_at: started_at_iso.clone(),
-            ended_at: None,
-            stage1_elapsed_ms: None,
-            stage2_elapsed_ms: None,
-            outcome: StrategyOutcome::Ok,
-            error: None,
-        });
-    }
-
     let session_id = format!("strategy-auto-{run_id}");
-    let context = format!(
-        "Run #{run_id}: 请结合最新行情给出可执行的量化交易建议，账户资金为 1000 USDT，需涵盖市场分析、仓位建议和风险提示。"
-    );
-    let request = AgentAnalysisRequest {
-        session_id: session_id.clone(),
-        instrument_id: "BTC-USDT-SWAP".to_string(),
-        analysis_type: "market_overview".to_string(),
-        context: Some(context),
-    };
     tracing::info!(
         run_id,
         session_id = %session_id,
-        instrument_id = %request.instrument_id,
-        analysis_type = %request.analysis_type,
         "Dispatching agent analysis request"
     );
 
-    let timeout_budget = Duration::from_secs(20);
-    let start_time = Instant::now();
+    let background_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(err) = run_strategy_job(background_state, agent_client, run_id, session_id).await
+        {
+            warn!(run_id, %err, "Strategy analysis task failed");
+        }
+    });
+
+    Json(ApiResponse::ok(()))
+}
+
+async fn run_strategy_job(
+    state: AppState,
+    agent_client: AgentClient,
+    run_id: u64,
+    session_id: String,
+) -> Result<()> {
+    let timeout_budget = Duration::from_secs(60);
+    let request = AgentAnalysisRequest {
+        session_id: session_id.clone(),
+    };
 
     let response = match timeout(timeout_budget, agent_client.analysis(request)).await {
         Err(_) => {
             tracing::error!(run_id, "Agent analysis timed out");
-            let mut status = state.last_run_status.write().await;
-            if let Some(s) = status.as_mut() {
-                s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
-                s.ended_at = Some(current_timestamp_iso());
-                s.outcome = StrategyOutcome::TimeoutStage1;
-                s.error = Some("agent_analysis_timeout".into());
-            }
-            return Json(ApiResponse::<Vec<StrategyMessage>>::error("Agent 分析超时"));
+            return Err(anyhow!("agent_analysis_timeout"));
         }
         Ok(result) => match result {
             Ok(resp) => resp,
             Err(err) => {
                 tracing::error!(run_id, error = %err, "Agent analysis failed");
-                let mut status = state.last_run_status.write().await;
-                if let Some(s) = status.as_mut() {
-                    s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
-                    s.ended_at = Some(current_timestamp_iso());
-                    s.outcome = StrategyOutcome::Error;
-                    s.error = Some(format!("agent_analysis_error: {err}"));
-                }
-                return Json(ApiResponse::<Vec<StrategyMessage>>::error(format!(
-                    "Agent 分析失败: {err}"
-                )));
+                return Err(err);
             }
         },
     };
-
-    {
-        let mut status = state.last_run_status.write().await;
-        if let Some(s) = status.as_mut() {
-            s.stage1_elapsed_ms = Some(start_time.elapsed().as_millis());
-            s.ended_at = Some(current_timestamp_iso());
-            s.outcome = StrategyOutcome::Ok;
-        }
-    }
 
     info!(
         run_id,
@@ -838,19 +833,20 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
 
     tracing::debug!(run_id, "Appending strategy message to shared state");
 
-    let messages = {
+    if let Err(err) = insert_strategy_summary(&response.session_id, &response.summary, None).await {
+        warn!(run_id, %err, "写入策略摘要到数据库失败");
+    }
+
+    {
         let mut msgs = state.strategy_messages.write().await;
         msgs.push(strategy_message);
-        msgs.clone()
-    };
+    }
 
-    tracing::info!(run_id, "Strategy run completed and chat history returned to UI");
-    Json(ApiResponse::ok(messages))
-}
-
-async fn get_strategy_status(State(state): State<AppState>) -> impl IntoResponse {
-    let status = state.last_run_status.read().await.clone();
-    Json(ApiResponse::ok(status))
+    tracing::info!(
+        run_id,
+        "Strategy run completed and stored in background task"
+    );
+    Ok(())
 }
 
 fn truncate_for_log(text: &str, max_len: usize) -> String {
@@ -888,13 +884,12 @@ async fn place_order(
     )
 }
 
-async fn cancel_order(
-    _state: State<AppState>,
-    Path(_order_id): Path<String>,
-) -> impl IntoResponse {
+async fn cancel_order(_state: State<AppState>, Path(_order_id): Path<String>) -> impl IntoResponse {
     (
         StatusCode::NOT_IMPLEMENTED,
-        Json(ApiResponse::<Order>::error("取消订单仅在接入真实交易所 API 时可用")),
+        Json(ApiResponse::<Order>::error(
+            "取消订单仅在接入真实交易所 API 时可用",
+        )),
     )
 }
 
