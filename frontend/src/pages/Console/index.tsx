@@ -34,10 +34,18 @@ const AiConsolePage = () => {
   const markPrice = ticker?.last ? Number(ticker.last) : undefined;
   const initialAmount = initialEquityRecord ? Number(initialEquityRecord.amount) : undefined;
 
-  const { points: equityCurve } = useMemo(
+  const equityStats = useMemo(
     () => buildEquityCurve(fills, markPrice, initialAmount),
     [fills, markPrice, initialAmount]
   );
+  const equityCurve = equityStats.points;
+  const currentEquity = equityCurve.length
+    ? equityCurve[equityCurve.length - 1]?.equity
+    : initialAmount;
+  const profitPercent =
+    initialAmount && currentEquity !== undefined
+      ? ((currentEquity - initialAmount) / initialAmount) * 100
+      : undefined;
 
   const handleStrategyStart = async () => {
     const startedAt = new Date().toISOString();
@@ -60,7 +68,11 @@ const AiConsolePage = () => {
 
   return (
     <Flex vertical gap={24}>
-      <MarketStrip />
+      <MarketStrip
+        initialAmount={initialAmount}
+        currentAmount={currentEquity}
+        profitPercent={profitPercent}
+      />
 
       <Row gutter={[24, 24]} align="stretch">
         <Col xs={24} xl={14} style={{ display: 'flex' }}>

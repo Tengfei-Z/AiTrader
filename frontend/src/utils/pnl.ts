@@ -21,7 +21,7 @@ const safelyToNumber = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const DEFAULT_INITIAL_EQUITY = 131_939.73;
+const DEFAULT_INITIAL_EQUITY = 122_000;
 
 export const buildEquityCurve = (
   fills?: FillItem[],

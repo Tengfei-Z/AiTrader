@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use chrono::TimeZone;
+use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -36,6 +36,7 @@ use server_config::load_app_config;
 use settings::CONFIG;
 
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
+const DEFAULT_INITIAL_EQUITY: f64 = 122_000.0;
 
 #[derive(Clone)]
 struct AppState {
@@ -517,7 +518,9 @@ async fn get_initial_equity() -> impl IntoResponse {
                 recorded_at: recorded_at.to_rfc3339(),
             }),
         )),
-        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(None)),
+        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+            default_initial_equity_record(),
+        ))),
         Err(err) => {
             warn!(error = ?err, "failed to read initial equity");
             Json(ApiResponse::<Option<InitialEquityRecord>>::error(
@@ -548,13 +551,22 @@ async fn set_initial_equity(Json(payload): Json<InitialEquityPayload>) -> impl I
                 recorded_at: recorded_at.to_rfc3339(),
             }),
         )),
-        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(None)),
+        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+            default_initial_equity_record(),
+        ))),
         Err(err) => {
             warn!(error = ?err, "failed to read initial equity after update");
             Json(ApiResponse::<Option<InitialEquityRecord>>::error(
                 "保存后无法加载初始资金",
             ))
         }
+    }
+}
+
+fn default_initial_equity_record() -> InitialEquityRecord {
+    InitialEquityRecord {
+        amount: format_amount(DEFAULT_INITIAL_EQUITY),
+        recorded_at: Utc::now().to_rfc3339(),
     }
 }
 

@@ -61,90 +61,214 @@ body {
   overflow: hidden;
 }
 
-
 .market-strip-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px minmax(240px, 300px);
+  gap: 14px;
+  margin-top: 12px;
+  align-items: stretch;
+}
+
+@media (max-width: 992px) {
+  .market-strip-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.market-strip-funds-panel {
   display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  margin-top: 16px;
-  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.market-strip-gap {
+  border-right: 1px dashed rgba(148, 163, 184, 0.5);
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 992px) {
+  .market-strip-gap {
+    display: none;
+  }
 }
 
 .market-strip-initial-chip {
-  padding: 10px 14px;
-  border: 1px solid #e5e7eb;
+  padding: 6px 12px;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
   border-radius: 14px;
-  box-shadow: 0 10px 15px rgba(15, 23, 42, 0.08);
-  text-align: right;
-  flex: 0 0 220px;
-  min-width: 200px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  flex: 0 0 300px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: 4px;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 70px;
 }
 
-.market-strip-initial-label {
+.market-strip-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.market-strip-summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  text-align: center;
+}
+
+.market-strip-summary-block--narrow {
+  flex: 0 0 auto;
+  min-width: 80px;
+  align-items: center;
+  text-align: center;
+}
+
+.market-strip-summary-label {
   font-size: 12px;
+  color: #64748b;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #64748b;
-  display: block;
 }
 
-.market-strip-initial-value {
-  margin: 0;
+.market-strip-summary-value {
+  font-size: 16px;
   font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
 }
 
-.market-strip-initial-timestamp {
+.market-strip-summary-divider {
+  width: 1px;
+  align-self: stretch;
+  background: linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.2), transparent);
+}
+
+.market-strip-summary-current {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.market-strip-summary-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.market-strip-summary-pill.positive {
+  color: #15803d;
+  background: rgba(21, 128, 61, 0.15);
+}
+
+.market-strip-summary-pill.negative {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.16);
+}
+
+.market-strip-summary-timestamp {
   display: block;
   font-size: 12px;
   color: #94a3b8;
 }
 
-
-.market-strip-coin-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  flex: 1 1 0;
-  min-width: 0;
-  margin-top: 0;
-  align-items: stretch;
+.market-strip-number {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
 }
 
-.market-strip-coin-block {
+.market-strip-summary-percent {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.market-strip-summary-percent.positive {
+  color: #15803d;
+}
+
+.market-strip-summary-percent.negative {
+  color: #b91c1c;
+}
+
+@media (max-width: 640px) {
+  .market-strip-summary {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .market-strip-summary-divider {
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(15, 23, 42, 0.2), transparent);
+  }
+}
+
+.market-strip-coins-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  align-content: stretch;
+}
+
+@media (max-width: 1280px) {
+  .market-strip-coins-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .market-strip-coins-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .market-strip-coins-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.market-strip-coin-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
-  min-width: 220px;
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-  flex: 1 1 220px;
-  min-height: 52px;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
+  min-height: 40px;
 }
 
-.market-strip-coin-price {
-  margin: 0;
-  display: inline-block;
-  white-space: nowrap;
-  line-height: 1.2;
+.market-strip-coin-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 0 1 50%;
 }
 
 .market-strip-coin-name {
   font-weight: 600;
-  flex: 0 0 auto;
+  color: #0f172a;
   white-space: nowrap;
 }
 
 .market-strip-coin-icon {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
   border-radius: 50%;
   border: 1px solid transparent;
@@ -153,9 +277,20 @@ body {
   background: #fff;
 }
 
-.market-strip-coin-change {
+.market-strip-coin-price {
   font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  flex: 0 0 auto;
+  min-width: 64px;
+  text-align: right;
+}
+
+.market-strip-coin-change {
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .market-strip-coin-change.positive {
