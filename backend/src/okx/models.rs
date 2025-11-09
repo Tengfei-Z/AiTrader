@@ -53,6 +53,10 @@ pub struct AccountBalance {
     #[serde(default)]
     pub total_eq: Option<String>,
     #[serde(default)]
+    pub avail_eq: Option<String>,
+    #[serde(default)]
+    pub cash_bal: Option<String>,
+    #[serde(default)]
     pub details: Vec<AccountBalanceDetail>,
 }
 

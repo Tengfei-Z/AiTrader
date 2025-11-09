@@ -9,6 +9,7 @@ use std::{
 };
 use tokio_postgres::{Client, NoTls};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 const DEFAULT_CONFIG_PATH: &str = "config/config.yaml";
 const DEFAULT_SCHEMA: &str = "aitrader";
@@ -220,9 +221,19 @@ fn migration_statements(schema: &str) -> Vec<String> {
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 session_id      TEXT NOT NULL,
                 summary         TEXT NOT NULL,
+                content         TEXT NOT NULL DEFAULT '',
+                role            TEXT NOT NULL DEFAULT 'assistant',
+                tags            TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
                 confidence      NUMERIC(5, 2),
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
             );",
+            schema = schema,
+        ),
+        format!(
+            "ALTER TABLE {schema}.strategies
+                ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '',
+                ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'assistant',
+                ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT ARRAY[]::text[];",
             schema = schema,
         ),
         format!(
@@ -283,11 +294,27 @@ pub async fn init_database() -> Result<()> {
     Ok(())
 }
 
-pub async fn insert_strategy_summary(
-    session_id: &str,
-    summary: &str,
-    confidence: Option<f64>,
-) -> Result<()> {
+#[derive(Debug, Clone)]
+pub struct StrategyMessageInsert {
+    pub session_id: String,
+    pub summary: String,
+    pub content: String,
+    pub role: String,
+    pub tags: Vec<String>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StrategyMessageRecord {
+    pub id: Uuid,
+    pub summary: String,
+    pub content: String,
+    pub role: String,
+    pub tags: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn insert_strategy_message(payload: StrategyMessageInsert) -> Result<()> {
     let DatabaseSettings { url, schema } = database_settings();
 
     let url = match url {
@@ -306,36 +333,72 @@ pub async fn insert_strategy_summary(
         }
     };
 
-    let session_owned = session_id.to_owned();
-    let summary_owned = summary.to_owned();
+    let sql = format!(
+        "INSERT INTO {schema}.strategies (session_id, summary, content, role, tags, confidence)
+         VALUES ($1, $2, $3, $4, $5, $6);",
+        schema = schema,
+    );
 
-    if let Some(conf) = confidence {
-        let sql = format!(
-            "INSERT INTO {schema}.strategies (session_id, summary, confidence) VALUES ($1, $2, $3);",
-            schema = schema,
-        );
-        client
-            .execute(&sql, &[&session_owned, &summary_owned, &conf])
-            .await
-            .map(|_| ())
-            .map_err(|err| {
-                warn!(%err, "插入 strategy 记录失败");
-                err.into()
-            })
-    } else {
-        let sql = format!(
-            "INSERT INTO {schema}.strategies (session_id, summary) VALUES ($1, $2);",
-            schema = schema,
-        );
-        client
-            .execute(&sql, &[&session_owned, &summary_owned])
-            .await
-            .map(|_| ())
-            .map_err(|err| {
-                warn!(%err, "插入 strategy 记录失败");
-                err.into()
-            })
+    client
+        .execute(
+            &sql,
+            &[
+                &payload.session_id,
+                &payload.summary,
+                &payload.content,
+                &payload.role,
+                &payload.tags,
+                &payload.confidence,
+            ],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|err| {
+            warn!(%err, "插入 strategy 记录失败");
+            err.into()
+        })
+}
+
+pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRecord>> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let Some(url) = url else {
+        warn!("未配置数据库连接字符串，跳过策略对话查询");
+        return Ok(Vec::new());
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "SELECT id::text AS id_text, summary, content, role, tags, created_at
+         FROM {schema}.strategies
+         ORDER BY created_at DESC
+         LIMIT $1;",
+        schema = schema,
+    );
+
+    let rows = client.query(&sql, &[&limit]).await?;
+    let mut records = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id_raw: String = row.get("id_text");
+        let id = match Uuid::parse_str(&id_raw) {
+            Ok(uuid) => uuid,
+            Err(err) => {
+                warn!(%err, id = %id_raw, "failed to parse strategy uuid, using nil");
+                Uuid::nil()
+            }
+        };
+
+        records.push(StrategyMessageRecord {
+            id,
+            summary: row.get("summary"),
+            content: row.get("content"),
+            role: row.get("role"),
+            tags: row.get::<_, Vec<String>>("tags"),
+            created_at: row.get("created_at"),
+        });
     }
+
+    Ok(records)
 }
 
 pub async fn fetch_initial_equity() -> Result<Option<(f64, DateTime<Utc>)>> {

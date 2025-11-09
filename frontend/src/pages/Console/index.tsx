@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import EquityCurveCard from '@components/EquityCurveCard';
 import MarketStrip from '@components/MarketStrip';
 import PositionsHistoryCard from '@components/PositionsHistoryCard';
+import { useBalances } from '@hooks/useBalances';
 import { useFills } from '@hooks/useFills';
 import { useInitialEquity } from '@hooks/useInitialEquity';
 import { usePositionHistory } from '@hooks/usePositionHistory';
@@ -13,10 +14,19 @@ import { useTicker } from '@hooks/useTicker';
 import { useSymbolStore } from '@store/useSymbolStore';
 import { buildEquityCurve } from '@utils/pnl';
 
+const safelyParseNumber = (value?: string) => {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
 const AiConsolePage = () => {
   const symbol = useSymbolStore((state) => state.symbol);
 
   const { data: ticker } = useTicker(symbol);
+  const { data: balances } = useBalances();
   const { data: fills, isLoading: fillsLoading } = useFills(symbol, 200);
   const { data: positions, isLoading: positionsLoading } = usePositions();
   const { data: positionHistory, isLoading: positionHistoryLoading } = usePositionHistory();
@@ -42,9 +52,30 @@ const AiConsolePage = () => {
   const currentEquity = equityCurve.length
     ? equityCurve[equityCurve.length - 1]?.equity
     : initialAmount;
+  const currentAccountValue = useMemo(() => {
+    if (!balances?.length) {
+      return undefined;
+    }
+    let hasValue = false;
+    const total = balances.reduce((sum, balance) => {
+      const valuation = safelyParseNumber(balance.valuationUSDT);
+      if (valuation !== undefined) {
+        hasValue = true;
+        return sum + valuation;
+      }
+      const available = safelyParseNumber(balance.available);
+      const locked = safelyParseNumber(balance.locked);
+      if (available !== undefined || locked !== undefined) {
+        hasValue = true;
+      }
+      return sum + (available ?? 0) + (locked ?? 0);
+    }, 0);
+    return hasValue ? total : undefined;
+  }, [balances]);
+  const resolvedCurrentEquity = currentAccountValue ?? currentEquity;
   const profitPercent =
-    initialAmount && currentEquity !== undefined
-      ? ((currentEquity - initialAmount) / initialAmount) * 100
+    initialAmount && resolvedCurrentEquity !== undefined
+      ? ((resolvedCurrentEquity - initialAmount) / initialAmount) * 100
       : undefined;
 
   const handleStrategyStart = async () => {
@@ -70,7 +101,7 @@ const AiConsolePage = () => {
     <Flex vertical gap={24}>
       <MarketStrip
         initialAmount={initialAmount}
-        currentAmount={currentEquity}
+        currentAmount={resolvedCurrentEquity}
         profitPercent={profitPercent}
       />
 

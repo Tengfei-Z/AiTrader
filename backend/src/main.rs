@@ -9,8 +9,8 @@ mod server_config;
 mod settings;
 
 use crate::db::{
-    fetch_initial_equity, fetch_order_history, init_database, insert_initial_equity,
-    insert_strategy_summary,
+    fetch_initial_equity, fetch_order_history, fetch_strategy_messages, init_database,
+    insert_initial_equity, insert_strategy_message, StrategyMessageInsert,
 };
 use anyhow::{anyhow, Result};
 use axum::extract::{Path, Query, State};
@@ -42,7 +42,6 @@ const DEFAULT_INITIAL_EQUITY: f64 = 122_000.0;
 struct AppState {
     okx_simulated: Option<OkxRestClient>,
     agent: Option<AgentClient>,
-    strategy_messages: Arc<RwLock<Vec<StrategyMessage>>>,
     strategy_run_counter: Arc<RwLock<u64>>,
 }
 
@@ -331,7 +330,6 @@ async fn main() -> anyhow::Result<()> {
     let app_state = AppState {
         okx_simulated,
         agent: agent_client,
-        strategy_messages: Arc::new(RwLock::new(Vec::new())),
         strategy_run_counter: Arc::new(RwLock::new(0)),
     };
     let bind_addr = settings
@@ -467,20 +465,25 @@ async fn get_balances(
         match client.get_account_balance().await {
             Ok(balance_response) => {
                 if let Some(account) = balance_response.data.into_iter().next() {
-                    let mut account_value = 0.0_f64;
-                    let mut available_cash = 0.0_f64;
+                    let usdt_detail = account
+                        .details
+                        .into_iter()
+                        .find(|detail| detail.ccy.eq_ignore_ascii_case("USDT"));
 
-                    for detail in account.details {
-                        if detail.ccy.eq_ignore_ascii_case("USDT") {
-                            if let Some(eq) = parse_optional_number(detail.eq.clone()) {
-                                account_value += eq;
-                            }
-                            if let Some(avail) = parse_optional_number(detail.avail_bal.clone()) {
-                                available_cash += avail;
-                            }
-                        }
-                    }
+                    let detail_equity = usdt_detail
+                        .as_ref()
+                        .and_then(|detail| parse_optional_number(detail.eq.clone()));
+                    let detail_available = usdt_detail
+                        .as_ref()
+                        .and_then(|detail| parse_optional_number(detail.avail_bal.clone()));
 
+                    let account_value = detail_equity
+                        .or_else(|| parse_optional_number(account.total_eq.clone()))
+                        .unwrap_or(0.0);
+                    let available_cash = detail_available
+                        .or_else(|| parse_optional_number(account.avail_eq.clone()))
+                        .or_else(|| parse_optional_number(account.cash_bal.clone()))
+                        .unwrap_or(0.0);
                     let locked = (account_value - available_cash).max(0.0);
 
                     let balances = vec![Balance {
@@ -816,9 +819,41 @@ fn parse_timestamp_millis(value: Option<String>) -> Option<String> {
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
-async fn get_strategy_chat(State(state): State<AppState>) -> impl IntoResponse {
-    let messages = state.strategy_messages.read().await.clone();
-    Json(ApiResponse::ok(messages))
+async fn get_strategy_chat() -> impl IntoResponse {
+    match fetch_strategy_messages(50).await {
+        Ok(records) => {
+            let messages = records
+                .into_iter()
+                .map(|record| {
+                    let summary = if record.summary.trim().is_empty() {
+                        None
+                    } else {
+                        Some(record.summary.clone())
+                    };
+                    let tags = if record.tags.is_empty() {
+                        None
+                    } else {
+                        Some(record.tags.clone())
+                    };
+                    StrategyMessage {
+                        id: record.id.to_string(),
+                        role: record.role,
+                        content: record.content,
+                        created_at: record.created_at.to_rfc3339(),
+                        summary,
+                        tags,
+                    }
+                })
+                .collect::<Vec<_>>();
+            Json(ApiResponse::ok(messages))
+        }
+        Err(err) => {
+            warn!(error = ?err, "failed to fetch strategy chat from database");
+            Json(ApiResponse::<Vec<StrategyMessage>>::error(
+                "无法获取策略对话",
+            ))
+        }
+    }
 }
 
 async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoResponse {
@@ -844,10 +879,8 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         "Dispatching agent analysis request"
     );
 
-    let background_state = state.clone();
     tokio::spawn(async move {
-        if let Err(err) = run_strategy_job(background_state, agent_client, run_id, session_id).await
-        {
+        if let Err(err) = run_strategy_job(agent_client, run_id, session_id).await {
             warn!(run_id, %err, "Strategy analysis task failed");
         }
     });
@@ -856,7 +889,6 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
 }
 
 async fn run_strategy_job(
-    state: AppState,
     agent_client: AgentClient,
     run_id: u64,
     session_id: String,
@@ -901,28 +933,22 @@ async fn run_strategy_job(
         }
     }
 
-    let strategy_message = StrategyMessage {
-        id: format!(
-            "strategy-{}-{}",
-            run_id,
-            chrono::Utc::now().timestamp_millis()
-        ),
-        role: "assistant".into(),
-        created_at: current_timestamp_iso(),
-        summary: Some(format!("第 {} 次策略执行", run_id)),
-        tags: Some(vec!["auto-run".into(), "agent".into()]),
+    let summary_label = format!("第 {} 次策略执行", run_id);
+    let tags = vec!["auto-run".into(), "agent".into()];
+
+    tracing::debug!(run_id, "Persisting strategy message to database");
+
+    if let Err(err) = insert_strategy_message(StrategyMessageInsert {
+        session_id: response.session_id.clone(),
+        summary: summary_label,
         content,
-    };
-
-    tracing::debug!(run_id, "Appending strategy message to shared state");
-
-    if let Err(err) = insert_strategy_summary(&response.session_id, &response.summary, None).await {
-        warn!(run_id, %err, "写入策略摘要到数据库失败");
-    }
-
+        role: "assistant".into(),
+        tags,
+        confidence: None,
+    })
+    .await
     {
-        let mut msgs = state.strategy_messages.write().await;
-        msgs.push(strategy_message);
+        warn!(run_id, %err, "写入策略摘要到数据库失败");
     }
 
     tracing::info!(
@@ -974,10 +1000,6 @@ async fn cancel_order(_state: State<AppState>, Path(_order_id): Path<String>) ->
             "取消订单仅在接入真实交易所 API 时可用",
         )),
     )
-}
-
-fn current_timestamp_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 impl std::fmt::Display for OrderStatus {

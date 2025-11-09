@@ -27,7 +27,9 @@ const StrategyChatCard = ({
   starting,
   embedded
 }: Props) => {
-  const sortedMessages = (messages ?? []).slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const orderedMessages = (messages ?? [])
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const spinning = Boolean(loading || starting);
 
   const content = (
@@ -49,12 +51,12 @@ const StrategyChatCard = ({
           )}
         </Flex>
       </Flex>
-      {sortedMessages.length === 0 ? (
+      {orderedMessages.length === 0 ? (
         <Empty description="暂无对话记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
         <div className="strategy-chat-history">
           <List
-            dataSource={sortedMessages}
+            dataSource={orderedMessages}
             renderItem={(item) => {
               const role = roleMap[item.role] ?? roleMap.system;
               return (
