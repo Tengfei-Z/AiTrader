@@ -8,7 +8,10 @@ mod okx;
 mod server_config;
 mod settings;
 
-use crate::db::{fetch_order_history, init_database, insert_strategy_summary};
+use crate::db::{
+    fetch_initial_equity, fetch_order_history, init_database, insert_initial_equity,
+    insert_strategy_summary,
+};
 use anyhow::{anyhow, Result};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -135,6 +138,18 @@ struct Balance {
     valuation_usdt: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitialEquityRecord {
+    amount: String,
+    recorded_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InitialEquityPayload {
+    amount: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Position {
     symbol: String,
@@ -249,6 +264,8 @@ fn api_routes() -> Router<AppState> {
         .route("/market/orderbook", get(get_orderbook))
         .route("/market/trades", get(get_trades))
         .route("/account/balances", get(get_balances))
+        .route("/account/initial-equity", get(get_initial_equity))
+        .route("/account/initial-equity", post(set_initial_equity))
         .route("/account/positions", get(get_positions))
         .route("/account/positions/history", get(get_positions_history))
         .route("/account/orders/open", get(get_open_orders))
@@ -490,6 +507,55 @@ async fn get_balances(
     }
 
     Json(ApiResponse::ok(Vec::<Balance>::new()))
+}
+
+async fn get_initial_equity() -> impl IntoResponse {
+    match fetch_initial_equity().await {
+        Ok(Some((amount, recorded_at))) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(
+            Some(InitialEquityRecord {
+                amount: format_amount(amount),
+                recorded_at: recorded_at.to_rfc3339(),
+            }),
+        )),
+        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(None)),
+        Err(err) => {
+            warn!(error = ?err, "failed to read initial equity");
+            Json(ApiResponse::<Option<InitialEquityRecord>>::error(
+                "无法获取初始资金",
+            ))
+        }
+    }
+}
+
+async fn set_initial_equity(Json(payload): Json<InitialEquityPayload>) -> impl IntoResponse {
+    if payload.amount < 0.0 {
+        return Json(ApiResponse::<Option<InitialEquityRecord>>::error(
+            "初始资金不能为负值",
+        ));
+    }
+
+    if let Err(err) = insert_initial_equity(payload.amount).await {
+        warn!(error = ?err, "failed to write initial equity");
+        return Json(ApiResponse::<Option<InitialEquityRecord>>::error(
+            "无法保存初始资金",
+        ));
+    }
+
+    match fetch_initial_equity().await {
+        Ok(Some((amount, recorded_at))) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(
+            Some(InitialEquityRecord {
+                amount: format_amount(amount),
+                recorded_at: recorded_at.to_rfc3339(),
+            }),
+        )),
+        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(None)),
+        Err(err) => {
+            warn!(error = ?err, "failed to read initial equity after update");
+            Json(ApiResponse::<Option<InitialEquityRecord>>::error(
+                "保存后无法加载初始资金",
+            ))
+        }
+    }
 }
 
 async fn get_positions(

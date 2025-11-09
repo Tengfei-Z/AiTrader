@@ -33,16 +33,24 @@ class OKXClient:
             "+00:00", "Z"
         )
         request_body = json.dumps(body) if body else ""
+        query_string = ""
+        request_params = None
+        if params:
+            request_params = httpx.QueryParams(params)
+            query_string = f"?{request_params}"
+        request_path = f"{path}{query_string}"
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
             "OK-ACCESS-PASSPHRASE": self._settings.okx_passphrase.get_secret_value(),
             "OK-ACCESS-TIMESTAMP": timestamp,
-            "x-simulated-trading": "1",
         }
 
+        if self._settings.okx_use_simulated:
+            headers["x-simulated-trading"] = "1"
+
         if auth:
-            sign_payload = f"{timestamp}{method.upper()}{path}{request_body}".encode("utf-8")
+            sign_payload = f"{timestamp}{method.upper()}{request_path}{request_body}".encode("utf-8")
             signature = base64.b64encode(
                 hmac.new(
                     self._settings.okx_secret_key.get_secret_value().encode("utf-8"),
@@ -59,12 +67,12 @@ class OKXClient:
             )
 
         async with async_http_client(
-            base_url=self._settings.okx_base_url, timeout=15.0
+            base_url=str(self._settings.okx_base_url), timeout=15.0
         ) as client:
             response = await client.request(
                 method=method.upper(),
                 url=path,
-                params=params,
+                params=request_params,
                 content=request_body if request_body else None,
                 headers=headers,
             )

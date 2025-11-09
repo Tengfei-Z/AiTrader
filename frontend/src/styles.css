@@ -61,85 +61,108 @@ body {
   overflow: hidden;
 }
 
-.market-strip-layout {
+
+.market-strip-body {
   display: flex;
-  gap: 24px;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 16px;
   flex-wrap: wrap;
+}
+
+.market-strip-initial-chip {
+  padding: 10px 14px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 10px 15px rgba(15, 23, 42, 0.08);
+  text-align: right;
+  flex: 0 0 220px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.market-strip-initial-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  display: block;
+}
+
+.market-strip-initial-value {
+  margin: 0;
+  font-weight: 600;
+}
+
+.market-strip-initial-timestamp {
+  display: block;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+
+.market-strip-coin-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  flex: 1 1 0;
+  min-width: 0;
+  margin-top: 0;
   align-items: stretch;
 }
 
-.market-strip-ticker-wrapper {
-  flex: 2 1 480px;
-  min-width: 320px;
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 14px;
-  border: 1px solid #e5e7eb;
-}
-
-.market-strip-ticker-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.market-strip-ticker-card {
+.market-strip-coin-block {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: #f9fafb;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  min-width: 220px;
   border-radius: 12px;
-  border: 1px solid #edf2f7;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+  flex: 1 1 220px;
+  min-height: 52px;
 }
 
-.market-strip-ticker-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+.market-strip-coin-price {
+  margin: 0;
+  display: inline-block;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
-.market-strip-ticker-title {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.market-strip-ticker-name {
-  font-size: 13px;
+.market-strip-coin-name {
   font-weight: 600;
-  color: #1f2937;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
-.market-strip-ticker-code {
-  font-size: 12px;
-  color: #94a3b8;
-  letter-spacing: 0.04em;
+.market-strip-coin-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  padding: 2px;
+  flex-shrink: 0;
+  background: #fff;
 }
 
-.market-strip-ticker-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  font-size: 13px;
+.market-strip-coin-change {
+  font-size: 14px;
+  white-space: nowrap;
 }
 
-.market-strip-ticker-meta .price {
-  font-weight: 600;
-  color: #111827;
-}
-
-.market-strip-ticker-meta .change {
-  font-weight: 500;
-  color: #6b7280;
-}
-
-.market-strip-ticker-meta .change.positive {
+.market-strip-coin-change.positive {
   color: #16a34a;
 }
 
-.market-strip-ticker-meta .change.negative {
+.market-strip-coin-change.negative {
   color: #dc2626;
 }
 
@@ -276,60 +299,24 @@ body {
   font-weight: 600;
 }
 
+.equity-icon {
+  margin-left: 8px;
+  font-size: 16px;
+}
+
+.equity-icon.positive {
+  color: #16a34a;
+}
+
+.equity-icon.negative {
+  color: #dc2626;
+}
+
 .equity-delta {
   font-size: 14px;
   font-weight: 600;
 }
 
-.market-strip-balance-card {
-  flex: 1 1 320px;
-  min-width: 260px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  border-radius: 16px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
-}
-
-.market-strip-balance-header {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.market-strip-balance-label {
-  font-size: 12px;
-  color: #64748b;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.market-strip-balance-value {
-  font-size: 20px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.market-strip-balance-meta {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: #94a3b8 !important;
-}
-
-@media (max-width: 768px) {
-  .market-strip-layout {
-    flex-direction: column;
-  }
-
-  .market-strip-ticker-wrapper {
-    min-width: auto;
-  }
-}
 .trade-activity-item {
   width: 100%;
   display: flex;

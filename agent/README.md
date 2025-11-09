@@ -63,7 +63,7 @@ agent/
 - `llm/`: FastAPI 入口、路由、业务服务、Prompt 管理。  
 - `mcp/`: FastMCP Server 与工具注册，复用 `core.okx_client`。  
 - `scripts/`: 启动与健康检查辅助脚本。  
-- `tests/`: 核心功能回归测试，覆盖对话流程与工具调用。
+- `tests/`: 核心功能回归测试，覆盖策略分析流程与工具调用。
 
 ## MCP 工具列表
 
@@ -89,10 +89,10 @@ GET /api/orders/list
 ...
 ```
 
-### 前端 ↔ Rust Backend ↔ Agent（AI 对话）
-1. 前端调用 `POST /api/ai/chat`
-2. Rust 转发到 `POST http://agent:8001/chat/`
-3. Agent 处理后返回给 Rust，再返回前端
+### 前端 ↔ Rust Backend ↔ Agent（策略分析）
+1. 前端调用 `POST /api/ai/analysis`
+2. Rust 转发到 `POST http://agent:8001/analysis/`
+3. Agent 完成 DeepSeek 推理与工具调用后返回分析结果
 
 ### Agent ↔ OKX API
 FastMCP 工具内部直接调用 OKX REST：
@@ -132,7 +132,7 @@ FastMCP 工具内部直接调用 OKX REST：
 - `core.okx_client`：OKX REST 封装，负责签名、重试与错误处理。  
 - `llm.services.deepseek_client`：对 DeepSeek 的封装，内置 `httpx` + `tenacity` 重试。  
 - `llm.services.conversation_manager`：内存态会话存储，支持历史截断。  
-- `llm.api.chat`：核心对话入口，协调 LLM 回复与工具调用。  
+- `llm.api.analysis`：策略分析入口，协调 LLM 推理与工具调用。  
 - `mcp.server`：FastMCP Server 单例，负责工具注册、Schema 缓存与工具执行。  
 - `scripts.run_agent`：本地启动脚本，自动复用 `agent/.venv` 并启用热重载。
 
@@ -143,6 +143,7 @@ FastMCP 工具内部直接调用 OKX REST：
 - `DEEPSEEK_API_KEY` / `DEEPSEEK_API_BASE`：大模型密钥与地址  
 - `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE`：OKX 凭证（支持模拟盘）  
 - `OKX_BASE_URL`：OKX API 基地址  
+- `OKX_USE_SIMULATED`：是否对请求附带 `X-SIMULATED-TRADING: 1`（默认开启，设为 `false` 走实盘）  
 - `AGENT_HOST` / `AGENT_PORT`：FastAPI 监听地址  
 - `AGENT_BASE_URL`：提供给 Rust 的 Agent 地址（后端读取）  
 - `LOG_FILE`：日志文件路径，默认 `log/agent.log`

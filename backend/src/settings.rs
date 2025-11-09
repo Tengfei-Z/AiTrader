@@ -25,11 +25,13 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    #[serde(default = "default_okx_rest_endpoint")]
-    pub okx_rest_endpoint: String,
+    #[serde(default = "default_okx_base_url")]
+    pub okx_base_url: String,
     pub okx_credentials: Option<OkxCredentials>,
     pub okx_simulated_credentials: Option<OkxCredentials>,
     pub agent: Option<AgentConfig>,
+    #[serde(default = "default_okx_use_simulated")]
+    pub okx_use_simulated: bool,
 }
 
 impl AppConfig {
@@ -38,15 +40,18 @@ impl AppConfig {
         preload_env_files();
 
         let okx_credentials =
-            load_okx_credentials("OKX_API_KEY", "OKX_API_SECRET", "OKX_PASSPHRASE");
-        let okx_simulated_credentials = load_okx_credentials(
+            load_okx_credentials("OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE");
+        let mut okx_simulated_credentials = load_okx_credentials(
             "OKX_SIM_API_KEY",
-            "OKX_SIM_API_SECRET",
+            "OKX_SIM_SECRET_KEY",
             "OKX_SIM_PASSPHRASE",
         );
+        if okx_simulated_credentials.is_none() {
+            okx_simulated_credentials = okx_credentials.clone();
+        }
 
-        let okx_rest_endpoint =
-            env::var("OKX_REST_ENDPOINT").unwrap_or_else(|_| default_okx_rest_endpoint());
+        let okx_base_url = env::var("OKX_BASE_URL").unwrap_or_else(|_| default_okx_base_url());
+        let okx_use_simulated = env_bool("OKX_USE_SIMULATED", true);
 
         let agent = match env_var_non_empty("AGENT_BASE_URL") {
             Ok(base_url) => Some(AgentConfig { base_url }),
@@ -54,26 +59,32 @@ impl AppConfig {
         };
 
         Ok(Self {
-            okx_rest_endpoint,
+            okx_base_url,
             okx_credentials,
             okx_simulated_credentials,
             agent,
+            okx_use_simulated,
         })
     }
 
-    pub fn require_okx_simulated_credentials(&self) -> Result<&OkxCredentials> {
-        let credentials = self
-            .okx_simulated_credentials
-            .as_ref()
-            .context(
-                "未找到 OKX 模拟账户凭证：请在当前目录创建 .env，并设置 OKX_SIM_API_KEY、OKX_SIM_API_SECRET、OKX_SIM_PASSPHRASE",
-            )?;
+    pub fn require_okx_credentials(&self, simulated: bool) -> Result<&OkxCredentials> {
+        let source = if simulated {
+            self.okx_simulated_credentials
+                .as_ref()
+                .or(self.okx_credentials.as_ref())
+        } else {
+            self.okx_credentials.as_ref()
+        };
+
+        let credentials = source.context(
+            "未找到 OKX 凭证：请在 .env 中设置 OKX_API_KEY、OKX_SECRET_KEY、OKX_PASSPHRASE（或对应的 OKX_SIM_* 变量）",
+        )?;
 
         ensure!(
             !credentials.api_key.trim().is_empty()
                 && !credentials.api_secret.trim().is_empty()
                 && !credentials.passphrase.trim().is_empty(),
-            "OKX 模拟账户凭证不能为空：请在 .env 中填写 OKX_SIM_API_KEY、OKX_SIM_API_SECRET、OKX_SIM_PASSPHRASE"
+            "OKX 凭证不能为空：请在 .env 中填写 OKX_API_KEY、OKX_SECRET_KEY、OKX_PASSPHRASE"
         );
 
         Ok(credentials)
@@ -81,6 +92,10 @@ impl AppConfig {
 
     pub fn agent_base_url(&self) -> Option<&str> {
         self.agent.as_ref().map(|cfg| cfg.base_url.as_str())
+    }
+
+    pub fn okx_use_simulated(&self) -> bool {
+        self.okx_use_simulated
     }
 }
 
@@ -92,8 +107,22 @@ fn env_var_non_empty(key: &str) -> Result<String, env::VarError> {
     Ok(value)
 }
 
-fn default_okx_rest_endpoint() -> String {
+fn default_okx_base_url() -> String {
     "https://www.okx.com".to_string()
+}
+
+fn default_okx_use_simulated() -> bool {
+    true
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    match env::var(key) {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on" | "enabled")
+        }
+        Err(_) => default,
+    }
 }
 
 fn preload_env_files() {
@@ -113,7 +142,10 @@ fn preload_env_files() {
     }
 
     if loaded_paths.is_empty() {
-        info!(message = "falling back to process environment only", "env_files_not_found");
+        info!(
+            message = "falling back to process environment only",
+            "env_files_not_found"
+        );
     } else {
         info!(paths = %loaded_paths.join(", "), "env_files_loaded");
     }

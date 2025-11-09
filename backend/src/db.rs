@@ -244,6 +244,14 @@ fn migration_statements(schema: &str) -> Vec<String> {
             );",
             schema = schema,
         ),
+        format!(
+            "CREATE TABLE IF NOT EXISTS {schema}.initial_equities (
+                id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                amount       NUMERIC(20, 8) NOT NULL,
+                recorded_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+            );",
+            schema = schema,
+        ),
     ]
 }
 
@@ -328,6 +336,51 @@ pub async fn insert_strategy_summary(
                 err.into()
             })
     }
+}
+
+pub async fn fetch_initial_equity() -> Result<Option<(f64, DateTime<Utc>)>> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("无法读取数据库配置，跳过初始资金查询");
+            return Ok(None);
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "SELECT amount, recorded_at FROM {schema}.initial_equities ORDER BY recorded_at DESC LIMIT 1;",
+        schema = schema
+    );
+    if let Some(row) = client.query_opt(&sql, &[]).await? {
+        let amount: f64 = row.get("amount");
+        let recorded_at: DateTime<Utc> = row.get("recorded_at");
+        Ok(Some((amount, recorded_at)))
+    } else {
+        Ok(None)
+    }
+}
+
+pub async fn insert_initial_equity(amount: f64) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("无法写入初始资金：未配置数据库 URL");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "INSERT INTO {schema}.initial_equities (amount) VALUES ($1);",
+        schema = schema
+    );
+    client.execute(&sql, &[&amount]).await?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

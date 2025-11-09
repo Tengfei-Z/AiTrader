@@ -8,9 +8,6 @@ from pydantic import BaseModel, Field
 
 class AnalysisRequest(BaseModel):
     session_id: str = Field(..., description="Conversation session identifier")
-    instrument_id: str = Field(..., description="Instrument identifier, e.g., BTC-USDT-SWAP")
-    context: str | None = Field(None, description="Optional additional context")
-    analysis_type: Literal["market_overview", "strategy_review", "risk_alert"] = "market_overview"
 
 
 class AnalysisResponse(BaseModel):

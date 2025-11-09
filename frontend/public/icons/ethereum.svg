@@ -1,0 +1,12 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ethGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8a5cf6" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="#0a0f1c" />
+  <polygon points="32 14 22 32 32 42 42 32" fill="url(#ethGradient)" />
+  <polygon points="32 44 22 32 32 54 42 32" fill="#0a0f1c" opacity="0.8" />
+  <polygon points="32 14 32 42 42 32" fill="#ffffff" opacity="0.4" />
+</svg>

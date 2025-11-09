@@ -15,9 +15,6 @@ async def analyze_market(request: AnalysisRequest) -> AnalysisResponse:
     logger.info(
         "analysis_request_received",
         session_id=request.session_id,
-        instrument=request.instrument_id,
-        analysis_type=request.analysis_type,
-        has_context=bool(request.context),
     )
     try:
         response = await strategy_analyzer.analyze(request)
@@ -25,7 +22,6 @@ async def analyze_market(request: AnalysisRequest) -> AnalysisResponse:
         logger.exception(
             "analysis_request_failed",
             session_id=request.session_id,
-            instrument=request.instrument_id,
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

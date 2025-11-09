@@ -73,7 +73,11 @@ const StrategyChatCard = ({
                     </Flex>
                     <Typography.Paragraph
                       className="strategy-chat-message__content"
-                      ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}
+                      ellipsis={{
+                        rows: 2,
+                        expandable: 'collapsible',
+                        symbol: (expanded) => (expanded ? '收起' : '展开')
+                      }}
                     >
                       {item.content}
                     </Typography.Paragraph>

@@ -1,8 +1,21 @@
-import { Card, Flex, Radio, Typography } from 'antd';
-import { useMemo, useState } from 'react';
-import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ReferenceLine } from 'recharts';
+import { Card, Typography } from 'antd';
+import { CaretUpOutlined, CaretDownOutlined } from '@ant-design/icons';
+import { useMemo } from 'react';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Filler,
+  ChartOptions
+} from 'chart.js';
 import dayjs from 'dayjs';
 import type { EquityPoint } from '@utils/pnl';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
 interface Props {
   data: EquityPoint[];
@@ -10,106 +23,104 @@ interface Props {
   className?: string;
 }
 
+const formatNumber = (value?: number) =>
+  value !== undefined ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--';
+
 const EquityCurveCard = ({ data, loading, className }: Props) => {
-  const [range, setRange] = useState<'all' | '72h'>('all');
-  const [metric, setMetric] = useState<'$' | '%'>('$');
+  const sortedPoints = useMemo(() => [...data].sort((a, b) => a.time - b.time), [data]);
+  const latestPoint = sortedPoints[sortedPoints.length - 1];
+  const firstPoint = sortedPoints[0];
 
-  const slicedData = useMemo(() => {
-    if (range === '72h' && data.length > 0) {
-      const cutoff = Date.now() - 72 * 3600 * 1000;
-      return data.filter((item) => Number(item.time) >= cutoff);
+  const chartData = useMemo(() => {
+    if (sortedPoints.length === 0) {
+      return {
+        labels: [],
+        datasets: []
+      };
     }
-    return data;
-  }, [data, range]);
 
-  const initialEquity = data.length > 0 ? data[0].equity : 0;
-  const lastEquity = slicedData.length > 0
-    ? slicedData[slicedData.length - 1].equity
-    : initialEquity;
+    return {
+      labels: sortedPoints.map((point) => dayjs(point.time).format('MM-DD HH:mm')),
+      datasets: [
+        {
+          label: 'equity',
+          data: sortedPoints.map((point) => point.equity),
+          borderColor: '#4f46e5',
+          backgroundColor: 'rgba(79, 70, 229, 0.15)',
+          fill: true,
+          tension: 0.3,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 6
+        }
+      ]
+    };
+  }, [sortedPoints]);
 
-  const minValue = slicedData.length > 0
-    ? Math.min(...slicedData.map((item) => item.equity))
-    : initialEquity;
-  const maxValue = slicedData.length > 0
-    ? Math.max(...slicedData.map((item) => item.equity))
-    : initialEquity;
-  const padding = Math.max(Math.abs(maxValue - minValue) * 0.1, 10);
-  const changeValue = lastEquity - initialEquity;
-  const changePercent = initialEquity !== 0 ? (changeValue / initialEquity) * 100 : 0;
-  const changeColor = changeValue >= 0 ? '#16a34a' : '#dc2626';
+  const options: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'nearest',
+      intersect: false
+    },
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        backgroundColor: '#0f172a',
+        titleColor: '#e2e8f0',
+        bodyColor: '#e2e8f0',
+        padding: 12,
+        callbacks: {
+          title: (items) => {
+            const label = items[0]?.label;
+            return label ? `时间 ${label}` : '';
+          },
+          label: (item) => {
+            const value = item.parsed.y ?? 0;
+            return `权益 ${formatNumber(value)} USDT`;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false
+        },
+        ticks: {
+          color: '#94a3b8',
+          maxTicksLimit: 6
+        }
+      },
+      y: {
+        grid: {
+          color: '#e5e7eb'
+        },
+        ticks: {
+          color: '#94a3b8',
+          callback: (value) => `${formatNumber(Number(value))}`
+        }
+      }
+    }
+  };
 
   return (
     <Card bordered={false} loading={loading} className={className}>
-      <Flex justify="space-between" align="center" className="equity-header">
-        <Flex align="center" gap={16}>
-          <Radio.Group
-            value={metric}
-            onChange={(e) => setMetric(e.target.value)}
-            optionType="button"
-            buttonStyle="solid"
-            size="small"
-          >
-            <Radio.Button value="$">$</Radio.Button>
-            <Radio.Button value="%">%</Radio.Button>
-          </Radio.Group>
-          <div className="equity-stats">
-            <div className="equity-stat">
-              <Typography.Text className="equity-label">收益</Typography.Text>
-              <Typography.Text className="equity-value">
-                {lastEquity.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              </Typography.Text>
-              <Typography.Text className="equity-delta" style={{ color: changeColor }}>
-                {metric === '$'
-                  ? `${changeValue >= 0 ? '+' : ''}${changeValue.toLocaleString(undefined, {
-                      maximumFractionDigits: 2
-                    })}`
-                  : `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`}
-              </Typography.Text>
-            </div>
-          </div>
-        </Flex>
-        <Radio.Group
-          value={range}
-          onChange={(e) => setRange(e.target.value)}
-          optionType="button"
-          buttonStyle="solid"
-          size="small"
-        >
-          <Radio.Button value="all">ALL</Radio.Button>
-          <Radio.Button value="72h">72H</Radio.Button>
-        </Radio.Group>
-      </Flex>
+      <div className="equity-header">
+        <Typography.Text className="equity-label">收益</Typography.Text>
+        {latestPoint && firstPoint && (
+          latestPoint.equity - firstPoint.equity >= 0 ? (
+            <CaretUpOutlined className="equity-icon positive" />
+          ) : (
+            <CaretDownOutlined className="equity-icon negative" />
+          )
+        )}
+      </div>
       <div className="chart-container">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={slicedData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-            <XAxis
-              dataKey="time"
-              tickFormatter={(value) => dayjs(Number(value)).format('MM-DD HH:mm')}
-              stroke="#94a3b8"
-              minTickGap={32}
-            />
-            <YAxis
-              stroke="#94a3b8"
-              tickFormatter={(value) => value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              domain={[minValue - padding, maxValue + padding]}
-            />
-            <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="4 4" />
-            <Tooltip
-              formatter={(value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              labelFormatter={(label) => dayjs(Number(label)).format('YYYY-MM-DD HH:mm')}
-            />
-            <Line
-              type="monotone"
-              dataKey="equity"
-              name="收益"
-              stroke="#4f46e5"
-              strokeWidth={3}
-              dot={false}
-              activeDot={{ r: 6 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+        <Line data={chartData} options={options} />
       </div>
     </Card>
   );

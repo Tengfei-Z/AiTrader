@@ -1,180 +1,66 @@
-# AiTrader 数据存储（OKX USDT 永续）
+# AiTrader 数据存储（精简版）
 
-围绕当前产品的实际场景：所有交易都在 OKX 永续合约上，结算币种固定为 USDT。我们仅保留 MCP 工具和前端所需的最小字段，方便后续实现接口与数据库迁移。
-
----
-
-## 1. 核心目标
-
-- **简单落地**：只建与 OKX 永续 + USDT 相关的表，暂不抽象多交易所或多币种。
-- **快速查询**：满足 MCP `get_account_state` / `get_market_data` / `execute_trade` / `update_exit_plan` / `get_performance_metrics` 的实时读取。
-- **可追踪**：记录模型置信度、工具调用与订单的对应关系，便于审计和绩效统计。
+面向当前单账户、OKX 永续合约 + USDT 的工作负载，我们将数据库压缩为两张表即可支撑 MCP 工具和前端查询：`strategies` 记录大模型的最终结论，`orders` 统一存储所有订单（含已完成与执行中）。这份文档列出必需字段与示例 SQL，便于 ORM / 迁移实现。
 
 ---
 
-## 2. 主要表结构
+## 1. 设计原则
 
-> 以下字段即为代码实现所需，请按表格实现 ORM / SQL 迁移。
+- **最小可用**：只保留最终策略结论与其衍生的订单，其他衍生快照在需要时可从交易所或日志中复原。
+- **实时检索**：前端与 MCP 工具只需读取最近策略结论或订单状态，无需跨表聚合。
+- **可追溯**：订单可选关联策略，保留模型置信度、方向、成交进度等关键信息，便于审计。
 
-### `accounts`
+---
+
+## 2. 表结构
+
+### `strategies`
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `id` | UUID PK | 内部主键 |
-| `external_id` | TEXT UNIQUE | OKX 子账户或模拟账户 ID |
-| `mode` | TEXT | `live` / `simulated` |
-| `status` | TEXT | `active` / `disabled` 等 |
-| `created_at` | TIMESTAMPTZ | 记录创建时间 |
+| `id` | UUID PK | 记录唯一 ID |
+| `session_id` | TEXT | LLM 会话或策略运行 ID |
+| `summary` | TEXT | 大模型最终结论全文 |
+| `confidence` | NUMERIC(5,2) | 模型置信度（0–100，可空） |
+| `created_at` | TIMESTAMPTZ | 写入时间 |
 
-### `balance_snapshots`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | BIGSERIAL PK |  |
-| `account_id` | UUID FK → `accounts.id` | |
-| `available_usdt` | NUMERIC(24,8) | 可用余额 |
-| `locked_usdt` | NUMERIC(24,8) | 冻结余额 |
-| `as_of` | TIMESTAMPTZ | 快照时间 |
-
-### `settings`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | BIGSERIAL PK | |
-| `deepseek_api_key` | TEXT | DeepSeek API Key |
-| `deepseek_endpoint` | TEXT | DeepSeek API Endpoint |
-| `deepseek_model` | TEXT | 使用的模型名称 |
-| `updated_at` | TIMESTAMPTZ | 最近更新时间 |
+> 该表只记录最终结论，不再拆分中间推理或建议列表；若需追加原始对话，可在 `summary` 内嵌或后续拓展字段。
 
 ### `orders`
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `id` | UUID PK | 内部订单 ID |
-| `account_id` | UUID FK | |
+| `strategy_ids` | UUID[] | 触发该订单的策略 ID 列表（可空数组） |
 | `symbol` | TEXT | 如 `BTC-USDT-SWAP` |
-| `side` | TEXT | `buy` / `sell` |
-| `order_type` | TEXT | `market` / `limit` |
-| `price` | NUMERIC(20,8) | 限价单价格（市价可空） |
-| `size` | NUMERIC(20,8) | 下单数量（张） |
+| `side` | TEXT | `buy` 代表做多/平空，`sell` 代表做空/平多 |
+| `order_type` | TEXT | `market` / `limit` / ... |
+| `price` | NUMERIC(20,8) | 限价价格（市价可空） |
+| `size` | NUMERIC(20,8) | 申报数量（张） |
 | `filled_size` | NUMERIC(20,8) | 已成交数量 |
-| `status` | TEXT | `open` / `filled` / `canceled` ... |
-| `leverage` | NUMERIC(10,2) | 下单时使用的杠杆倍数 |
-| `confidence` | NUMERIC(5,2) | 模型置信度（0–100） |
-| `tool_call_id` | UUID FK → `mcp_tool_calls.id` | 触发该订单的 MCP 调用 |
-| `created_at` | TIMESTAMPTZ | |
+| `status` | TEXT | `open` / `filled` / `canceled` 等 |
+| `leverage` | NUMERIC(10,2) | 下单时的杠杆倍数（可空） |
+| `confidence` | NUMERIC(5,2) | 继承策略置信度（可空） |
+| `metadata` | JSONB | 扩展信息，如止盈/止损、OKX 原始响应 |
+| `created_at` | TIMESTAMPTZ | 下单时间 |
+| `closed_at` | TIMESTAMPTZ | 状态变为终态的时间（可空） |
 
-### `fills`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | UUID PK | |
-| `account_id` | UUID FK | |
-| `order_id` | UUID FK | |
-| `symbol` | TEXT | |
-| `side` | TEXT | |
-| `price` | NUMERIC(20,8) | 成交价 |
-| `size` | NUMERIC(20,8) | 成交量 |
-| `fee_usdt` | NUMERIC(20,8) | 手续费（USDT） |
-| `pnl_usdt` | NUMERIC(24,8) | 单笔已实现盈亏（可空） |
-| `confidence` | NUMERIC(5,2) | 继承自订单 |
-| `timestamp` | TIMESTAMPTZ | 成交时间 |
-
-### `positions_open`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | UUID PK | |
-| `account_id` | UUID FK | |
-| `symbol` | TEXT | |
-| `side` | TEXT | `long` / `short` / `net` |
-| `quantity` | NUMERIC(20,8) | 当前仓位 |
-| `avg_entry_price` | NUMERIC(20,8) | 均价 |
-| `leverage` | NUMERIC(10,2) | 当前杠杆 |
-| `margin_usdt` | NUMERIC(24,8) | 占用保证金 |
-| `liquidation_price` | NUMERIC(20,8) | 强平价 |
-| `unrealized_pnl_usdt` | NUMERIC(24,8) | 未实现盈亏 |
-| `exit_plan` | JSONB | 止盈/止损设置（`update_exit_plan` 使用） |
-| `opened_at` | TIMESTAMPTZ | 开仓时间 |
-| `updated_at` | TIMESTAMPTZ | 最近同步 |
-
-### `positions_closed`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | UUID PK | |
-| `account_id` | UUID FK | |
-| `symbol` | TEXT | |
-| `side` | TEXT | |
-| `quantity` | NUMERIC(20,8) | 平仓数量 |
-| `entry_price` | NUMERIC(20,8) | 开仓价 |
-| `exit_price` | NUMERIC(20,8) | 平仓价 |
-| `realized_pnl_usdt` | NUMERIC(24,8) | 已实现盈亏 |
-| `holding_minutes` | NUMERIC(14,4) | 持仓时长 |
-| `average_confidence` | NUMERIC(5,2) | 该仓位平均置信度 |
-| `entry_time` | TIMESTAMPTZ | |
-| `exit_time` | TIMESTAMPTZ | |
-
-### `mcp_tool_calls`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | UUID PK | MCP 调用 ID |
-| `account_id` | UUID FK | |
-| `tool_name` | TEXT | `get_market_data` 等 |
-| `request_payload` | JSONB | 入参（脱敏） |
-| `response_payload` | JSONB | 返回值 |
-| `status` | TEXT | `success` / `failed` |
-| `latency_ms` | INTEGER | 耗时 |
-| `created_at` | TIMESTAMPTZ | 调用时间 |
-
-### `market_snapshots`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | BIGSERIAL PK | |
-| `symbol` | TEXT | 如 `BTC-USDT-SWAP` |
-| `timeframe` | TEXT | `1m` / `3m` / `1H` 等 |
-| `as_of` | TIMESTAMPTZ | K 线结束时间 |
-| `price` | NUMERIC(20,8) | 最新价 |
-| `ema20` / `ema50` | NUMERIC(20,8) | EMA 指标 |
-| `macd` | NUMERIC(20,8) | MACD 值 |
-| `rsi7` / `rsi14` | NUMERIC(8,4) | RSI 指标 |
-| `funding_rate` | NUMERIC(10,8) | 最近资金费率 |
-| `open_interest` | NUMERIC(24,4) | 最新持仓量 |
-| `created_at` | TIMESTAMPTZ | 写入时间 |
-
-### `performance_snapshots`
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | BIGSERIAL PK | |
-| `account_id` | UUID FK | |
-| `window_name` | TEXT | `daily` / `weekly` / `all_time` 等 |
-| `sharpe_ratio` | NUMERIC(10,6) | |
-| `win_rate` | NUMERIC(6,4) | |
-| `average_leverage` | NUMERIC(10,4) | |
-| `average_confidence` | NUMERIC(5,2) | |
-| `biggest_win_usdt` | NUMERIC(24,8) | |
-| `biggest_loss_usdt` | NUMERIC(24,8) | |
-| `hold_ratio_long` / `hold_ratio_short` / `hold_ratio_flat` | NUMERIC(6,4) | 多空占比 |
-| `updated_at` | TIMESTAMPTZ | 最近刷新时间 |
+> `orders` 同时覆盖执行中与已完成的合约，借助 `status` 与 `closed_at` 区分阶段；`metadata` 方便保留交易所原始字段或自定义 exit plan。
 
 ---
 
-## 3. 表关系概览
+## 3. 查询建议
 
-- `accounts` ←→ `balance_snapshots` / `orders` / `fills` / `positions_open` / `positions_closed` / `performance_snapshots`
-- `orders` ←→ `fills`（1:N）
-- `orders.affects` → 更新 `positions_open`，仓位归零时写入 `positions_closed`
-- `orders.tool_call_id` → `mcp_tool_calls.id`
-- `market_snapshots` 通过 `symbol + timeframe` 区分数据
-
-### 关系说明
-
-- **下单 (orders)**：记录每次向 OKX 提交的指令，包含方向、数量、杠杆倍数以及模型置信度，并标记是由哪次 MCP 调用触发。
-- **成交 (fills)**：当订单被撮合时生成的记录，`fills.order_id` 对应原订单。成交结果会累加到订单的 `filled_size` 并驱动持仓数量变化。
-- **当前持仓 (positions_open)**：根据成交数据维护的实时持仓快照。如果一笔成交使某个 symbol/方向的仓位归零，则对应行会被移除。
-- **历史持仓 (positions_closed)**：当仓位归零时，将这段持仓的起止时间、均价、盈亏、平均置信度等写入历史表，供绩效统计与审计使用。
+- 读取“最新策略结论”即按 `created_at DESC` 获取 `strategies`。
+- 订单列表按 `symbol` / `status` / 时间范围过滤即可覆盖 MCP `get_account_state`、`execute_trade` 结果展示需求，可同时检索 `strategy_ids` 交集。
 
 ---
 
-## 4. 同步流程 (概要)
+## 4. 同步 / 写入流程
 
-1. **账户/行情同步**：后台周期性调用 OKX REST，同步余额、持仓、成交，并写入 `market_snapshots`。
-2. **交易事件**：收到成交时更新 `orders`、`fills`；仓位清零则写 `positions_closed` 并计算 `average_confidence`。
-3. **MCP 调用记录**：每次工具调用写 `mcp_tool_calls`，`execute_trade` 额外关联订单与置信度。
-4. **绩效刷新**：定时聚合 `fills`、`positions_closed`，计算指标写入 `performance_snapshots`。
+1. **策略推理完成**：LLM 输出最终结论 → 写入 `strategies`（保存 session、置信度与摘要）。
+2. **下单事件**：执行交易时创建 `orders` 行，并在 `strategy_ids` 数组中写入所有关联策略（无需额外关联表）。
+3. **成交 / 状态更新**：根据 OKX Webhook 或轮询结果更新 `filled_size`、`status`、`metadata`；当订单进入终态，补写 `closed_at`。
+
+无需额外快照表，余额、持仓可直接通过 OKX API 或实时计算获得。
 
 ---
 
@@ -184,35 +70,17 @@
 CREATE SCHEMA IF NOT EXISTS aitrader;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-CREATE TABLE IF NOT EXISTS aitrader.accounts (
+CREATE TABLE IF NOT EXISTS aitrader.strategies (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    external_id     TEXT NOT NULL UNIQUE,
-    mode            TEXT NOT NULL CHECK (mode IN ('live', 'simulated')),
-    status          TEXT NOT NULL DEFAULT 'active',
+    session_id      TEXT NOT NULL,
+    summary         TEXT NOT NULL,
+    confidence      NUMERIC(5, 2),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.balance_snapshots (
-    id              BIGSERIAL PRIMARY KEY,
-    account_id      UUID NOT NULL REFERENCES aitrader.accounts (id),
-    available_usdt  NUMERIC(24, 8) NOT NULL,
-    locked_usdt     NUMERIC(24, 8) NOT NULL DEFAULT 0,
-    as_of           TIMESTAMPTZ NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (account_id, as_of)
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.settings (
-    id                  BIGSERIAL PRIMARY KEY,
-    deepseek_api_key    TEXT NOT NULL,
-    deepseek_endpoint   TEXT NOT NULL,
-    deepseek_model      TEXT NOT NULL DEFAULT 'deepseek-chat',
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS aitrader.orders (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id      UUID NOT NULL REFERENCES aitrader.accounts (id),
+    strategy_ids    UUID[] NOT NULL DEFAULT ARRAY[]::uuid[],
     symbol          TEXT NOT NULL,
     side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
     order_type      TEXT NOT NULL,
@@ -222,101 +90,8 @@ CREATE TABLE IF NOT EXISTS aitrader.orders (
     status          TEXT NOT NULL,
     leverage        NUMERIC(10, 2),
     confidence      NUMERIC(5, 2),
-    tool_call_id    UUID,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.fills (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id      UUID NOT NULL REFERENCES aitrader.accounts (id),
-    order_id        UUID NOT NULL REFERENCES aitrader.orders (id),
-    symbol          TEXT NOT NULL,
-    side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
-    price           NUMERIC(20, 8) NOT NULL,
-    size            NUMERIC(20, 8) NOT NULL,
-    fee_usdt        NUMERIC(20, 8) NOT NULL DEFAULT 0,
-    pnl_usdt        NUMERIC(24, 8),
-    confidence      NUMERIC(5, 2),
-    timestamp       TIMESTAMPTZ NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.positions_open (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id              UUID NOT NULL REFERENCES aitrader.accounts (id),
-    symbol                  TEXT NOT NULL,
-    side                    TEXT NOT NULL,
-    quantity                NUMERIC(20, 8) NOT NULL,
-    avg_entry_price         NUMERIC(20, 8),
-    leverage                NUMERIC(10, 2),
-    margin_usdt             NUMERIC(24, 8),
-    liquidation_price       NUMERIC(20, 8),
-    unrealized_pnl_usdt     NUMERIC(24, 8),
-    exit_plan               JSONB DEFAULT '{}'::jsonb,
-    opened_at               TIMESTAMPTZ,
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (account_id, symbol, side)
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.positions_closed (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id              UUID NOT NULL REFERENCES aitrader.accounts (id),
-    symbol                  TEXT NOT NULL,
-    side                    TEXT NOT NULL,
-    quantity                NUMERIC(20, 8) NOT NULL,
-    entry_price             NUMERIC(20, 8),
-    exit_price              NUMERIC(20, 8),
-    realized_pnl_usdt       NUMERIC(24, 8),
-    holding_minutes         NUMERIC(14, 4),
-    average_confidence      NUMERIC(5, 2),
-    entry_time              TIMESTAMPTZ,
-    exit_time               TIMESTAMPTZ NOT NULL,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.mcp_tool_calls (
-    id                  UUID PRIMARY KEY,
-    account_id          UUID REFERENCES aitrader.accounts (id),
-    tool_name           TEXT NOT NULL,
-    request_payload     JSONB NOT NULL,
-    response_payload    JSONB,
-    status              TEXT NOT NULL DEFAULT 'success',
-    latency_ms          INTEGER,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.market_snapshots (
-    id              BIGSERIAL PRIMARY KEY,
-    symbol          TEXT NOT NULL,
-    timeframe       TEXT NOT NULL,
-    as_of           TIMESTAMPTZ NOT NULL,
-    price           NUMERIC(20, 8),
-    ema20           NUMERIC(20, 8),
-    ema50           NUMERIC(20, 8),
-    macd            NUMERIC(20, 8),
-    rsi7            NUMERIC(8, 4),
-    rsi14           NUMERIC(8, 4),
-    funding_rate    NUMERIC(10, 8),
-    open_interest   NUMERIC(24, 4),
+    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (symbol, timeframe, as_of)
-);
-
-CREATE TABLE IF NOT EXISTS aitrader.performance_snapshots (
-    id                      BIGSERIAL PRIMARY KEY,
-    account_id              UUID NOT NULL REFERENCES aitrader.accounts (id),
-    window_name             TEXT NOT NULL,
-    sharpe_ratio            NUMERIC(10, 6),
-    win_rate                NUMERIC(6, 4),
-    average_leverage        NUMERIC(10, 4),
-    average_confidence      NUMERIC(5, 2),
-    biggest_win_usdt        NUMERIC(24, 8),
-    biggest_loss_usdt       NUMERIC(24, 8),
-    hold_ratio_long         NUMERIC(6, 4),
-    hold_ratio_short        NUMERIC(6, 4),
-    hold_ratio_flat         NUMERIC(6, 4),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (account_id, window_name)
+    closed_at       TIMESTAMPTZ
 );
 ```
-
-> 若后续需要策略对话表，可基于上一版本文档补充，但系统现阶段并不强制依赖。

@@ -48,16 +48,16 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
 - 统一加载 `.env` 中的 OKX 凭证、Agent 地址等配置。
 
 ### Python Agent
-- 使用 FastAPI 提供 `/chat`、`/analysis` 等端点，与 DeepSeek 模型交互。
-- 通过 FastMCP 定义 OKX 相关函数（订单、行情、账户），由大模型在对话中自动调用。
+- 使用 FastAPI 暴露 `/analysis` 端点，面向策略分析和下单决策。
+- 通过 FastMCP 定义 OKX 相关函数（订单、行情、账户），由大模型在分析过程中自动调用。
 - 提供会话记忆、SSE 扩展点及后续多模型扩展计划。
-- 搭配 `tests/` 目录覆盖配置、对话管理、API 路由等关键单元。
+- 搭配 `tests/` 目录覆盖配置、会话管理、API 路由等关键单元。
 
 ## 快速上手
 
 1. **准备环境变量**
    - Rust 服务需要 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`（若使用模拟账户，还需 `OKX_SIM_*`）。
-   - Python Agent 需要 `DEEPSEEK_API_KEY`、`OKX_*`、`AGENT_PORT` 等配置，可将 `agent/.env.example` 复制为仓库根目录下的 `.env` 并填写（若仅使用模拟盘，设置 `OKX_SIM_*` 即可，Agent 会自动回退）。
+   - Python Agent 需要 `DEEPSEEK_API_KEY`、`OKX_*`、`AGENT_PORT` 等配置，可将 `agent/.env.example` 复制为仓库根目录下的 `.env` 并填写（若仅使用模拟盘，设置 `OKX_SIM_*` 即可，Agent 会自动回退）。若要切换到实盘，可将 `OKX_USE_SIMULATED=false` 以移除模拟交易 Header。
 
 2. **启动 Python Agent**
    ```bash

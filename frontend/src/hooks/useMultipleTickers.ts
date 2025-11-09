@@ -7,7 +7,7 @@ export const useMultipleTickers = (symbols: string[]) => {
     queries: symbols.map((symbol) => ({
       queryKey: ['ticker', symbol],
       queryFn: () => fetchTicker(symbol),
-      refetchInterval: 2000,
+      refetchInterval: 5000,
     })),
   });
 

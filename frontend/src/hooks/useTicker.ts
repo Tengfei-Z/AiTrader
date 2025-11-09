@@ -6,5 +6,5 @@ export const useTicker = (symbol: string, enabled = true) =>
     queryKey: ['ticker', symbol],
     queryFn: () => fetchTicker(symbol),
     enabled,
-    refetchInterval: 2000
+    refetchInterval: 5000
   });

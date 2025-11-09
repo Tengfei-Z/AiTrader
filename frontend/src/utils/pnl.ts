@@ -26,16 +26,17 @@ const DEFAULT_INITIAL_EQUITY = 131_939.73;
 export const buildEquityCurve = (
   fills?: FillItem[],
   markPrice?: number,
-  initialEquity = DEFAULT_INITIAL_EQUITY
+  initialEquity?: number
 ): EquityMetrics => {
   const now = Date.now();
+  const baseInitialEquity = initialEquity ?? DEFAULT_INITIAL_EQUITY;
 
   if (!fills || fills.length === 0) {
     return {
       points: [
         {
           time: now,
-          equity: initialEquity,
+          equity: baseInitialEquity,
           label: '现在'
         }
       ],
@@ -90,7 +91,7 @@ export const buildEquityCurve = (
       cash += price * size - fee;
     }
 
-    const equity = initialEquity + cash + position * price;
+    const equity = baseInitialEquity + cash + position * price;
     points.push({
       time: Number(fill.timestamp),
       equity
@@ -99,7 +100,7 @@ export const buildEquityCurve = (
 
   const lastPoint = points[points.length - 1];
   const referencePrice = markPrice ?? safelyToNumber(sorted[sorted.length - 1].price);
-  const finalEquity = initialEquity + cash + position * referencePrice;
+  const finalEquity = baseInitialEquity + cash + position * referencePrice;
 
   if (!lastPoint || Math.abs(now - lastPoint.time) > 60 * 1000) {
     points.push({
@@ -112,7 +113,7 @@ export const buildEquityCurve = (
     lastPoint.label = '现在';
   }
 
-  const firstEquity = points[0]?.equity ?? initialEquity;
+  const firstEquity = points[0]?.equity ?? baseInitialEquity;
   const totalPnl = finalEquity - firstEquity;
 
   const dayAgo = now - 24 * 60 * 60 * 1000;

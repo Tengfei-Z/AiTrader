@@ -4,6 +4,7 @@ import EquityCurveCard from '@components/EquityCurveCard';
 import MarketStrip from '@components/MarketStrip';
 import PositionsHistoryCard from '@components/PositionsHistoryCard';
 import { useFills } from '@hooks/useFills';
+import { useInitialEquity } from '@hooks/useInitialEquity';
 import { usePositionHistory } from '@hooks/usePositionHistory';
 import { useStrategyChat } from '@hooks/useStrategyChat';
 import { useStrategyRunner } from '@hooks/useStrategyRunner';
@@ -24,16 +25,18 @@ const AiConsolePage = () => {
     isLoading: strategyLoading,
     refetch: refetchStrategyChat
   } = useStrategyChat();
+  const { data: initialEquityRecord } = useInitialEquity();
   const {
     mutateAsync: triggerStrategy,
     isPending: strategyRunning
   } = useStrategyRunner();
 
   const markPrice = ticker?.last ? Number(ticker.last) : undefined;
+  const initialAmount = initialEquityRecord ? Number(initialEquityRecord.amount) : undefined;
 
   const { points: equityCurve } = useMemo(
-    () => buildEquityCurve(fills, markPrice),
-    [fills, markPrice]
+    () => buildEquityCurve(fills, markPrice, initialAmount),
+    [fills, markPrice, initialAmount]
   );
 
   const handleStrategyStart = async () => {

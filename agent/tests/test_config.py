@@ -25,3 +25,4 @@ def test_agent_settings_reads_env(monkeypatch):
     assert settings.okx_api_key.get_secret_value() == "okx-key"
     assert settings.okx_secret_key.get_secret_value() == "okx-secret"
     assert settings.okx_passphrase.get_secret_value() == "okx-pass"
+    assert settings.okx_use_simulated is True

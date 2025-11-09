@@ -3,6 +3,7 @@ import type {
   ApiResponse,
   BalanceItem,
   FillItem,
+  InitialEquityRecord,
   OrderItem,
   PositionHistoryItem,
   PositionItem
@@ -70,4 +71,19 @@ export const fetchFills = async (params: { symbol?: string; limit?: number; simu
     }
   });
   return data.data;
+};
+
+export const fetchInitialEquity = async () => {
+  const { data } = await client.get<ApiResponse<InitialEquityRecord | null>>(
+    '/account/initial-equity'
+  );
+  return data.data ?? null;
+};
+
+export const setInitialEquity = async (payload: { amount: number }) => {
+  const { data } = await client.post<ApiResponse<InitialEquityRecord | null>>(
+    '/account/initial-equity',
+    payload
+  );
+  return data.data ?? null;
 };

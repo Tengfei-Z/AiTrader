@@ -77,6 +77,11 @@ export interface StrategyMessage {
   tags?: string[];
 }
 
+export interface InitialEquityRecord {
+  amount: string;
+  recordedAt: string;
+}
+
 export type OrderStatus = 'open' | 'partially_filled' | 'filled' | 'canceled';
 
 export interface OrderItem {

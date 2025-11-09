@@ -1,0 +1,19 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bnbGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#facc15" />
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="#0f172a" />
+  <polygon
+    points="32 12 20 24 24 28 32 20 40 28 44 24"
+    fill="url(#bnbGradient)"
+    opacity="0.9"
+  />
+  <polygon
+    points="32 52 44 40 40 36 32 44 24 36 20 40"
+    fill="url(#bnbGradient)"
+    opacity="0.7"
+  />
+</svg>

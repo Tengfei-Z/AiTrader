@@ -35,22 +35,14 @@ class AgentSettings(BaseSettings):
         "https://api.deepseek.com/", description="DeepSeek API endpoint"
     )
 
-    okx_api_key: SecretStr = Field(
-        ...,
-        description="OKX API key",
-        validation_alias=AliasChoices("OKX_API_KEY", "OKX_SIM_API_KEY"),
-    )
-    okx_secret_key: SecretStr = Field(
-        ...,
-        description="OKX secret key",
-        validation_alias=AliasChoices("OKX_SECRET_KEY", "OKX_SIM_API_SECRET"),
-    )
-    okx_passphrase: SecretStr = Field(
-        ...,
-        description="OKX passphrase",
-        validation_alias=AliasChoices("OKX_PASSPHRASE", "OKX_SIM_PASSPHRASE"),
-    )
+    okx_api_key: SecretStr = Field(..., description="OKX API key")
+    okx_secret_key: SecretStr = Field(..., description="OKX secret key")
+    okx_passphrase: SecretStr = Field(..., description="OKX passphrase")
     okx_base_url: AnyHttpUrl = Field("https://www.okx.com", description="OKX REST base URL")
+    okx_use_simulated: bool = Field(
+        True,
+        description="Whether to include the OKX simulated trading header",
+    )
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE_CANDIDATES,

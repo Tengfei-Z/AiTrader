@@ -7,10 +7,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize)]
 pub struct AgentAnalysisRequest {
     pub session_id: String,
-    pub instrument_id: String,
-    pub analysis_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

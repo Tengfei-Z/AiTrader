@@ -8,7 +8,6 @@ from ..core.config import env_file_candidates, get_settings, resolved_env_file
 from ..core.logging_config import configure_logging, get_logger
 from ..mcp.server import refresh_tools_schema
 from .api.analysis import router as analysis_router
-from .api.chat import router as chat_router
 from .api.health import router as health_router
 
 configure_logging()
@@ -67,7 +66,6 @@ async def log_incoming_requests(request: Request, call_next):
     return response
 
 app.include_router(health_router)
-app.include_router(chat_router)
 app.include_router(analysis_router)
 
 
