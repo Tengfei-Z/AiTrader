@@ -6,6 +6,7 @@ use std::{
     collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 use tokio_postgres::{Client, NoTls};
 use tracing::{info, warn};
@@ -399,6 +400,7 @@ pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRe
     Ok(records)
 }
 
+#[allow(dead_code)]
 pub async fn fetch_initial_equity() -> Result<Option<(f64, DateTime<Utc>)>> {
     let DatabaseSettings { url, schema } = database_settings();
 
@@ -409,18 +411,47 @@ pub async fn fetch_initial_equity() -> Result<Option<(f64, DateTime<Utc>)>> {
             return Ok(None);
         }
     };
-
+    info!(
+        %schema,
+        "fetch_initial_equity 123 connecting to database for initial_equities query"
+    );
     let client = connect_client(&url).await?;
     let sql = format!(
-        "SELECT amount, recorded_at FROM {schema}.initial_equities ORDER BY recorded_at DESC LIMIT 1;",
+        "SELECT amount::double precision AS amount, recorded_at \
+         FROM {schema}.initial_equities \
+         ORDER BY recorded_at DESC \
+         LIMIT 1;",
         schema = schema
     );
-    if let Some(row) = client.query_opt(&sql, &[]).await? {
-        let amount: f64 = row.get("amount");
-        let recorded_at: DateTime<Utc> = row.get("recorded_at");
-        Ok(Some((amount, recorded_at)))
-    } else {
-        Ok(None)
+    info!(%schema, "fetch_initial_equity executing query: {sql}");
+    match tokio::time::timeout(Duration::from_secs(5), client.query_opt(&sql, &[])).await {
+        Ok(Ok(Some(row))) => {
+            let amount: f64 = row.try_get("amount")?;
+            let recorded_at: DateTime<Utc> = row.get("recorded_at");
+            info!(
+                %schema,
+                amount,
+                recorded_at = %recorded_at,
+                "fetch_initial_equity found record"
+            );
+            Ok(Some((amount, recorded_at)))
+        }
+        Ok(Ok(None)) => {
+            info!(%schema, "fetch_initial_equity found no record");
+            Ok(None)
+        }
+        Ok(Err(err)) => {
+            warn!(
+                %schema,
+                error = ?err,
+                "fetch_initial_equity query execution failed"
+            );
+            Err(err.into())
+        }
+        Err(_) => {
+            warn!(%schema, "fetch_initial_equity query timed out");
+            Err(anyhow!("initial_equity_query_timeout"))
+        }
     }
 }
 
