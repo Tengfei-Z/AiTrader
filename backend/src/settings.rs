@@ -28,7 +28,6 @@ pub struct AppConfig {
     #[serde(default = "default_okx_base_url")]
     pub okx_base_url: String,
     pub okx_credentials: Option<OkxCredentials>,
-    pub okx_simulated_credentials: Option<OkxCredentials>,
     pub agent: Option<AgentConfig>,
     #[serde(default = "default_okx_use_simulated")]
     pub okx_use_simulated: bool,
@@ -41,14 +40,6 @@ impl AppConfig {
 
         let okx_credentials =
             load_okx_credentials("OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE");
-        let mut okx_simulated_credentials = load_okx_credentials(
-            "OKX_SIM_API_KEY",
-            "OKX_SIM_SECRET_KEY",
-            "OKX_SIM_PASSPHRASE",
-        );
-        if okx_simulated_credentials.is_none() {
-            okx_simulated_credentials = okx_credentials.clone();
-        }
 
         let okx_base_url = env::var("OKX_BASE_URL").unwrap_or_else(|_| default_okx_base_url());
         let okx_use_simulated = env_bool("OKX_USE_SIMULATED", true);
@@ -61,23 +52,14 @@ impl AppConfig {
         Ok(Self {
             okx_base_url,
             okx_credentials,
-            okx_simulated_credentials,
             agent,
             okx_use_simulated,
         })
     }
 
-    pub fn require_okx_credentials(&self, simulated: bool) -> Result<&OkxCredentials> {
-        let source = if simulated {
-            self.okx_simulated_credentials
-                .as_ref()
-                .or(self.okx_credentials.as_ref())
-        } else {
-            self.okx_credentials.as_ref()
-        };
-
-        let credentials = source.context(
-            "未找到 OKX 凭证：请在 .env 中设置 OKX_API_KEY、OKX_SECRET_KEY、OKX_PASSPHRASE（或对应的 OKX_SIM_* 变量）",
+    pub fn require_okx_credentials(&self) -> Result<&OkxCredentials> {
+        let credentials = self.okx_credentials.as_ref().context(
+            "未找到 OKX 凭证：请在 .env 中设置 OKX_API_KEY、OKX_SECRET_KEY、OKX_PASSPHRASE",
         )?;
 
         ensure!(

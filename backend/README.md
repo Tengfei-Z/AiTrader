@@ -19,7 +19,7 @@ cargo run -p api-server
 ```
 
 服务启动前需要准备环境变量（可在仓库根目录复制 `backend/.env.example` 或直接使用统一的 `.env` 文件）：
-- `OKX_*` / `OKX_SIM_*`：OKX 主账户与模拟账户凭证
+- `OKX_*`：OKX 凭证（模拟/实盘由 `OKX_USE_SIMULATED` 控制）
 - `AGENT_BASE_URL`：Python Agent 服务地址（例如 `http://localhost:8001`）
 
 ## 下一步建议

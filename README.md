@@ -56,8 +56,8 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
 ## 快速上手
 
 1. **准备环境变量**
-   - Rust 服务需要 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`（若使用模拟账户，还需 `OKX_SIM_*`）。
-   - Python Agent 需要 `DEEPSEEK_API_KEY`、`OKX_*`、`AGENT_PORT` 等配置，可将 `agent/.env.example` 复制为仓库根目录下的 `.env` 并填写（若仅使用模拟盘，设置 `OKX_SIM_*` 即可，Agent 会自动回退）。若要切换到实盘，可将 `OKX_USE_SIMULATED=false` 以移除模拟交易 Header。
+   - Rust 服务需要 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`，是否走模拟盘由 `OKX_USE_SIMULATED` 控制。
+   - Python Agent 需要 `DEEPSEEK_API_KEY`、`OKX_*`、`AGENT_PORT` 等配置，可将 `agent/.env.example` 复制为仓库根目录下的 `.env` 并填写；同样通过 `OKX_USE_SIMULATED=false` 可切换到实盘（默认开启模拟）。
 
 2. **启动 Python Agent**
    ```bash

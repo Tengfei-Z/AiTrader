@@ -232,14 +232,12 @@ struct SymbolQuery {
     symbol: String,
     depth: Option<usize>,
     limit: Option<usize>,
-    simulated: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SymbolOptionalQuery {
     symbol: Option<String>,
     limit: Option<usize>,
-    simulated: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -389,13 +387,10 @@ fn init_tracing() {
 async fn get_ticker(
     State(state): State<AppState>,
     Query(SymbolQuery {
-        symbol, simulated, ..
+        symbol, ..
     }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = true;
-    if matches!(simulated, Some(false)) {
-        warn!("非模拟行情查询已被禁用，自动切换到模拟账户");
-    }
+    let use_simulated = CONFIG.okx_use_simulated();
     info!(symbol = %symbol, use_simulated, "received ticker request");
 
     // Try simulated client
@@ -451,14 +446,8 @@ async fn get_trades(
     Json(ApiResponse::<Vec<Trade>>::ok(Vec::new()))
 }
 
-async fn get_balances(
-    State(state): State<AppState>,
-    Query(BalancesQuery { simulated }): Query<BalancesQuery>,
-) -> impl IntoResponse {
-    let use_simulated = true;
-    if matches!(simulated, Some(false)) {
-        warn!("非模拟账户查询已被禁用，自动切换到模拟账户");
-    }
+async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
+    let use_simulated = CONFIG.okx_use_simulated();
     tracing::info!(use_simulated, "received balances request");
 
     if let Some(client) = state.okx_simulated.clone() {
@@ -573,14 +562,8 @@ fn default_initial_equity_record() -> InitialEquityRecord {
     }
 }
 
-async fn get_positions(
-    State(state): State<AppState>,
-    Query(BalancesQuery { simulated }): Query<BalancesQuery>,
-) -> impl IntoResponse {
-    let use_simulated = true;
-    if matches!(simulated, Some(false)) {
-        warn!("非模拟仓位查询已被禁用，自动切换到模拟账户");
-    }
+async fn get_positions(State(state): State<AppState>) -> impl IntoResponse {
+    let use_simulated = CONFIG.okx_use_simulated();
     tracing::info!(use_simulated, "received positions request");
 
     if let Some(client) = state.okx_simulated.clone() {
@@ -657,7 +640,7 @@ async fn get_fills(
     State(state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> impl IntoResponse {
-    let use_simulated = true;
+    let use_simulated = CONFIG.okx_use_simulated();
     let symbol_filter = params.symbol.clone();
     let limit = params.limit;
 
@@ -667,10 +650,6 @@ async fn get_fills(
         limit,
         "received fills request"
     );
-
-    if matches!(params.simulated, Some(false)) {
-        warn!("非模拟成交查询已被禁用，自动切换到模拟账户");
-    }
 
     if let Some(client) = state.okx_simulated.clone() {
         match client.get_fills(symbol_filter.as_deref(), limit).await {
@@ -1011,8 +990,4 @@ impl std::fmt::Display for OrderStatus {
             OrderStatus::Canceled => write!(f, "canceled"),
         }
     }
-}
-#[derive(Debug, Deserialize, Default)]
-struct BalancesQuery {
-    simulated: Option<bool>,
 }

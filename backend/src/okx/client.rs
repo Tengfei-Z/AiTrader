@@ -30,7 +30,7 @@ impl OkxRestClient {
         proxy: ProxyOptions,
         simulated_trading: bool,
     ) -> Result<Self> {
-        let credentials = config.require_okx_credentials(simulated_trading)?.clone();
+        let credentials = config.require_okx_credentials()?.clone();
         Self::new_with_proxy(
             config.okx_base_url.clone(),
             credentials,
