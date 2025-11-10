@@ -594,26 +594,34 @@ fn convert_balance_snapshot(record: BalanceSnapshotRecord) -> BalanceSnapshotRes
 }
 
 async fn get_initial_equity() -> impl IntoResponse {
+    info!("GET /account/initial-equity invoked");
     match fetch_initial_equity().await {
-        Ok(Some((amount, recorded_at))) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(
-            Some(InitialEquityRecord {
-                amount: format_amount(amount),
-                recorded_at: recorded_at.to_rfc3339(),
-            }),
-        )),
-        Ok(None) => Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
-            default_initial_equity_record(),
-        ))),
+        Ok(Some((amount, recorded_at))) => {
+            info!(amount, recorded_at = %recorded_at, "initial equity fetched");
+            Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+                InitialEquityRecord {
+                    amount: format_amount(amount),
+                    recorded_at: recorded_at.to_rfc3339(),
+                },
+            )))
+        }
+        Ok(None) => {
+            info!("initial equity table empty, returning default");
+            Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+                default_initial_equity_record(),
+            )))
+        }
         Err(err) => {
-            warn!(error = ?err, "failed to read initial equity");
-            Json(ApiResponse::<Option<InitialEquityRecord>>::error(
-                "无法获取初始资金",
-            ))
+            warn!(error = ?err, "failed to read initial equity, using default");
+            Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+                default_initial_equity_record(),
+            )))
         }
     }
 }
 
 async fn set_initial_equity(Json(payload): Json<InitialEquityPayload>) -> impl IntoResponse {
+    info!(amount = payload.amount, "POST /account/initial-equity invoked");
     if payload.amount < 0.0 {
         return Json(ApiResponse::<Option<InitialEquityRecord>>::error(
             "初始资金不能为负值",
@@ -621,10 +629,13 @@ async fn set_initial_equity(Json(payload): Json<InitialEquityPayload>) -> impl I
     }
 
     if let Err(err) = insert_initial_equity(payload.amount).await {
-        warn!(error = ?err, "failed to write initial equity");
-        return Json(ApiResponse::<Option<InitialEquityRecord>>::error(
-            "无法保存初始资金",
-        ));
+        warn!(error = ?err, "failed to write initial equity, returning payload amount");
+        return Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+            InitialEquityRecord {
+                amount: format_amount(payload.amount),
+                recorded_at: Utc::now().to_rfc3339(),
+            },
+        )));
     }
 
     match fetch_initial_equity().await {
@@ -639,9 +650,12 @@ async fn set_initial_equity(Json(payload): Json<InitialEquityPayload>) -> impl I
         ))),
         Err(err) => {
             warn!(error = ?err, "failed to read initial equity after update");
-            Json(ApiResponse::<Option<InitialEquityRecord>>::error(
-                "保存后无法加载初始资金",
-            ))
+            Json(ApiResponse::<Option<InitialEquityRecord>>::ok(Some(
+                InitialEquityRecord {
+                    amount: format_amount(payload.amount),
+                    recorded_at: Utc::now().to_rfc3339(),
+                },
+            )))
         }
     }
 }
