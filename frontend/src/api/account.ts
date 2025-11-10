@@ -2,6 +2,7 @@ import client from './client';
 import type {
   ApiResponse,
   BalanceItem,
+  BalanceSnapshotItem,
   FillItem,
   InitialEquityRecord,
   PositionHistoryItem,
@@ -24,6 +25,26 @@ export const fetchBalances = async () => {
     locked: item.locked,
     valuationUSDT: item.valuationUSDT ?? item.valuation_usdt
   }));
+};
+
+export const fetchBalanceSnapshots = async (params: { asset?: string; limit?: number } = {}) => {
+  const { data } = await client.get<ApiResponse<BalanceSnapshotItem[]>>(
+    '/account/balances/snapshots',
+    {
+      params
+    }
+  );
+  return data.data;
+};
+
+export const fetchLatestBalanceSnapshot = async (asset?: string) => {
+  const { data } = await client.get<ApiResponse<BalanceSnapshotItem | null>>(
+    '/account/balances/latest',
+    {
+      params: asset ? { asset } : undefined
+    }
+  );
+  return data.data;
 };
 
 export const fetchPositions = async () => {

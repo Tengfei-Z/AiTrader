@@ -36,6 +36,15 @@ export interface BalanceItem {
   valuationUSDT?: string;
 }
 
+export interface BalanceSnapshotItem {
+  asset: string;
+  available: string;
+  locked: string;
+  valuation: string;
+  source: string;
+  recordedAt: string;
+}
+
 export interface PositionItem {
   symbol: string;
   side: string;

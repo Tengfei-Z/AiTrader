@@ -256,6 +256,18 @@ fn migration_statements(schema: &str) -> Vec<String> {
             schema = schema,
         ),
         format!(
+            "CREATE TABLE IF NOT EXISTS {schema}.balances (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                asset           TEXT NOT NULL DEFAULT 'USDT',
+                available       NUMERIC(20, 8) NOT NULL,
+                locked          NUMERIC(20, 8) NOT NULL,
+                valuation       NUMERIC(20, 8) NOT NULL,
+                source          TEXT NOT NULL DEFAULT 'okx',
+                recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+            );",
+            schema = schema,
+        ),
+        format!(
             "CREATE TABLE IF NOT EXISTS {schema}.initial_equities (
                 id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 amount       NUMERIC(20, 8) NOT NULL,
@@ -509,4 +521,146 @@ pub async fn fetch_order_history(limit: Option<i64>) -> Result<Vec<OrderHistoryR
     }
 
     Ok(records)
+}
+
+#[derive(Debug, Clone)]
+pub struct BalanceSnapshotRecord {
+    pub asset: String,
+    pub available: f64,
+    pub locked: f64,
+    pub valuation: f64,
+    pub source: String,
+    pub recorded_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BalanceSnapshotInsert {
+    pub asset: String,
+    pub available: f64,
+    pub locked: f64,
+    pub valuation: f64,
+    pub source: String,
+}
+
+pub async fn fetch_latest_balance_snapshot(asset: &str) -> Result<Option<BalanceSnapshotRecord>> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("未配置数据库连接字符串，无法查询余额快照");
+            return Ok(None);
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "SELECT asset,
+                available::double precision AS available,
+                locked::double precision AS locked,
+                valuation::double precision AS valuation,
+                source,
+                recorded_at
+         FROM {schema}.balances
+         WHERE asset = $1
+         ORDER BY recorded_at DESC
+         LIMIT 1;",
+        schema = schema
+    );
+    if let Some(row) = client.query_opt(&sql, &[&asset]).await? {
+        Ok(Some(BalanceSnapshotRecord {
+            asset: row.get("asset"),
+            available: row.get("available"),
+            locked: row.get("locked"),
+            valuation: row.get("valuation"),
+            source: row.get("source"),
+            recorded_at: row.get("recorded_at"),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub async fn fetch_balance_snapshots(
+    asset: &str,
+    limit: i64,
+) -> Result<Vec<BalanceSnapshotRecord>> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("未配置数据库连接字符串，无法查询余额快照");
+            return Ok(Vec::new());
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "SELECT asset,
+                available::double precision AS available,
+                locked::double precision AS locked,
+                valuation::double precision AS valuation,
+                source,
+                recorded_at
+         FROM {schema}.balances
+         WHERE asset = $1
+         ORDER BY recorded_at DESC
+         LIMIT $2;",
+        schema = schema
+    );
+    let rows = client.query(&sql, &[&asset, &limit]).await?;
+
+    let mut records = Vec::with_capacity(rows.len());
+    for row in rows {
+        records.push(BalanceSnapshotRecord {
+            asset: row.get("asset"),
+            available: row.get("available"),
+            locked: row.get("locked"),
+            valuation: row.get("valuation"),
+            source: row.get("source"),
+            recorded_at: row.get("recorded_at"),
+        });
+    }
+
+    Ok(records)
+}
+
+pub async fn insert_balance_snapshot(snapshot: BalanceSnapshotInsert) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("未配置数据库连接字符串，无法写入余额快照");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "INSERT INTO {schema}.balances (asset, available, locked, valuation, source)
+         VALUES (
+             $1,
+             ($2::double precision)::numeric(20, 8),
+             ($3::double precision)::numeric(20, 8),
+             ($4::double precision)::numeric(20, 8),
+             $5
+         );",
+        schema = schema
+    );
+    client
+        .execute(
+            &sql,
+            &[
+                &snapshot.asset,
+                &snapshot.available,
+                &snapshot.locked,
+                &snapshot.valuation,
+                &snapshot.source,
+            ],
+        )
+        .await?;
+
+    Ok(())
 }

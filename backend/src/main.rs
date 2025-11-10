@@ -9,8 +9,10 @@ mod server_config;
 mod settings;
 
 use crate::db::{
-    fetch_initial_equity, fetch_order_history, fetch_strategy_messages, init_database,
-    insert_initial_equity, insert_strategy_message, StrategyMessageInsert,
+    fetch_balance_snapshots, fetch_initial_equity, fetch_latest_balance_snapshot,
+    fetch_order_history, fetch_strategy_messages, init_database, insert_balance_snapshot,
+    insert_initial_equity, insert_strategy_message, BalanceSnapshotInsert, BalanceSnapshotRecord,
+    StrategyMessageInsert,
 };
 use anyhow::{anyhow, Result};
 use axum::extract::{Path, Query, State};
@@ -22,9 +24,9 @@ use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info, warn, Level};
+use tracing::{error, info, trace, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::layer::SubscriberExt;
@@ -37,6 +39,11 @@ use settings::CONFIG;
 
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 const DEFAULT_INITIAL_EQUITY: f64 = 122_000.0;
+const DEFAULT_BALANCE_SNAPSHOT_LIMIT: usize = 100;
+const MAX_BALANCE_SNAPSHOT_LIMIT: usize = 1000;
+const BALANCE_ASSET: &str = "USDT";
+const BALANCE_SOURCE: &str = "okx";
+const BALANCE_SNAPSHOT_TOLERANCE: f64 = 1e-6;
 
 #[derive(Clone)]
 struct AppState {
@@ -136,6 +143,81 @@ struct Balance {
     available: String,
     locked: String,
     valuation_usdt: String,
+}
+
+#[derive(Debug)]
+struct AccountBalancePayload {
+    balance: Balance,
+    available: f64,
+    locked: f64,
+    valuation: f64,
+}
+
+fn build_balance_payload(account: okx::models::AccountBalance) -> Option<AccountBalancePayload> {
+    let usdt_detail = account
+        .details
+        .into_iter()
+        .find(|detail| detail.ccy.eq_ignore_ascii_case(BALANCE_ASSET));
+
+    let detail_equity = usdt_detail
+        .as_ref()
+        .and_then(|detail| parse_optional_number(detail.eq.clone()));
+    let detail_available = usdt_detail
+        .as_ref()
+        .and_then(|detail| parse_optional_number(detail.avail_bal.clone()));
+
+    let account_value = detail_equity
+        .or_else(|| parse_optional_number(account.total_eq.clone()))
+        .unwrap_or(0.0);
+    let available_cash = detail_available
+        .or_else(|| parse_optional_number(account.avail_eq.clone()))
+        .or_else(|| parse_optional_number(account.cash_bal.clone()))
+        .unwrap_or(0.0);
+    let locked = (account_value - available_cash).max(0.0);
+
+    Some(AccountBalancePayload {
+        balance: Balance {
+            asset: BALANCE_ASSET.to_string(),
+            available: format_amount(available_cash),
+            locked: format_amount(locked),
+            valuation_usdt: format_amount(account_value),
+        },
+        available: available_cash,
+        locked,
+        valuation: account_value,
+    })
+}
+
+async fn fetch_account_balance_payload(
+    client: &OkxRestClient,
+) -> Result<Option<AccountBalancePayload>> {
+    let response = client.get_account_balance().await?;
+    Ok(response
+        .data
+        .into_iter()
+        .next()
+        .and_then(build_balance_payload))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BalanceSnapshotResponse {
+    asset: String,
+    available: String,
+    locked: String,
+    valuation: String,
+    source: String,
+    recorded_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BalanceSnapshotQuery {
+    limit: Option<usize>,
+    asset: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BalanceLatestQuery {
+    asset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -262,6 +344,8 @@ fn api_routes() -> Router<AppState> {
         .route("/market/orderbook", get(get_orderbook))
         .route("/market/trades", get(get_trades))
         .route("/account/balances", get(get_balances))
+        .route("/account/balances/snapshots", get(get_balance_snapshots))
+        .route("/account/balances/latest", get(get_balance_latest))
         .route("/account/initial-equity", get(get_initial_equity))
         .route("/account/initial-equity", post(set_initial_equity))
         .route("/account/positions", get(get_positions))
@@ -330,6 +414,8 @@ async fn main() -> anyhow::Result<()> {
         agent: agent_client,
         strategy_run_counter: Arc::new(RwLock::new(0)),
     };
+    let background_state = app_state.clone();
+    tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });
     let bind_addr = settings
         .bind_addr()
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));
@@ -386,9 +472,7 @@ fn init_tracing() {
 
 async fn get_ticker(
     State(state): State<AppState>,
-    Query(SymbolQuery {
-        symbol, ..
-    }): Query<SymbolQuery>,
+    Query(SymbolQuery { symbol, .. }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     let use_simulated = CONFIG.okx_use_simulated();
     info!(symbol = %symbol, use_simulated, "received ticker request");
@@ -451,47 +535,28 @@ async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
     tracing::info!(use_simulated, "received balances request");
 
     if let Some(client) = state.okx_simulated.clone() {
-        match client.get_account_balance().await {
-            Ok(balance_response) => {
-                if let Some(account) = balance_response.data.into_iter().next() {
-                    let usdt_detail = account
-                        .details
-                        .into_iter()
-                        .find(|detail| detail.ccy.eq_ignore_ascii_case("USDT"));
-
-                    let detail_equity = usdt_detail
-                        .as_ref()
-                        .and_then(|detail| parse_optional_number(detail.eq.clone()));
-                    let detail_available = usdt_detail
-                        .as_ref()
-                        .and_then(|detail| parse_optional_number(detail.avail_bal.clone()));
-
-                    let account_value = detail_equity
-                        .or_else(|| parse_optional_number(account.total_eq.clone()))
-                        .unwrap_or(0.0);
-                    let available_cash = detail_available
-                        .or_else(|| parse_optional_number(account.avail_eq.clone()))
-                        .or_else(|| parse_optional_number(account.cash_bal.clone()))
-                        .unwrap_or(0.0);
-                    let locked = (account_value - available_cash).max(0.0);
-
-                    let balances = vec![Balance {
-                        asset: "USDT".into(),
-                        available: format_amount(available_cash),
-                        locked: format_amount(locked),
-                        valuation_usdt: format_amount(account_value),
-                    }];
-                    tracing::info!(
-                        use_simulated,
-                        available = available_cash,
-                        locked,
-                        valuation = account_value,
-                        "okx balances parsed"
-                    );
-                    return Json(ApiResponse::ok(balances));
-                } else {
-                    tracing::warn!(use_simulated, "OKX balance response contained no data");
+        match fetch_account_balance_payload(&client).await {
+            Ok(Some(payload)) => {
+                tracing::info!(
+                    use_simulated,
+                    available = payload.available,
+                    locked = payload.locked,
+                    valuation = payload.valuation,
+                    "okx balances parsed"
+                );
+                if let Err(err) = record_balance_snapshot_if_changed(
+                    payload.available,
+                    payload.locked,
+                    payload.valuation,
+                )
+                .await
+                {
+                    warn!(error = ?err, "failed to persist balance snapshot");
                 }
+                return Json(ApiResponse::ok(vec![payload.balance]));
+            }
+            Ok(None) => {
+                tracing::warn!(use_simulated, "OKX balance response contained no data");
             }
             Err(err) => {
                 tracing::warn!(use_simulated, error = ?err, "failed to fetch OKX balances");
@@ -500,6 +565,52 @@ async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
     }
 
     Json(ApiResponse::ok(Vec::<Balance>::new()))
+}
+
+async fn get_balance_snapshots(Query(params): Query<BalanceSnapshotQuery>) -> impl IntoResponse {
+    let asset = params.asset.unwrap_or_else(|| BALANCE_ASSET.to_string());
+    let limit = params
+        .limit
+        .unwrap_or(DEFAULT_BALANCE_SNAPSHOT_LIMIT)
+        .clamp(1, MAX_BALANCE_SNAPSHOT_LIMIT) as i64;
+
+    match fetch_balance_snapshots(&asset, limit).await {
+        Ok(records) => {
+            let snapshots = records
+                .into_iter()
+                .map(convert_balance_snapshot)
+                .collect::<Vec<_>>();
+            Json(ApiResponse::ok(snapshots))
+        }
+        Err(err) => {
+            warn!(error = ?err, asset = %asset, "failed to fetch balance snapshots");
+            Json(ApiResponse::ok(Vec::<BalanceSnapshotResponse>::new()))
+        }
+    }
+}
+
+async fn get_balance_latest(Query(params): Query<BalanceLatestQuery>) -> impl IntoResponse {
+    let asset = params.asset.unwrap_or_else(|| BALANCE_ASSET.to_string());
+
+    match fetch_latest_balance_snapshot(&asset).await {
+        Ok(Some(record)) => Json(ApiResponse::ok(Some(convert_balance_snapshot(record)))),
+        Ok(None) => Json(ApiResponse::<Option<BalanceSnapshotResponse>>::ok(None)),
+        Err(err) => {
+            warn!(error = ?err, asset = %asset, "failed to fetch latest balance snapshot");
+            Json(ApiResponse::<Option<BalanceSnapshotResponse>>::ok(None))
+        }
+    }
+}
+
+fn convert_balance_snapshot(record: BalanceSnapshotRecord) -> BalanceSnapshotResponse {
+    BalanceSnapshotResponse {
+        asset: record.asset,
+        available: format_amount(record.available),
+        locked: format_amount(record.locked),
+        valuation: format_amount(record.valuation),
+        source: record.source,
+        recorded_at: record.recorded_at.to_rfc3339(),
+    }
 }
 
 async fn get_initial_equity() -> impl IntoResponse {
@@ -949,6 +1060,54 @@ fn parse_optional_number(value: Option<String>) -> Option<f64> {
     optional_string(value)
         .and_then(|raw| raw.parse::<f64>().ok())
         .filter(|v| v.is_finite())
+}
+
+async fn record_balance_snapshot_if_changed(
+    available: f64,
+    locked: f64,
+    valuation: f64,
+) -> Result<()> {
+    if let Some(previous) = fetch_latest_balance_snapshot(BALANCE_ASSET).await? {
+        if (previous.valuation - valuation).abs() < BALANCE_SNAPSHOT_TOLERANCE {
+            return Ok(());
+        }
+    }
+
+    insert_balance_snapshot(BalanceSnapshotInsert {
+        asset: BALANCE_ASSET.to_string(),
+        available,
+        locked,
+        valuation,
+        source: BALANCE_SOURCE.to_string(),
+    })
+    .await
+}
+
+async fn run_balance_snapshot_loop(state: AppState) {
+    loop {
+        if let Some(client) = state.okx_simulated.clone() {
+            match fetch_account_balance_payload(&client).await {
+                Ok(Some(payload)) => {
+                    if let Err(err) = record_balance_snapshot_if_changed(
+                        payload.available,
+                        payload.locked,
+                        payload.valuation,
+                    )
+                    .await
+                    {
+                        warn!(error = ?err, "periodic balance snapshot failed");
+                    }
+                }
+                Ok(None) => {
+                    trace!("periodic balance snapshot received empty payload");
+                }
+                Err(err) => {
+                    warn!(error = ?err, "failed to refresh periodic balance snapshot");
+                }
+            }
+        }
+        sleep(Duration::from_secs(5)).await;
+    }
 }
 
 async fn place_order(

@@ -60,6 +60,10 @@
 2. **下单事件**：执行交易时创建 `orders` 行，并在 `strategy_ids` 数组中写入所有关联策略（无需额外关联表）。
 3. **成交 / 状态更新**：根据 OKX Webhook 或轮询结果更新 `filled_size`、`status`、`metadata`；当订单进入终态，补写 `closed_at`。
 
+4. **余额变化记录**：在监听 OKX 账户接口（或 webhook）时，只要最新 `valuation_usdt` 与上一次写入的快照不同，就在 `balances` 表新增一条记录。记录频率可控，必要时通过预估策略行为精细写入，避免无意义的重复条目。
+
+5. **定时同步**：后端启动后会每 5 秒主动去 OKX 拉取余额并尝试写入快照，使得即便当前没有前端访问 ` /account/balances`，数据库里仍有最新估值。UI 仍可通过接口触发即时刷新，但历史曲线与“当前金额”将依赖持久化的快照数据。
+
 无需额外快照表，余额、持仓可直接通过 OKX API 或实时计算获得。
 
 ---
@@ -94,4 +98,21 @@ CREATE TABLE IF NOT EXISTS aitrader.orders (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at       TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS aitrader.balances (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset           TEXT NOT NULL DEFAULT 'USDT',
+    available       NUMERIC(20, 8) NOT NULL,
+    locked          NUMERIC(20, 8) NOT NULL,
+    valuation       NUMERIC(20, 8) NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'okx',
+    recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
+
+## 5. 余额快照接口
+
+- `GET /account/balances/snapshots?limit=100`：按 `recorded_at DESC` 返回最近 `limit` 条 `balances` 记录，给前端图表提供历史数据。
+- `GET /account/balances/latest`：返回最新一条 snapshot（或代理实时 OKX 数据），用于 “当前金额” 面板与收益曲线的实时对齐。
+
+两者的数据可由 `balances` 表直接读取，也可以在没有记录时 fallback 到即时拉取的 OKX 余额。前端在展示时：新记录只有当 `valuation` 或 `available` 发生变化才会写入，从而防止频繁更新同时能保证图表在“有变化时”自动增长。
