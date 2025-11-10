@@ -20,7 +20,6 @@
 | `id` | UUID PK | 记录唯一 ID |
 | `session_id` | TEXT | LLM 会话或策略运行 ID |
 | `summary` | TEXT | 大模型最终结论全文 |
-| `confidence` | NUMERIC(5,2) | 模型置信度（0–100，可空） |
 | `created_at` | TIMESTAMPTZ | 写入时间 |
 
 > 该表只记录最终结论，不再拆分中间推理或建议列表；若需追加原始对话，可在 `summary` 内嵌或后续拓展字段。
@@ -38,7 +37,6 @@
 | `filled_size` | NUMERIC(20,8) | 已成交数量 |
 | `status` | TEXT | `open` / `filled` / `canceled` 等 |
 | `leverage` | NUMERIC(10,2) | 下单时的杠杆倍数（可空） |
-| `confidence` | NUMERIC(5,2) | 继承策略置信度（可空） |
 | `metadata` | JSONB | 扩展信息，如止盈/止损、OKX 原始响应 |
 | `created_at` | TIMESTAMPTZ | 下单时间 |
 | `closed_at` | TIMESTAMPTZ | 状态变为终态的时间（可空） |
@@ -78,7 +76,6 @@ CREATE TABLE IF NOT EXISTS aitrader.strategies (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      TEXT NOT NULL,
     summary         TEXT NOT NULL,
-    confidence      NUMERIC(5, 2),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -93,7 +90,6 @@ CREATE TABLE IF NOT EXISTS aitrader.orders (
     filled_size     NUMERIC(20, 8) NOT NULL DEFAULT 0,
     status          TEXT NOT NULL,
     leverage        NUMERIC(10, 2),
-    confidence      NUMERIC(5, 2),
     metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at       TIMESTAMPTZ

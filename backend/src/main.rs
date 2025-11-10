@@ -15,10 +15,9 @@ use crate::db::{
     StrategyMessageInsert,
 };
 use anyhow::{anyhow, Result};
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Query, State};
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -128,13 +127,9 @@ struct Trade {
 #[serde(rename_all = "camelCase")]
 struct StrategyMessage {
     id: String,
-    role: String,
-    content: String,
+    session_id: String,
+    summary: String,
     created_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +195,7 @@ async fn fetch_account_balance_payload(
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct BalanceSnapshotResponse {
     asset: String,
     available: String,
@@ -322,22 +318,6 @@ struct SymbolOptionalQuery {
     limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
-struct PlaceOrderRequest {
-    symbol: String,
-    side: String,
-    #[serde(rename = "type")]
-    order_type: String,
-    price: Option<String>,
-    size: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PlaceOrderResponse {
-    order_id: String,
-    status: OrderStatus,
-}
-
 fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/market/ticker", get(get_ticker))
@@ -346,14 +326,14 @@ fn api_routes() -> Router<AppState> {
         .route("/account/balances", get(get_balances))
         .route("/account/balances/snapshots", get(get_balance_snapshots))
         .route("/account/balances/latest", get(get_balance_latest))
-        .route("/account/initial-equity", get(get_initial_equity))
-        .route("/account/initial-equity", post(set_initial_equity))
+        .route(
+            "/account/initial-equity",
+            get(get_initial_equity).post(set_initial_equity),
+        )
         .route("/account/positions", get(get_positions))
         .route("/account/positions/history", get(get_positions_history))
         .route("/account/orders/open", get(get_open_orders))
         .route("/account/fills", get(get_fills))
-        .route("/orders", post(place_order))
-        .route("/orders/:order_id", delete(cancel_order))
         .route("/model/strategy-chat", get(get_strategy_chat))
         .route("/model/strategy-run", post(trigger_strategy_run))
 }
@@ -914,25 +894,11 @@ async fn get_strategy_chat() -> impl IntoResponse {
         Ok(records) => {
             let messages = records
                 .into_iter()
-                .map(|record| {
-                    let summary = if record.summary.trim().is_empty() {
-                        None
-                    } else {
-                        Some(record.summary.clone())
-                    };
-                    let tags = if record.tags.is_empty() {
-                        None
-                    } else {
-                        Some(record.tags.clone())
-                    };
-                    StrategyMessage {
-                        id: record.id.to_string(),
-                        role: record.role,
-                        content: record.content,
-                        created_at: record.created_at.to_rfc3339(),
-                        summary,
-                        tags,
-                    }
+                .map(|record| StrategyMessage {
+                    id: record.id.to_string(),
+                    session_id: record.session_id,
+                    summary: record.summary,
+                    created_at: record.created_at.to_rfc3339(),
                 })
                 .collect::<Vec<_>>();
             Json(ApiResponse::ok(messages))
@@ -1024,17 +990,13 @@ async fn run_strategy_job(
     }
 
     let summary_label = format!("第 {} 次策略执行", run_id);
-    let tags = vec!["auto-run".into(), "agent".into()];
+    let summary_body = format!("{summary_label}\n\n{content}");
 
     tracing::debug!(run_id, "Persisting strategy message to database");
 
     if let Err(err) = insert_strategy_message(StrategyMessageInsert {
         session_id: response.session_id.clone(),
-        summary: summary_label,
-        content,
-        role: "assistant".into(),
-        tags,
-        confidence: None,
+        summary: summary_body,
     })
     .await
     {
@@ -1108,36 +1070,6 @@ async fn run_balance_snapshot_loop(state: AppState) {
         }
         sleep(Duration::from_secs(5)).await;
     }
-}
-
-async fn place_order(
-    _state: State<AppState>,
-    Json(payload): Json<PlaceOrderRequest>,
-) -> impl IntoResponse {
-    info!(
-        symbol = %payload.symbol,
-        side = %payload.side,
-        order_type = %payload.order_type,
-        price = payload.price.as_deref().unwrap_or("market"),
-        size = %payload.size,
-        "Received simulated place-order request; feature not implemented"
-    );
-
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ApiResponse::<PlaceOrderResponse>::error(
-            "下单功能仅在接入真实交易所 API 时可用",
-        )),
-    )
-}
-
-async fn cancel_order(_state: State<AppState>, Path(_order_id): Path<String>) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ApiResponse::<Order>::error(
-            "取消订单仅在接入真实交易所 API 时可用",
-        )),
-    )
 }
 
 impl std::fmt::Display for OrderStatus {

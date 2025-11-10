@@ -200,59 +200,7 @@
 
 ---
 
-## 3. 下单相关
-
-### 3.1 提交订单
-
-- **Method**: `POST`
-- **Path**: `/api/orders`
-- **Request Body**
-
-```json
-{
-  "symbol": "BTC-USDT",
-  "side": "buy",           // buy | sell
-  "type": "limit",         // limit | market
-  "price": "110000",       // 市价单可以省略
-  "size": "0.05",          // 交易数量
-  "timeInForce": "gtc"     // 可选：gtc | ioc | fok
-}
-```
-
-**响应**
-
-```json
-{
-  "success": true,
-  "data": {
-    "orderId": "123456",
-    "status": "open"
-  },
-  "error": null
-}
-```
-
-### 3.2 撤销订单
-
-- **Method**: `DELETE`
-- **Path**: `/api/orders/{orderId}`
-
-**响应**
-
-```json
-{
-  "success": true,
-  "data": {
-    "orderId": "123456",
-    "status": "canceled"
-  },
-  "error": null
-}
-```
-
----
-
-## 4. 统一错误码（可选）
+## 3. 统一错误码（可选）
 
 可在响应中附加 `code` 字段表明错误类型，例如：
 
@@ -288,4 +236,3 @@
 ## 7. 版本管理
 
 建议在后端新增变更时更新此文档，并在前端使用前确认字段是否同步。
-

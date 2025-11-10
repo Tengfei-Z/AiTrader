@@ -22,7 +22,7 @@ npm run dev
 ## 环境要求
 
 - Node.js >= 18
-- 配套后端 API (`/api/market`, `/api/account`, `/api/orders`)，具体协议见 `doc/API.md`。
+- 配套后端 API (`/api/market`, `/api/account`)，具体协议见 `doc/API.md`。
 
 ## 代码结构
 

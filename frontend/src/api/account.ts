@@ -67,9 +67,7 @@ export const fetchFills = async (params: { symbol?: string; limit?: number }) =>
 };
 
 export const fetchInitialEquity = async () => {
-  const { data } = await client.get<ApiResponse<InitialEquityRecord | null>>(
-    '/account/initial-equity'
-  );
+  const { data } = await client.get<ApiResponse<InitialEquityRecord | null>>('/account/initial-equity');
   return data.data ?? null;
 };
 

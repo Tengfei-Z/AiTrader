@@ -1,5 +1,5 @@
 import type { StrategyMessage } from '@api/types';
-import { Card, Empty, Flex, List, Tag, Typography, Button, Spin } from 'antd';
+import { Card, Empty, Flex, List, Typography, Button, Spin } from 'antd';
 import dayjs from 'dayjs';
 
 interface Props {
@@ -11,12 +11,6 @@ interface Props {
   starting?: boolean;
   embedded?: boolean;
 }
-
-const roleMap: Record<StrategyMessage['role'], { label: string; color: string }> = {
-  assistant: { label: '策略引擎', color: 'geekblue' },
-  user: { label: '人工指令', color: 'green' },
-  system: { label: '系统提示', color: 'gold' }
-};
 
 const StrategyChatCard = ({
   messages,
@@ -57,45 +51,28 @@ const StrategyChatCard = ({
         <div className="strategy-chat-history">
           <List
             dataSource={orderedMessages}
-            renderItem={(item) => {
-              const role = roleMap[item.role] ?? roleMap.system;
-              return (
-                <List.Item className="strategy-chat-message">
-                  <Flex vertical gap={6}>
-                    <Flex align="center" gap={12} className="strategy-chat-message__meta">
-                      <Tag color={role.color}>{role.label}</Tag>
-                      <Typography.Text type="secondary">
-                        {dayjs(item.createdAt).format('MM-DD HH:mm')}
-                      </Typography.Text>
-                      {item.summary && (
-                        <Typography.Text strong className="strategy-chat-message__summary">
-                          {item.summary}
-                        </Typography.Text>
-                      )}
-                    </Flex>
-                    <Typography.Paragraph
-                      className="strategy-chat-message__content"
-                      ellipsis={{
-                        rows: 2,
-                        expandable: 'collapsible',
-                        symbol: (expanded) => (expanded ? '收起' : '展开')
-                      }}
-                    >
-                      {item.content}
-                    </Typography.Paragraph>
-                    {item.tags && item.tags.length > 0 && (
-                      <Flex gap={8} wrap="wrap">
-                        {item.tags.map((tag) => (
-                          <Tag key={tag} color="default">
-                            {tag}
-                          </Tag>
-                        ))}
-                      </Flex>
-                    )}
+            renderItem={(item) => (
+              <List.Item className="strategy-chat-message">
+                <Flex vertical gap={6}>
+                  <Flex align="center" gap={12} className="strategy-chat-message__meta">
+                    <Typography.Text type="secondary">
+                      {dayjs(item.createdAt).format('MM-DD HH:mm')}
+                    </Typography.Text>
+                    <Typography.Text type="secondary">会话 {item.sessionId}</Typography.Text>
                   </Flex>
-                </List.Item>
-              );
-            }}
+                  <Typography.Paragraph
+                    className="strategy-chat-message__content"
+                    ellipsis={{
+                      rows: 3,
+                      expandable: 'collapsible',
+                      symbol: (expanded) => (expanded ? '收起' : '展开')
+                    }}
+                  >
+                    {item.summary}
+                  </Typography.Paragraph>
+                </Flex>
+              </List.Item>
+            )}
           />
         </div>
       )}

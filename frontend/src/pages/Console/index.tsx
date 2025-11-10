@@ -5,22 +5,15 @@ import MarketStrip from '@components/MarketStrip';
 import PositionsHistoryCard from '@components/PositionsHistoryCard';
 import { useBalanceSnapshots } from '@hooks/useBalanceSnapshots';
 import { useLatestBalanceSnapshot } from '@hooks/useLatestBalanceSnapshot';
-import { useFills } from '@hooks/useFills';
 import { useInitialEquity } from '@hooks/useInitialEquity';
 import { usePositionHistory } from '@hooks/usePositionHistory';
 import { useStrategyChat } from '@hooks/useStrategyChat';
 import { useStrategyRunner } from '@hooks/useStrategyRunner';
 import { usePositions } from '@hooks/usePositions';
-import { useTicker } from '@hooks/useTicker';
-import { useSymbolStore } from '@store/useSymbolStore';
-import { buildEquityCurve, type EquityPoint } from '@utils/pnl';
 import type { BalanceSnapshotItem } from '@api/types';
+import type { EquityPoint } from '@utils/pnl';
 
 const AiConsolePage = () => {
-  const symbol = useSymbolStore((state) => state.symbol);
-
-  const { data: ticker } = useTicker(symbol);
-  const { data: fills, isLoading: fillsLoading } = useFills(symbol, 200);
   const { data: balanceSnapshots, isLoading: snapshotsLoading } = useBalanceSnapshots({ limit: 200 });
   const { data: latestSnapshot } = useLatestBalanceSnapshot();
   const { data: positions, isLoading: positionsLoading } = usePositions();
@@ -36,13 +29,8 @@ const AiConsolePage = () => {
     isPending: strategyRunning
   } = useStrategyRunner();
 
-  const markPrice = ticker?.last ? Number(ticker.last) : undefined;
   const initialAmount = initialEquityRecord ? Number(initialEquityRecord.amount) : undefined;
 
-  const fallbackCurve = useMemo(
-    () => buildEquityCurve(fills, markPrice, initialAmount).points,
-    [fills, markPrice, initialAmount]
-  );
   const snapshotCurve = useMemo(() => {
     if (!balanceSnapshots?.length) {
       return [];
@@ -61,7 +49,7 @@ const AiConsolePage = () => {
         .sort((a, b) => a.time - b.time)
     );
   }, [balanceSnapshots]);
-  const equityCurve = snapshotCurve.length ? snapshotCurve : fallbackCurve;
+  const equityCurve = snapshotCurve;
   const currentEquity = equityCurve.length
     ? equityCurve[equityCurve.length - 1]?.equity
     : initialAmount;
@@ -77,8 +65,7 @@ const AiConsolePage = () => {
     initialAmount && resolvedCurrentEquity !== undefined
       ? ((resolvedCurrentEquity - initialAmount) / initialAmount) * 100
       : undefined;
-  const fallbackLoading = fillsLoading && !fallbackCurve.length;
-  const chartLoading = (snapshotsLoading && !snapshotCurve.length) || fallbackLoading;
+  const chartLoading = snapshotsLoading && !snapshotCurve.length;
 
   const handleStrategyStart = async () => {
     const startedAt = new Date().toISOString();

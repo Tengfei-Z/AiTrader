@@ -79,11 +79,9 @@ export interface PositionHistoryItem {
 
 export interface StrategyMessage {
   id: string;
-  role: 'assistant' | 'user' | 'system';
-  content: string;
+  sessionId: string;
+  summary: string;
   createdAt: string;
-  summary?: string;
-  tags?: string[];
 }
 
 export interface InitialEquityRecord {
@@ -115,18 +113,4 @@ export interface FillItem {
   fee: string;
   pnl?: string;
   timestamp: string;
-}
-
-export interface PlaceOrderPayload {
-  symbol: string;
-  side: 'buy' | 'sell';
-  type: 'limit' | 'market';
-  price?: string;
-  size: string;
-  timeInForce?: 'gtc' | 'ioc' | 'fok';
-}
-
-export interface PlaceOrderResponse {
-  orderId: string;
-  status: OrderStatus;
 }

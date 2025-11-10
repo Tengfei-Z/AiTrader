@@ -221,19 +221,16 @@ fn migration_statements(schema: &str) -> Vec<String> {
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 session_id      TEXT NOT NULL,
                 summary         TEXT NOT NULL,
-                content         TEXT NOT NULL DEFAULT '',
-                role            TEXT NOT NULL DEFAULT 'assistant',
-                tags            TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
-                confidence      NUMERIC(5, 2),
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
             );",
             schema = schema,
         ),
         format!(
             "ALTER TABLE {schema}.strategies
-                ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '',
-                ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'assistant',
-                ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT ARRAY[]::text[];",
+                DROP COLUMN IF EXISTS content,
+                DROP COLUMN IF EXISTS role,
+                DROP COLUMN IF EXISTS tags,
+                DROP COLUMN IF EXISTS confidence;",
             schema = schema,
         ),
         format!(
@@ -248,11 +245,15 @@ fn migration_statements(schema: &str) -> Vec<String> {
                 filled_size     NUMERIC(20, 8) NOT NULL DEFAULT 0,
                 status          TEXT NOT NULL,
                 leverage        NUMERIC(10, 2),
-                confidence      NUMERIC(5, 2),
                 metadata        JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                 closed_at       TIMESTAMPTZ
             );",
+            schema = schema,
+        ),
+        format!(
+            "ALTER TABLE {schema}.orders
+                DROP COLUMN IF EXISTS confidence;",
             schema = schema,
         ),
         format!(
@@ -310,19 +311,13 @@ pub async fn init_database() -> Result<()> {
 pub struct StrategyMessageInsert {
     pub session_id: String,
     pub summary: String,
-    pub content: String,
-    pub role: String,
-    pub tags: Vec<String>,
-    pub confidence: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StrategyMessageRecord {
     pub id: Uuid,
+    pub session_id: String,
     pub summary: String,
-    pub content: String,
-    pub role: String,
-    pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -346,22 +341,15 @@ pub async fn insert_strategy_message(payload: StrategyMessageInsert) -> Result<(
     };
 
     let sql = format!(
-        "INSERT INTO {schema}.strategies (session_id, summary, content, role, tags, confidence)
-         VALUES ($1, $2, $3, $4, $5, $6);",
+        "INSERT INTO {schema}.strategies (session_id, summary)
+         VALUES ($1, $2);",
         schema = schema,
     );
 
     client
         .execute(
             &sql,
-            &[
-                &payload.session_id,
-                &payload.summary,
-                &payload.content,
-                &payload.role,
-                &payload.tags,
-                &payload.confidence,
-            ],
+            &[&payload.session_id, &payload.summary],
         )
         .await
         .map(|_| ())
@@ -381,7 +369,7 @@ pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRe
 
     let client = connect_client(&url).await?;
     let sql = format!(
-        "SELECT id::text AS id_text, summary, content, role, tags, created_at
+        "SELECT id::text AS id_text, session_id, summary, created_at
          FROM {schema}.strategies
          ORDER BY created_at DESC
          LIMIT $1;",
@@ -402,10 +390,8 @@ pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRe
 
         records.push(StrategyMessageRecord {
             id,
+            session_id: row.get("session_id"),
             summary: row.get("summary"),
-            content: row.get("content"),
-            role: row.get("role"),
-            tags: row.get::<_, Vec<String>>("tags"),
             created_at: row.get("created_at"),
         });
     }
@@ -451,7 +437,7 @@ pub async fn insert_initial_equity(amount: f64) -> Result<()> {
 
     let client = connect_client(&url).await?;
     let sql = format!(
-        "INSERT INTO {schema}.initial_equities (amount) VALUES ($1);",
+        "INSERT INTO {schema}.initial_equities (amount) VALUES (($1::double precision)::numeric(20, 8));",
         schema = schema
     );
     client.execute(&sql, &[&amount]).await?;

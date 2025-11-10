@@ -85,7 +85,7 @@ agent/
 GET /api/account/balance
 GET /api/account/positions
 GET /api/market/ticker
-GET /api/orders/list
+GET /api/account/orders/open
 ...
 ```
 
