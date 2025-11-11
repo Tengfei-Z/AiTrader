@@ -632,8 +632,9 @@ deploy() {
   ensure_paths
   sync_static_assets
   write_nginx_config
-  write_backend_systemd_unit
   write_agent_systemd_unit
+  sleep 2
+  write_backend_systemd_unit
   reload_nginx
   echo "Deployment complete."
 }
@@ -661,8 +662,9 @@ main() {
       deploy
       ;;
     start)
-      backend_service_start
       agent_service_start
+      sleep 2
+      backend_service_start
       ;;
     stop)
       agent_service_stop
