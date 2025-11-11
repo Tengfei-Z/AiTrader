@@ -89,15 +89,14 @@ agent/
 | `ordType` | 订单类型，如 `market`、`limit` | `market` |
 | `sz` | 下单张数/数量（字符串） | `0.1` |
 | `px` | 限价单价格，仅限价单需填写 | `106000` |
-| `slTriggerPx` | 止损触发价，LLM 可选填写，工具会自动根据此生成对应算法单 | `103000` |
-| `tpTriggerPx` | 止盈触发价，LLM 可选填写，工具会自动根据此生成对应算法单 | `108000` |
+| `attachAlgoOrds` | 可选一组算法单（如止盈/止损），每个元素需包含 `algoSide`/`algoOrdType`/`triggerPx`/`px`/`ordType` 等字段 | `[{"algoSide":"tp","algoOrdType":"conditional","triggerPx":"108000","px":"108000","ordType":"limit"}]` |
 | `reduceOnly` | 是否纯减仓（`true`/`false`） | `false` |
 
 工具 schema 会自动将这些字段暴露给 DeepSeek，LLM 在请求 `place_order` 前应：
 1. 先用 `get_positions` 确认当前持仓方向与数量。
 2. 决定方向后填写 `side` 与对应 `posSide` (`buy`→`long`、`sell`→`short`)。
 3. 附上 `sz`、`tdMode`，若为限价单再提供 `px`。
-4. 如果提供 `slTriggerPx`/`tpTriggerPx`，工具会自动生成对应 `attachAlgoOrds`；若留空，工具会基于最新价自动生成一个上下浮动约 1.5% 的止盈止损，仍能满足 OKX 校验。
+4. 若需要止盈止损，可手动指定 `attachAlgoOrds`；否则将只是单纯的市价/限价主单。
 5. 添加 `reduceOnly: true` 表示只减仓，默认可省略。
 
 示例：
@@ -110,27 +109,7 @@ agent/
     "side": "buy",
     "posSide": "long",
     "ordType": "market",
-    "sz": "0.1",
-    "slTriggerPx": "103000",
-    "tpTriggerPx": "108000",
-    "attachAlgoOrds": [
-      {
-        "algoSide": "sl",
-        "algoOrdType": "conditional",
-        "triggerPx": "103000",
-        "px": "103000",
-        "ordType": "limit",
-        "sz": "0.1"
-      },
-      {
-        "algoSide": "tp",
-        "algoOrdType": "conditional",
-        "triggerPx": "108000",
-        "px": "108000",
-        "ordType": "limit",
-        "sz": "0.1"
-      }
-    ]
+    "sz": "0.1"
   }
 }
 ```

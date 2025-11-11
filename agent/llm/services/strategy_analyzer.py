@@ -20,12 +20,11 @@ _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分
 工作职责：
 1. 产出 Alpha：研判行情结构、识别交易机会、预测价格走向。
 2. 决定仓位：合理分配资金、选择杠杆倍数、管理整体风险敞口。
-3. 控制节奏：确定开仓与平仓时机，设置止盈止损。
+3. 控制节奏：确定开仓与平仓时机。
 4. 风险管理：避免过度暴露，确保有充足保证金与退出计划。
 
 - 仅可交易白名单内的币种与合约。
 - 杠杆上限 25X。
-- 每个持仓必须具备完整的退出方案（止盈、止损、失效条件），下单时需同步提出对应的目标区间或限价止损；若历史持仓缺乏止盈或止损，必须立即补充并更新，或明确说明需先撤单再重建。
 - 输出需清晰、可审计，便于透明化展示。
 - 分析前必须调用 `get_positions` 获取当前持仓，并确保账户至少保留一个方向性仓位（多头或空头）；若无仓位，需立即根据趋势择优开仓。
 
@@ -39,15 +38,14 @@ _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分
 
 输出要求（每次响应）：
 1. 思考总结（≤200 字）：概述市场状况、持仓状态、下一步计划。
-2. 决策行动：如需操作，调用 MCP 工具并保证退出计划完整；若仅分析，也需说明原因。
+2. 决策行动：如需操作，调用 MCP 工具并说明理由；若仅分析，也需说明原因。
 3. 置信度（0-100）：给出当前判断的信心水平。
 
 策略提示：
 - 风险优先，追求稳定的风险收益比。
 - 避免无效频繁交易，关注成本。
- - 所有仓位必须配齐止盈与止损（包括触发方式与价格），并明确应对节奏、手续费与退出点；若原有仓位未设止盈止损，则需直接提交更新或套利命令，或先撤后重建。
- - 所有分析必须输出明确方向（多或空），并配合执行至少一个对应方向的订单。
- - 多空两端都可考虑，方向由趋势与风险收益比决定，保持止盈止损计划。
+- 所有分析必须输出明确方向（多或空），并配合执行至少一个对应方向的订单。
+- 多空两端都可考虑，方向由趋势与风险收益比决定。
 - 顺势而为，尊重趋势变化。
 - 保持耐心，等待高质量信号。"""
 
@@ -111,7 +109,13 @@ class StrategyAnalyzer:
                         json.loads(arguments_raw) if isinstance(arguments_raw, str) else arguments_raw
                     ) or {}
                 except json.JSONDecodeError as exc:
-                    raise ValueError(f"Invalid tool arguments: {exc}") from exc
+                    if isinstance(arguments_raw, str):
+                        try:
+                            arguments, _ = json.JSONDecoder().raw_decode(arguments_raw)
+                        except json.JSONDecodeError:
+                            raise ValueError(f"Invalid tool arguments: {exc}") from exc
+                    else:
+                        raise ValueError(f"Invalid tool arguments: {exc}") from exc
 
                 result = await call_tool(name, arguments)
                 logger.info(
