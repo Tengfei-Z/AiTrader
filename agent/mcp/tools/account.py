@@ -7,17 +7,28 @@ from ..registry import mcp
 from .utils import wrap_response
 
 
-@mcp.tool()
+@mcp.tool(name="get_account_balance")
 async def get_account_balance() -> dict[str, Any]:
-    """查询账户余额信息。"""
+    """
+    查询账户余额信息。
+
+    无需参数，返回全部币种的可用余额和冻结资金，可用于判断可用保证金与风险承受能力。
+    """
 
     response = await okx_client.get_account_balance()
     return wrap_response(response)
 
 
-@mcp.tool()
+@mcp.tool(name="get_positions")
 async def get_positions(inst_type: str | None = None) -> dict[str, Any]:
-    """查询持仓信息，可按产品类型过滤。"""
+    """
+    查询持仓信息，可按产品类型过滤。
+
+    Parameters:
+    - `inst_type`: 可选，`SWAP`/`SPOT` 等。若留空则返回所有类型。
+
+    建议先调用此接口，明确当前方向（long/short）、数量与成本，用于决策是否加仓/减仓。
+    """
 
     response = await okx_client.get_positions(inst_type=inst_type)
     return wrap_response(response)

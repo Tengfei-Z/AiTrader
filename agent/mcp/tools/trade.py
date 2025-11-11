@@ -1,6 +1,8 @@
 """Trading MCP tools."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,19 +12,54 @@ from .utils import wrap_response
 
 
 class PlaceOrderInput(BaseModel):
-    """标准下单参数，兼容 OKX REST 字段命名。"""
+    """标准简单下单参数，只暴露对模型必须的字段。"""
 
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     inst_id: str = Field(..., alias="instId", description="交易产品 ID，例如 BTC-USDT-SWAP")
     td_mode: str = Field(..., alias="tdMode", description="交易模式，cross/isolated/cash")
-    side: str = Field(..., description="买卖方向，buy/sell")
+    side: Literal["buy", "sell"] = Field(..., description="买卖方向，buy/sell")
+    pos_side: Literal["long", "short"] | None = Field(
+        None,
+        alias="posSide",
+        description="持仓方向（long/short），SWAP 合约必填",
+    )
     ord_type: str = Field(..., alias="ordType", description="订单类型，limit/market 等")
     size: str = Field(..., alias="sz", description="下单数量")
-    px: str | None = Field(None, alias="px", description="限价单价格")
+    px: str | None = Field(None, alias="px", description="限价单价格，仅限价单填写")
+    sl_trigger_px: str | None = Field(
+        None,
+        alias="slTriggerPx",
+        description="止损触发价",
+    )
+    tp_trigger_px: str | None = Field(
+        None,
+        alias="tpTriggerPx",
+        description="止盈触发价",
+    )
     client_order_id: str | None = Field(None, alias="clOrdId", description="自定义订单 ID")
     reduce_only: bool | None = Field(None, alias="reduceOnly", description="是否只减仓")
 
+def build_attach_algo_orders(order: PlaceOrderInput) -> list[dict[str, str]]:
+    """为下单请求构造 attachAlgoOrds（自动补齐）。"""
+
+    attach: list[dict[str, str]] = []
+
+    def _algo_order(side: Literal["sl", "tp"], trigger: str) -> dict[str, str]:
+        return {
+            "algoSide": side,
+            "algoOrdType": "conditional",
+            "triggerPx": trigger,
+            "px": trigger,
+            "ordType": "limit",
+            "sz": order.size,
+        }
+
+    if order.sl_trigger_px:
+        attach.append(_algo_order("sl", order.sl_trigger_px))
+    if order.tp_trigger_px:
+        attach.append(_algo_order("tp", order.tp_trigger_px))
+    return attach
 
 class CancelOrderInput(BaseModel):
     """撤单参数，至少提供 OKX 订单 ID 或客户端订单 ID。"""
@@ -54,16 +91,55 @@ class OrderHistoryQuery(BaseModel):
 
 @mcp.tool(name="place_order")
 async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
-    """提交交易订单。"""
+    """
+    提交交易订单。
+
+    LLM 调用时只需明确基础字段（`instId`/`tdMode`/`side`/`posSide`/`sz`）以及止盈止损触发价。
+    工具内部会自动为这些触发价生成 `attachAlgoOrds`，无需模型手动拼装。
+
+    示例：
+    ```json
+    {
+      "order": {
+        "instId": "BTC-USDT-SWAP",
+        "tdMode": "cross",
+        "side": "buy",
+        "posSide": "long",
+        "ordType": "market",
+        "sz": "0.1",
+        "slTriggerPx": "103000",
+        "tpTriggerPx": "108000"
+      }
+    }
+    ```
+    """
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
+    attach = build_attach_algo_orders(order)
+    if attach:
+        payload["attachAlgoOrds"] = attach
     response = await okx_client.place_order(payload)
     return wrap_response(response)
 
 
 @mcp.tool(name="cancel_order")
 async def cancel_order_tool(order: CancelOrderInput) -> dict[str, Any]:
-    """撤销交易订单。"""
+    """
+    撤销交易订单。
+
+    参数 `instId` 必填，并需要至少提供 `ordId` 或 `clOrdId` 其一用于定位订单；
+    `ordId` 优先匹配 OKX 真实订单号，`clOrdId` 可用于追踪自定义 ID。
+
+    示例：
+    ```json
+    {
+      "order": {
+        "instId": "BTC-USDT-SWAP",
+        "ordId": "1234567890123456"
+      }
+    }
+    ```
+    """
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
     response = await okx_client.cancel_order(
@@ -76,7 +152,22 @@ async def cancel_order_tool(order: CancelOrderInput) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_order_history(query: OrderHistoryQuery | None = None) -> dict[str, Any]:
-    """查询历史订单记录。"""
+    """
+    查询历史订单记录。
+
+    可选 `instType`/`instId`/`state`/`limit` 过滤：若不提供参数将返回最近的订单；
+    `state` 可以是 `filled`/`canceled` 等，`limit` 限制条数（默认 100，最大 100）。
+
+    示例：
+    ```json
+    {
+      "query": {
+        "instType": "SWAP",
+        "limit": 10
+      }
+    }
+    ```
+    """
 
     query = query or OrderHistoryQuery()
     payload = query.model_dump(by_alias=True, exclude_none=True)

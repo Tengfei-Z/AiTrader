@@ -76,6 +76,65 @@ agent/
 | `cancel_order` | 撤销交易订单 |
 | `get_order_history` | 查询历史订单记录 |
 
+### `place_order` 工具详细说明
+
+`place_order` 对应 OKX `/api/v5/trade/order`，参数完全可选地对齐 OKX REST 规范，FastMCP 通过 Pydantic `PlaceOrderInput` 提供字段说明与 schema：
+
+| 字段 | 描述 | 示例 |
+| --- | --- | --- |
+| `instId` | 交易产品 ID | `BTC-USDT-SWAP` |
+| `tdMode` | 交易模式，`cross`/`isolated`/`cash` | `cross` |
+| `side` | 买卖方向，`buy` 表示做多、`sell` 表示做空 | `buy` |
+| `posSide` | 持仓方向（`long` 或 `short`），`SWAP` 合约必填 | `long` |
+| `ordType` | 订单类型，如 `market`、`limit` | `market` |
+| `sz` | 下单张数/数量（字符串） | `0.1` |
+| `px` | 限价单价格，仅限价单需填写 | `106000` |
+| `slTriggerPx` | 止损触发价，LLM 可选填写，工具会自动根据此生成对应算法单 | `103000` |
+| `tpTriggerPx` | 止盈触发价，LLM 可选填写，工具会自动根据此生成对应算法单 | `108000` |
+| `reduceOnly` | 是否纯减仓（`true`/`false`） | `false` |
+
+工具 schema 会自动将这些字段暴露给 DeepSeek，LLM 在请求 `place_order` 前应：
+1. 先用 `get_positions` 确认当前持仓方向与数量。
+2. 决定方向后填写 `side` 与对应 `posSide` (`buy`→`long`、`sell`→`short`)。
+3. 附上 `sz`、`tdMode`，若为限价单再提供 `px`。
+4. 如果提供 `slTriggerPx`/`tpTriggerPx`，工具会自动生成对应 `attachAlgoOrds`；若无需止盈止损，可留空。
+5. 添加 `reduceOnly: true` 表示只减仓，默认可省略。
+
+示例：
+
+```json
+{
+  "order": {
+    "instId": "BTC-USDT-SWAP",
+    "tdMode": "cross",
+    "side": "buy",
+    "posSide": "long",
+    "ordType": "market",
+    "sz": "0.1",
+    "slTriggerPx": "103000",
+    "tpTriggerPx": "108000",
+    "attachAlgoOrds": [
+      {
+        "algoSide": "sl",
+        "algoOrdType": "conditional",
+        "triggerPx": "103000",
+        "px": "103000",
+        "ordType": "limit",
+        "sz": "0.1"
+      },
+      {
+        "algoSide": "tp",
+        "algoOrdType": "conditional",
+        "triggerPx": "108000",
+        "px": "108000",
+        "ordType": "limit",
+        "sz": "0.1"
+      }
+    ]
+  }
+}
+```
+
 工具通过 FastMCP 自动生成 Schema，函数签名与 Pydantic 模型同时负责参数校验与文档描述。
 
 ## HTTP 交互协议
