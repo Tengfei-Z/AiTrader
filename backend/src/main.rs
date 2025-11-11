@@ -12,7 +12,6 @@ mod server_config;
 mod settings;
 mod types;
 
-use crate::agent_client::AgentClient;
 use crate::agent_subscriber::run_agent_events_listener;
 use crate::db::init_database;
 use crate::okx::OkxRestClient;
@@ -33,7 +32,6 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 #[derive(Clone)]
 struct AppState {
     okx_client: Option<OkxRestClient>,
-    agent: Option<AgentClient>,
     strategy_run_counter: Arc<tokio::sync::RwLock<u64>>,
 }
 
@@ -70,23 +68,8 @@ async fn main() -> Result<()> {
         }
     };
 
-    let agent_client = match CONFIG.agent_base_url() {
-        Some(base_url) => match AgentClient::new(base_url) {
-            Ok(client) => Some(client),
-            Err(err) => {
-                tracing::warn!(%err, "初始化 Agent 客户端失败");
-                None
-            }
-        },
-        None => {
-            tracing::warn!("AGENT_BASE_URL 未配置，策略分析接口将不可用");
-            None
-        }
-    };
-
     let app_state = AppState {
         okx_client,
-        agent: agent_client,
         strategy_run_counter: Arc::new(tokio::sync::RwLock::new(0)),
     };
 
