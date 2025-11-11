@@ -15,9 +15,8 @@ Agent (OKX client + LLM bridge)
     ↔ LLM/strategy pipeline (只读)
 ```
 
-- Rust 发起 connection，agent 维持心跳、重连，确立 `session_id`/`agent_id`。  
-- Rust 所有命令都通过 WebSocket `task_request` 消息下发；Agent 处理后立即通过 `task_result` 返回 `ordId` 并附带原始 OKX payload。  
-- Agent 在接到 OKX WebSocket/Webhook 的执行、成交、平仓、收益事件时，推送 `order_event`/`pnl_update` 消息；Rust 反向写 DB 并触发对前端的通知。
+- Rust 通过内部 `POST /analysis/`（触发策略执行/下单）向 agent 唯一下发任务；agent 返回前会调度 LLM、判断策略、完成 OKX 交易，并在所有结果准备完毕后才通过 WebSocket 把 `task_result` 以及后续事件发送给 Rust。  
+- agent 维持心跳/重连，确认 `session_id`/`agent_id`，在 `task_result` 后继续推送 `order_event`/`pnl_update`，Rust 根据这些消息更新 `orders`/`balances`，agent 本身不写 DB。
 
 ### 3. 消息协议
 
@@ -40,8 +39,8 @@ Agent (OKX client + LLM bridge)
 }
 ```
 
-- `task_request` 代表 Rust 要 agent 执行的策略命令（如开启某个策略、下单/撤单），对应前面的 `strategies` 结论；`payload` 里可扩展 `strategy_id`、`confidence`、`stop_loss` 等辅助字段。
-- Rust 下发 `place_order` 时，可把 `strategy_ids` 数组塞入，agent 只负责对 OKX 发起请求并返回结果，由 Rust 在 `orders` 表建立记录并追踪后续事件。
+- `task_request` 代表 Rust 在 `/analysis/` 里下发的唯一策略命令（如开启策略、下单/撤单）；`payload` 可扩展 `strategy_id`、`confidence`、`stop_loss` 等辅助字段。  
+- Rust 只需提交一次 `task_request`，agent 收到后进行大模型推理、下单逻辑、OKX 调用，并在所有结果（`ordId`、状态、收益等）准备妥当时通过 `task_result` 和后续事件告诉 Rust；Rust 再在 `orders` 表中创建记录并锁定该 `ordId`。
 - Agent 可增加 `metadata` 里需要的模式示意：止盈/止损、算法版本、策略摘要等。
 
 #### 3.2. 初始响应（agent → Rust）
