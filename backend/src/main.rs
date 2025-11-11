@@ -3,7 +3,6 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-mod agent_client;
 mod agent_subscriber;
 mod db;
 mod okx;
@@ -46,7 +45,7 @@ async fn main() -> Result<()> {
     settings.apply_runtime_env();
     let (http_proxy, https_proxy) = settings.proxy_settings();
 
-    if let Err(err) = init_database().await {
+    if let Err(err) = init_database(CONFIG.should_reset_database()).await {
         warn!(%err, "数据库初始化过程中出现错误");
     }
 
@@ -54,10 +53,7 @@ async fn main() -> Result<()> {
         http: http_proxy,
         https: https_proxy,
     };
-    let okx_client = match OkxRestClient::from_config_with_proxy(
-        &CONFIG,
-        proxy_options.clone(),
-    ) {
+    let okx_client = match OkxRestClient::from_config_with_proxy(&CONFIG, proxy_options.clone()) {
         Ok(client) => {
             info!("Initialized OKX client");
             Some(client)

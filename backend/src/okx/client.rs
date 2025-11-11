@@ -12,7 +12,7 @@ use tracing::instrument;
 const API_PREFIX: &str = "/api/v5";
 
 /// OKX REST API 客户端
-/// 
+///
 /// 用于与 OKX 交易所进行 HTTP 通信，支持获取行情、账户信息、持仓、成交记录等。
 #[derive(Debug, Clone)]
 pub struct OkxRestClient {
@@ -37,15 +37,12 @@ pub struct ProxyOptions {
 
 impl OkxRestClient {
     /// 从配置文件创建 OKX 客户端，并支持代理配置
-    /// 
+    ///
     /// 会自动从 config 中读取：
     /// - API 凭据 (API Key, Secret, Passphrase)
     /// - 基础 URL
     /// - 是否使用模拟盘
-    pub fn from_config_with_proxy(
-        config: &AppConfig,
-        proxy: ProxyOptions,
-    ) -> Result<Self> {
+    pub fn from_config_with_proxy(config: &AppConfig, proxy: ProxyOptions) -> Result<Self> {
         let credentials = config.require_okx_credentials()?.clone();
         Self::new_with_proxy(
             config.okx_base_url.clone(),
@@ -56,7 +53,7 @@ impl OkxRestClient {
     }
 
     /// 使用指定参数创建 OKX 客户端（内部方法）
-    /// 
+    ///
     /// 会配置 HTTP 客户端的代理设置
     fn new_with_proxy(
         base_url: impl Into<String>,
@@ -91,9 +88,9 @@ impl OkxRestClient {
     }
 
     /// 获取指定交易对的实时行情 Ticker 数据
-    /// 
+    ///
     /// 包含最新价格、24小时成交量、最高价、最低价等信息
-    /// 
+    ///
     /// # 参数
     /// - `inst_id`: 产品ID，例如 "BTC-USDT-SWAP" (BTC 永续合约)
     #[instrument(skip(self), fields(inst_id = %inst_id))]
@@ -105,13 +102,13 @@ impl OkxRestClient {
 
         let path = format!("{API_PREFIX}/market/ticker?instId={}", inst_id);
         let response: TickerResponse = self.get(&path, None).await?;
-        
+
         if response.data.is_empty() {
             tracing::warn!("获取 ticker 数据为空: {}", inst_id);
         } else {
             tracing::info!("成功获取 {} 的 ticker 数据", inst_id);
         }
-        
+
         response
             .data
             .into_iter()
@@ -120,7 +117,7 @@ impl OkxRestClient {
     }
 
     /// 获取账户余额信息
-    /// 
+    ///
     /// 返回账户的资产余额、可用余额、冻结金额、权益等信息
     #[instrument(skip(self))]
     pub async fn get_account_balance(&self) -> Result<super::models::AccountBalanceResponse> {
@@ -131,9 +128,9 @@ impl OkxRestClient {
     }
 
     /// 获取持仓信息
-    /// 
+    ///
     /// 返回当前账户的所有持仓明细，包括持仓方向、数量、未实现盈亏等
-    /// 
+    ///
     /// # 参数
     /// - `inst_type`: 可选的产品类型过滤，例如 "SWAP" (永续合约)、"FUTURES" (交割合约) 等
     ///                如果为 None，则返回所有类型的持仓
@@ -157,44 +154,6 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
-    /// 获取成交记录 (最近的成交明细)
-    /// 
-    /// 返回账户的历史成交订单信息，包括成交价格、数量、手续费等
-    /// 
-    /// # 参数
-    /// - `inst_id`: 可选的产品ID过滤，例如 "BTC-USDT-SWAP"
-    /// - `limit`: 可选的返回条数限制，最大 100 条
-    #[instrument(skip(self), fields(inst_id = inst_id.unwrap_or("all"), limit))]
-    pub async fn get_fills(
-        &self,
-        inst_id: Option<&str>,
-        limit: Option<usize>,
-    ) -> Result<Vec<super::models::FillDetail>> {
-        #[derive(serde::Deserialize)]
-        struct ResponseWrapper {
-            data: Vec<super::models::FillDetail>,
-        }
-
-        let mut params = vec![("instType".to_string(), "SWAP".to_string())];
-        if let Some(inst_id) = inst_id {
-            params.push(("instId".to_string(), inst_id.to_string()));
-        }
-        if let Some(limit) = limit {
-            params.push(("limit".to_string(), limit.min(100).to_string()));
-        }
-
-        let query = params
-            .into_iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        let path = format!("{API_PREFIX}/trade/fills?{query}");
-        let response: ResponseWrapper = self.get(&path, None).await?;
-        tracing::info!("获取到 {} 条成交记录", response.data.len());
-        Ok(response.data)
-    }
-
     /// 内部方法：发送 GET 请求并反序列化响应
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
@@ -206,7 +165,7 @@ impl OkxRestClient {
     }
 
     /// 准备 HTTP 请求，添加 OKX API 所需的签名和认证头
-    /// 
+    ///
     /// 包括：
     /// - 生成时间戳
     /// - 计算请求签名
@@ -258,7 +217,7 @@ impl OkxRestClient {
     }
 
     /// 执行 HTTP 请求并处理响应
-    /// 
+    ///
     /// 会检查 HTTP 状态码，读取响应体，去除空白字符，然后反序列化为目标类型
     async fn execute<T>(&self, builder: RequestBuilder) -> Result<T>
     where
@@ -293,7 +252,7 @@ impl OkxRestClient {
 }
 
 /// 生成当前时间的 ISO 8601 格式时间戳（毫秒精度）
-/// 
+///
 /// OKX API 要求使用此格式的时间戳进行签名
 fn current_timestamp_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)

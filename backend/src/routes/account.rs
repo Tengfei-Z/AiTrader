@@ -64,7 +64,7 @@ fn format_amount(value: f64) -> String {
 }
 
 /// 从 OKX 账户余额响应中构建余额载荷
-/// 
+///
 /// 从账户详情中提取 USDT 资产信息，计算可用余额、冻结余额和总估值
 fn build_balance_payload(account: okx::models::AccountBalance) -> Option<AccountBalancePayload> {
     // 找到 USDT 资产的详情
@@ -269,7 +269,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// 获取当前账户余额
-/// 
+///
 /// 从 OKX 交易所实时获取账户的 USDT 余额信息
 async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
     let use_simulated = CONFIG.okx_use_simulated();
@@ -290,7 +290,7 @@ async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// 获取余额快照列表
-/// 
+///
 /// 从数据库中读取历史余额快照记录，用于显示账户余额变化曲线
 async fn get_balance_snapshots(
     Query(params): Query<BalanceSnapshotListQuery>,
@@ -328,7 +328,7 @@ async fn get_balance_snapshots(
 }
 
 /// 获取最新的余额快照
-/// 
+///
 /// 从数据库中读取最近一次记录的余额快照
 async fn get_balance_latest(
     Query(params): Query<BalanceLatestQuery>,
@@ -356,7 +356,7 @@ async fn get_balance_latest(
 }
 
 /// 获取初始资金记录
-/// 
+///
 /// 从数据库读取用户设置的初始资金，用于计算收益率
 async fn get_initial_equity() -> Json<ApiResponse<Option<InitialEquityRecord>>> {
     let initial = match fetch_initial_equity().await {
@@ -371,7 +371,7 @@ async fn get_initial_equity() -> Json<ApiResponse<Option<InitialEquityRecord>>> 
 }
 
 /// 设置初始资金
-/// 
+///
 /// 允许用户设置或更新初始资金金额
 async fn set_initial_equity(
     Json(payload): Json<InitialEquityPayload>,
@@ -394,7 +394,7 @@ async fn set_initial_equity(
 }
 
 /// 获取当前持仓列表
-/// 
+///
 /// 从 OKX 交易所实时获取当前所有持仓信息，仅返回 USDT 交易对的持仓
 async fn get_positions(State(state): State<AppState>) -> impl IntoResponse {
     let use_simulated = CONFIG.okx_use_simulated();
@@ -456,7 +456,7 @@ async fn get_positions(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// 获取历史持仓记录
-/// 
+///
 /// 从数据库读取已平仓的历史持仓信息，支持按交易对过滤
 async fn get_positions_history(
     State(_state): State<AppState>,
@@ -565,7 +565,7 @@ fn parse_optional_number(value: Option<String>) -> Option<f64> {
 }
 
 /// 如果余额发生变化则记录新的余额快照
-/// 
+///
 /// 会与上一次快照比较，如果变化超过容差阈值才记录新快照
 async fn record_balance_snapshot_if_changed(
     available: f64,
@@ -592,7 +592,7 @@ async fn record_balance_snapshot_if_changed(
 }
 
 /// 定期余额快照循环任务
-/// 
+///
 /// 每 5 秒从 OKX 获取一次账户余额，如果有变化则记录到数据库
 /// 用于生成账户权益曲线图
 pub async fn run_balance_snapshot_loop(state: AppState) {

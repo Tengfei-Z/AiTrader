@@ -20,27 +20,9 @@ logger = get_logger(__name__)
 @dataclass
 class OrderEvent:
     ord_id: str
-    symbol: str | None
-    side: str | None
-    order_type: str | None
-    price: str | None
-    size: str | None
-    filled_size: str | None
-    status: str | None
-    metadata: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "ordId": self.ord_id,
-            "symbol": self.symbol,
-            "side": self.side,
-            "order_type": self.order_type,
-            "price": self.price,
-            "size": self.size,
-            "filled_size": self.filled_size,
-            "status": self.status,
-            "metadata": self.metadata,
-        }
+        return {"ordId": self.ord_id}
 
 
 class AgentEventCollector:
@@ -65,22 +47,7 @@ class AgentEventCollector:
             ord_id = entry.get("ordId") or entry.get("orderId")
             if not ord_id:
                 continue
-            self.order_events.append(
-                OrderEvent(
-                    ord_id=ord_id,
-                    symbol=arguments.get("instId") or entry.get("instId"),
-                    side=arguments.get("side"),
-                    order_type=arguments.get("ordType"),
-                    price=arguments.get("px") or entry.get("px"),
-                    size=arguments.get("sz") or entry.get("sz"),
-                    filled_size=entry.get("fillSz") or entry.get("filledSize"),
-                    status=entry.get("sMsg") or entry.get("state") or "placed",
-                    metadata={
-                        "tool_arguments": arguments,
-                        "tool_response": entry,
-                    },
-                )
-            )
+            self.order_events.append(OrderEvent(ord_id=ord_id))
 
 _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
 
@@ -162,9 +129,9 @@ class StrategyAnalyzer:
                     tool_call_id=tool_call.get("id"),
                 )
                 try:
-                arguments = (
-                    json.loads(arguments_raw) if isinstance(arguments_raw, str) else arguments_raw
-                ) or {}
+                    arguments = (
+                        json.loads(arguments_raw) if isinstance(arguments_raw, str) else arguments_raw
+                    ) or {}
                 except json.JSONDecodeError as exc:
                     if isinstance(arguments_raw, str):
                         try:
@@ -236,17 +203,8 @@ class StrategyAnalyzer:
             summary_preview=summary[:800] if isinstance(summary, str) else str(summary)[:800],
         )
 
-        suggestions = []
-        if isinstance(choice.get("content"), str):
-            suggestions = [
-                line.strip("- ").strip()
-                for line in choice["content"].splitlines()
-                if line.strip().startswith(("-", "1", "2", "3"))
-            ]
-
         response = AnalysisResponse(
             summary=summary,
-            suggestions=[s for s in suggestions if s],
             created_at=datetime.now(tz=timezone.utc),
         )
 
@@ -255,10 +213,7 @@ class StrategyAnalyzer:
             ChatMessage(role="assistant", content=summary),
         )
 
-        logger.info(
-            "analysis_response_prepared",
-            suggestions=len(response.suggestions),
-        )
+        logger.info("analysis_response_prepared")
 
         # 推送订单更新事件（如果有订单）
         for order_event in event_collector.order_events:

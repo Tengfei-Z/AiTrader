@@ -34,15 +34,8 @@ deployment:
     unit_path: "/etc/systemd/system/aitrader-backend.service"
 
   runtime_env:
-    database_url: "postgres://user:password@127.0.0.1:5432/aitrader"
     http_proxy: "http://127.0.0.1:7890"
     https_proxy: "http://127.0.0.1:7890"
 
 server:
   bind: "127.0.0.1:3000"
-
-db:
-  url: "postgres://user:password@127.0.0.1:5432/aitrader"
-  schema: "aitrader"
-  settings_table: "settings"
-  max_connections: 10

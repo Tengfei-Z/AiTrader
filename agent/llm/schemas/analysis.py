@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class AnalysisRequest(BaseModel):
@@ -11,5 +11,4 @@ class AnalysisRequest(BaseModel):
 
 class AnalysisResponse(BaseModel):
     summary: str
-    suggestions: list[str] = Field(default_factory=list)
     created_at: datetime

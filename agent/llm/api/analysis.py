@@ -21,7 +21,6 @@ async def analyze_market(request: AnalysisRequest) -> AnalysisResponse:
 
     logger.info(
         "analysis_request_completed",
-        suggestions=len(response.suggestions),
         summary_preview=response.summary[:120],
     )
     return response

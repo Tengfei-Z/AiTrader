@@ -33,6 +33,8 @@ pub struct AppConfig {
     pub okx_use_simulated: bool,
     #[serde(default = "default_initial_equity")]
     pub initial_equity: f64,
+    #[serde(default = "default_reset_database")]
+    pub reset_database: bool,
 }
 
 impl AppConfig {
@@ -56,12 +58,15 @@ impl AppConfig {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or_else(default_initial_equity);
 
+        let reset_database = env_bool("RESET_DATABASE", false);
+
         Ok(Self {
             okx_base_url,
             okx_credentials,
             agent,
             okx_use_simulated,
             initial_equity,
+            reset_database,
         })
     }
 
@@ -87,6 +92,10 @@ impl AppConfig {
     pub fn okx_use_simulated(&self) -> bool {
         self.okx_use_simulated
     }
+
+    pub fn should_reset_database(&self) -> bool {
+        self.reset_database
+    }
 }
 
 fn env_var_non_empty(key: &str) -> Result<String, env::VarError> {
@@ -107,6 +116,10 @@ fn default_okx_use_simulated() -> bool {
 
 fn default_initial_equity() -> f64 {
     122_000.0
+}
+
+fn default_reset_database() -> bool {
+    false
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

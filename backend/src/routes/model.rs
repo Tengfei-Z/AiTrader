@@ -66,27 +66,14 @@ async fn run_strategy_job() -> Result<(), String> {
 
     tracing::info!(
         summary_preview = %truncate_for_log(&response.summary, 256),
-        suggestions = response.suggestions.len(),
         "Agent analysis completed via WebSocket"
     );
 
-    let mut content = format!("【市场分析】\n{}\n", response.summary);
-    if !response.suggestions.is_empty() {
-        content.push_str("\n【策略建议】\n");
-        for suggestion in &response.suggestions {
-            content.push_str("- ");
-            content.push_str(suggestion);
-            content.push('\n');
-        }
-    }
+    let content = format!("【市场分析】\n{}\n", response.summary);
 
     tracing::debug!("Persisting strategy message to database");
 
-    if let Err(err) = insert_strategy_message(StrategyMessageInsert {
-        summary: content,
-    })
-    .await
-    {
+    if let Err(err) = insert_strategy_message(StrategyMessageInsert { summary: content }).await {
         tracing::warn!(%err, "写入策略摘要到数据库失败");
     }
 

@@ -25,7 +25,9 @@ cargo run -p api-server
 
 服务启动前需要准备环境变量（可在仓库根目录复制 `backend/.env.example` 或直接使用统一的 `.env` 文件）：
 - `OKX_*`：OKX 凭证（模拟/实盘由 `OKX_USE_SIMULATED` 控制）
-- `AGENT_BASE_URL`：Python Agent 服务地址（例如 `http://localhost:8001`）
+- `AGENT_BASE_URL`：Python Agent WebSocket 端点（必须是 `ws://`，例如 `ws://localhost:8001/agent/events/ws`，Rust 会直接用这个 URL 建立与 `/agent/events/ws` 的连接）
+- `DATABASE_URL`：PostgreSQL 连接字符串，开发时可在 `.env` 中写 `postgres://user:password@localhost:5432/aitrader`；部署脚本会把它传给 systemd。
+- `DATABASE_SCHEMA`：PostgreSQL schema 名称，默认 `aitrader`，也可以通过 `.env` 覆盖；如果不设置，`init_database` 仍会使用 `aitrader`。
 
 ## 下一步建议
 

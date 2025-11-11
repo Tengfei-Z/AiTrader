@@ -41,8 +41,7 @@ struct SymbolQuery {
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/ticker", get(get_ticker))
+    Router::new().route("/ticker", get(get_ticker))
 }
 
 async fn get_ticker(

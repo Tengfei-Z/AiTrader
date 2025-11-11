@@ -83,7 +83,7 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
    ```bash
    bash nginx/build.sh
    ```
-   该脚本会同时编译后端、构建前端，并在 `agent/.venv` 中安装 Agent 所需依赖，为后续 `deploy.sh`/systemd 启动做好准备。
+   该脚本会构建后端/前端并在 `agent/.venv` 安装依赖，配合后续的 systemd/nginx setup 直接部署产物；数据库配置由 `.env` 提供，不再由脚本注入。
 
 ## 后续工作
 

@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ...core.event_manager import event_manager
+from ..schemas.analysis import AnalysisRequest
 from ..services.strategy_analyzer import StrategyAnalyzer
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -20,41 +21,32 @@ async def agent_event_socket(websocket: WebSocket) -> None:
         while True:
             message = await websocket.receive_text()
             
-            # 处理 ping/pong
-            if message.lower() == "ping":
-                await websocket.send_text("pong")
-                continue
-            
             # 解析 JSON 消息
             try:
                 data = json.loads(message)
                 message_type = data.get("type")
                 
                 if message_type == "trigger_analysis":
-                    request_id = data.get("request_id", "unknown")
-                    logger.info(f"收到策略分析请求: request_id={request_id}")
+                    logger.info("收到策略分析请求")
                     
                     # 执行分析
                     try:
-                        result = await analyzer.analyze()
+                        result = await analyzer.analyze(AnalysisRequest())
                         
                         # 发送分析结果
                         response = {
                             "type": "analysis_result",
-                            "request_id": request_id,
                             "analysis": {
                                 "summary": result.summary,
-                                "suggestions": result.suggestions,
                             }
                         }
                         await websocket.send_json(response)
-                        logger.info(f"策略分析完成: request_id={request_id}")
+                        logger.info("策略分析完成")
                         
                     except Exception as e:
                         logger.error(f"策略分析失败: {e}", exc_info=True)
                         error_response = {
                             "type": "analysis_error",
-                            "request_id": request_id,
                             "error": str(e)
                         }
                         await websocket.send_json(error_response)

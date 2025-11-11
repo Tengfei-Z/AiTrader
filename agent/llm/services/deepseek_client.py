@@ -67,7 +67,6 @@ class DeepSeekClient:
                 temperature=temperature,
                 tools=tools,
                 tool_choice=tool_choice,
-                #response_format=response_format,
             )
         except OpenAIError as exc:  # pragma: no cover - network path
             logger.error(

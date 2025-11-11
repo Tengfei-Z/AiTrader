@@ -88,8 +88,6 @@ static_owner = dig(deployment, "static.owner") or "www-data"
 static_group = dig(deployment, "static.group") or "www-data"
 
 runtime_env = deployment.get("runtime_env") or {}
-
-db_url = runtime_env.get("database_url") or dig(data, "db.url") or ""
 log_file_path = runtime_env.get("log_file_path") or "/var/log/aitrader/api-server.log"
 log_level = runtime_env.get("log_level") or dig(data, "logging.level") or "info"
 http_proxy = runtime_env.get("http_proxy") or os.getenv("http_proxy") or os.getenv("HTTP_PROXY")
@@ -166,7 +164,6 @@ assignments = {
     "NGINX_HTTPS_PORT_SUFFIX": https_port_suffix,
     "SYSTEMD_SERVICE_NAME": service_name,
     "SYSTEMD_UNIT_PATH": unit_path,
-    "DATABASE_URL": db_url,
     "LOG_FILE_PATH": log_file_path,
     "LOG_LEVEL": log_level,
     "AGENT_DIR": agent_dir,
@@ -448,7 +445,6 @@ WorkingDirectory=${BACKEND_DIR}
 ExecStart=${BACKEND_BINARY}
 Environment=CONFIG_FILE=${CONFIG_FILE}
 Environment=SERVER_BIND=${BACKEND_BIND_ADDR}
-Environment=DATABASE_URL=${DATABASE_URL}
 Environment=LOG_FILE_PATH=${LOG_FILE_PATH}
 Environment=LOG_LEVEL=${LOG_LEVEL}
 EOF
