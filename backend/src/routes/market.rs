@@ -35,22 +35,6 @@ impl From<okx::models::Ticker> for Ticker {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrderBook {
-    pub bids: Vec<(String, String)>,
-    pub asks: Vec<(String, String)>,
-    pub timestamp: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Trade {
-    pub trade_id: String,
-    pub price: String,
-    pub size: String,
-    pub side: String,
-    pub timestamp: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct SymbolQuery {
     symbol: String,
@@ -59,8 +43,6 @@ struct SymbolQuery {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/ticker", get(get_ticker))
-        .route("/orderbook", get(get_orderbook))
-        .route("/trades", get(get_trades))
 }
 
 async fn get_ticker(
@@ -70,7 +52,7 @@ async fn get_ticker(
     let use_simulated = CONFIG.okx_use_simulated();
     tracing::info!(symbol = %symbol, use_simulated, "received ticker request");
 
-    if let Some(client) = state.okx_simulated.clone() {
+    if let Some(client) = state.okx_client.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
                 tracing::info!(
@@ -94,22 +76,4 @@ async fn get_ticker(
     Json(ApiResponse::<Ticker>::error(format!(
         "symbol {symbol} not found"
     )))
-}
-
-async fn get_orderbook(
-    _state: State<AppState>,
-    Query(SymbolQuery { symbol }): Query<SymbolQuery>,
-) -> impl IntoResponse {
-    tracing::info!(symbol = %symbol, "received orderbook request");
-    Json(ApiResponse::<OrderBook>::error(format!(
-        "symbol {symbol} not found"
-    )))
-}
-
-async fn get_trades(
-    _state: State<AppState>,
-    Query(SymbolQuery { symbol }): Query<SymbolQuery>,
-) -> impl IntoResponse {
-    tracing::info!(symbol = %symbol, "received trades request");
-    Json(ApiResponse::ok(Vec::<Trade>::new()))
 }
