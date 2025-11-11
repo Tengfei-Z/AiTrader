@@ -80,8 +80,9 @@ fn build_events_url(base_url: &str) -> Result<Url, url::ParseError> {
         "http" => "ws",
         "https" => "wss",
         other => other,
-    };
-    url.set_scheme(scheme).ok();
+    }
+    .to_owned();
+    url.set_scheme(&scheme).ok();
     url.set_path("/agent/events/ws");
     Ok(url)
 }
@@ -137,6 +138,7 @@ struct TaskResultPayload {
     orders: Vec<AgentOrderPayload>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AgentAnalysisPayload {
     session_id: String,
