@@ -1,3 +1,12 @@
+//! 数据库操作模块
+//! 
+//! 提供 PostgreSQL 数据库的连接、迁移和 CRUD 操作功能
+//! - 数据库初始化和表结构迁移（migration）
+//! - 策略消息的存储和查询
+//! - 订单历史记录管理
+//! - 账户余额快照记录
+//! - 初始资金记录
+
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -6,39 +15,63 @@ use std::{
     collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::Duration,
 };
 use tokio_postgres::{Client, NoTls};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+/// 默认配置文件路径
 const DEFAULT_CONFIG_PATH: &str = "config/config.yaml";
+/// 默认数据库 schema 名称
 const DEFAULT_SCHEMA: &str = "aitrader";
 
+/// 全局配置缓存（只读取一次）
+static DB_CONFIG_CACHE: OnceLock<Option<DbSection>> = OnceLock::new();
+
+/// 配置文件结构（顶层）
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     db: Option<DbSection>,
 }
 
+/// 数据库配置段
 #[derive(Debug, Deserialize, Clone)]
 struct DbSection {
+    /// 数据库连接字符串（如 postgresql://user:pass@localhost/dbname）
     url: Option<String>,
+    /// 数据库 schema 名称（默认为 aitrader）
     schema: Option<String>,
 }
 
+/// 内部使用的数据库设置
 #[derive(Debug, Clone)]
 struct DatabaseSettings {
+    /// 数据库连接 URL
     url: Option<String>,
+    /// 数据库 schema 名称
     schema: String,
 }
 
+/// 从配置文件加载数据库设置（带缓存）
+/// 
+/// 读取 config.yaml 中的数据库配置，包括连接 URL 和 schema 名称
+/// 
+/// **性能优化：**
+/// - 使用 `OnceLock` 缓存配置，首次调用时读取文件，之后直接使用缓存
+/// - 避免每次数据库操作都重新读取配置文件
 fn database_settings() -> DatabaseSettings {
     let mut settings = DatabaseSettings {
         url: None,
         schema: DEFAULT_SCHEMA.to_string(),
     };
 
-    if let Some(db_section) = load_db_section_from_config() {
+    // 使用缓存的配置（第一次调用时会读取文件并缓存）
+    let db_section = DB_CONFIG_CACHE.get_or_init(|| load_db_section_from_config());
+
+    if let Some(db_section) = db_section {
+        // 读取数据库连接 URL（去除空白字符）
         if let Some(url) = db_section.url.as_ref().and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -50,6 +83,7 @@ fn database_settings() -> DatabaseSettings {
             settings.url = Some(url);
         }
 
+        // 读取 schema 名称（去除空白字符）
         if let Some(schema) = db_section.schema.as_ref().and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -65,10 +99,14 @@ fn database_settings() -> DatabaseSettings {
     settings
 }
 
+/// 从配置文件中加载数据库配置段
+/// 
+/// 会在多个候选路径中搜索配置文件（如 config/config.yaml）
 fn load_db_section_from_config() -> Option<DbSection> {
     let config_path =
         env::var("AITRADER_CONFIG_PATH").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
 
+    // 在多个候选路径中搜索配置文件
     for candidate in candidate_paths(&config_path) {
         let path = candidate.clone();
         if let Some(config) = read_config(candidate) {
@@ -86,6 +124,9 @@ fn load_db_section_from_config() -> Option<DbSection> {
     None
 }
 
+/// 读取 YAML 配置文件
+/// 
+/// 解析 YAML 文件并返回配置结构
 fn read_config(path: PathBuf) -> Option<FileConfig> {
     if !path.exists() {
         return None;
@@ -95,21 +136,32 @@ fn read_config(path: PathBuf) -> Option<FileConfig> {
     serde_yaml::from_str(&contents).ok()
 }
 
+/// 生成配置文件的候选搜索路径列表
+/// 
+/// 按优先级搜索：
+/// 1. 绝对路径
+/// 2. AITRADER_REPO_ROOT 环境变量指定的目录
+/// 3. CARGO_MANIFEST_DIR 及其父目录
+/// 4. 当前工作目录及其父目录
+/// 5. 相对路径 ../ 和 ../../
 fn candidate_paths(config_path: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
     let target = PathBuf::from(config_path);
 
+    // 如果是绝对路径，直接使用
     if target.is_absolute() {
         candidates.push(target);
         return candidates;
     }
 
+    // 从 AITRADER_REPO_ROOT 环境变量搜索
     if let Ok(repo_root) = env::var("AITRADER_REPO_ROOT") {
         let base = PathBuf::from(repo_root);
         push_candidate(&base.join(config_path), &mut candidates, &mut seen);
     }
 
+    // 从 Cargo manifest 目录及其父目录搜索
     if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let base = PathBuf::from(manifest_dir);
         for ancestor in base.ancestors() {
@@ -121,6 +173,7 @@ fn candidate_paths(config_path: &str) -> Vec<PathBuf> {
         }
     }
 
+    // 从当前工作目录及其父目录搜索
     if let Ok(current_dir) = env::current_dir() {
         for ancestor in current_dir.ancestors() {
             push_candidate(
@@ -146,6 +199,7 @@ fn candidate_paths(config_path: &str) -> Vec<PathBuf> {
     candidates
 }
 
+/// 添加候选路径（避免重复）
 fn push_candidate(path: &Path, candidates: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
     let canonical = if path.is_absolute() {
         path.to_path_buf()
@@ -158,8 +212,12 @@ fn push_candidate(path: &Path, candidates: &mut Vec<PathBuf>, seen: &mut HashSet
     }
 }
 
+/// 连接 PostgreSQL 数据库
+/// 
+/// 建立异步数据库连接，并在后台任务中维护连接
 async fn connect_client(url: &str) -> Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
+    // 在后台维护数据库连接
     tokio::spawn(async move {
         if let Err(err) = connection.await {
             warn!(%err, "postgres connection error");
@@ -168,8 +226,13 @@ async fn connect_client(url: &str) -> Result<Client> {
     Ok(client)
 }
 
-async fn run_migrations(client: &Client, schema: &str) -> Result<()> {
-    for statement in migration_statements(schema) {
+/// 创建数据库表（如果不存在）
+/// 
+/// 在数据库初始化时执行所有 CREATE TABLE IF NOT EXISTS 语句
+/// - 如果表已存在，则跳过（不会修改现有表结构）
+/// - 如果表不存在，则创建新表
+async fn create_tables_if_not_exists(client: &Client, schema: &str) -> Result<()> {
+    for statement in table_creation_statements(schema) {
         let trimmed = statement.trim();
         if trimmed.is_empty() {
             continue;
@@ -177,6 +240,7 @@ async fn run_migrations(client: &Client, schema: &str) -> Result<()> {
 
         match client.batch_execute(trimmed).await {
             Ok(_) => {}
+            // pgcrypto 扩展失败时只警告，不中断（可能权限不足）
             Err(err) if trimmed.starts_with("CREATE EXTENSION IF NOT EXISTS pgcrypto") => {
                 if let Some(db_err) = err.as_db_error() {
                     let code = db_err.code().code();
@@ -185,10 +249,10 @@ async fn run_migrations(client: &Client, schema: &str) -> Result<()> {
                         message = db_err.message(),
                         detail = db_err.detail().unwrap_or_default(),
                         hint = db_err.hint().unwrap_or_default(),
-                        "failed to create pgcrypto extension, continuing"
+                        "创建 pgcrypto 扩展失败，继续执行（可能是权限不足）"
                     );
                 } else {
-                    warn!(?err, "failed to create pgcrypto extension, continuing");
+                    warn!(?err, "创建 pgcrypto 扩展失败，继续执行");
                 }
             }
             Err(err) => {
@@ -200,10 +264,10 @@ async fn run_migrations(client: &Client, schema: &str) -> Result<()> {
                         message = db_err.message(),
                         detail = db_err.detail().unwrap_or_default(),
                         hint = db_err.hint().unwrap_or_default(),
-                        "database migration statement failed"
+                        "创建表失败"
                     );
                 } else {
-                    warn!(?err, stmt = trimmed, "database migration statement failed");
+                    warn!(?err, stmt = trimmed, "创建表失败");
                 }
                 return Err(err.into());
             }
@@ -213,27 +277,54 @@ async fn run_migrations(client: &Client, schema: &str) -> Result<()> {
     Ok(())
 }
 
-fn migration_statements(schema: &str) -> Vec<String> {
+/// 生成数据库表创建 SQL 语句列表
+/// 
+/// **返回的 SQL 语句（所有都是 CREATE IF NOT EXISTS，不会修改已有表）：**
+/// 
+/// 1. **CREATE EXTENSION pgcrypto**: 启用 UUID 生成功能（gen_random_uuid）
+/// 
+/// 2. **CREATE SCHEMA**: 创建独立的 schema（类似命名空间），避免与其他应用冲突
+/// 
+/// 3. **strategies 表**: 存储 AI 策略分析结果
+///    - id: 唯一标识
+///    - summary: 策略分析摘要
+///    - created_at: 创建时间
+/// 
+/// 4. **orders 表**: 存储订单记录
+///    - symbol: 交易对（如 BTC-USDT-SWAP）
+///    - side: 买卖方向（buy/sell）
+///    - price/size: 价格和数量
+///    - status: 订单状态
+///    - metadata: 额外信息（JSON 格式）
+/// 
+/// 5. **balances 表**: 存储账户余额快照（用于绘制权益曲线）
+///    - asset: 资产类型（如 USDT）
+///    - available: 可用余额
+///    - locked: 冻结余额
+///    - valuation: 总估值
+/// 
+/// 6. **initial_equities 表**: 存储初始资金记录
+///    - amount: 初始资金金额
+///    - recorded_at: 记录时间
+fn table_creation_statements(schema: &str) -> Vec<String> {
     vec![
+        // 1. 创建 pgcrypto 扩展（用于生成 UUID）
         "CREATE EXTENSION IF NOT EXISTS pgcrypto;".to_string(),
+        
+        // 2. 创建 schema（数据库命名空间）
         format!("CREATE SCHEMA IF NOT EXISTS {schema};", schema = schema),
+        
+        // 3. 创建策略表（存储 AI 分析结果）
         format!(
             "CREATE TABLE IF NOT EXISTS {schema}.strategies (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                session_id      TEXT NOT NULL,
                 summary         TEXT NOT NULL,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
             );",
             schema = schema,
         ),
-        format!(
-            "ALTER TABLE {schema}.strategies
-                DROP COLUMN IF EXISTS content,
-                DROP COLUMN IF EXISTS role,
-                DROP COLUMN IF EXISTS tags,
-                DROP COLUMN IF EXISTS confidence;",
-            schema = schema,
-        ),
+        
+        // 4. 创建订单表（存储交易订单）
         format!(
             "CREATE TABLE IF NOT EXISTS {schema}.orders (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -252,11 +343,8 @@ fn migration_statements(schema: &str) -> Vec<String> {
             );",
             schema = schema,
         ),
-        format!(
-            "ALTER TABLE {schema}.orders
-                DROP COLUMN IF EXISTS confidence;",
-            schema = schema,
-        ),
+        
+        // 5. 创建余额快照表（用于绘制权益曲线）
         format!(
             "CREATE TABLE IF NOT EXISTS {schema}.balances (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -269,6 +357,8 @@ fn migration_statements(schema: &str) -> Vec<String> {
             );",
             schema = schema,
         ),
+        
+        // 6. 创建初始资金表
         format!(
             "CREATE TABLE IF NOT EXISTS {schema}.initial_equities (
                 id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -280,6 +370,18 @@ fn migration_statements(schema: &str) -> Vec<String> {
     ]
 }
 
+/// 初始化数据库
+/// 
+/// 应用启动时调用此函数，执行以下操作：
+/// 1. 从配置文件读取数据库连接信息
+/// 2. 连接到 PostgreSQL 数据库
+/// 3. **如果 RESET_DATABASE=true，则删除整个 schema 并重建（危险操作！）**
+/// 4. 创建所有必需的表（如果不存在）
+/// 
+/// **环境变量：**
+/// - `RESET_DATABASE=true`: 启动时清空并重建数据库（会删除所有数据！）
+/// 
+/// 如果数据库未配置或连接失败，会记录警告但不中断应用启动
 pub async fn init_database() -> Result<()> {
     let DatabaseSettings { url, schema } = database_settings();
 
@@ -302,26 +404,56 @@ pub async fn init_database() -> Result<()> {
         }
     };
 
-    run_migrations(&client, schema.as_str()).await?;
+    // 检查是否需要重置数据库
+    let should_reset = env::var("RESET_DATABASE")
+        .unwrap_or_else(|_| String::from("false"))
+        .to_lowercase()
+        == "true";
+
+    if should_reset {
+        warn!(
+            schema = %schema,
+            "⚠️  RESET_DATABASE=true 检测到，将删除并重建 schema（所有数据将丢失）"
+        );
+        
+        // 删除整个 schema（CASCADE 会删除所有表）
+        let drop_sql = format!("DROP SCHEMA IF EXISTS {schema} CASCADE;", schema = schema);
+        match client.batch_execute(&drop_sql).await {
+            Ok(_) => info!(schema = %schema, "Schema 已删除"),
+            Err(err) => {
+                warn!(%err, schema = %schema, "删除 schema 失败");
+                return Err(err.into());
+            }
+        }
+    }
+
+    create_tables_if_not_exists(&client, schema.as_str()).await?;
     info!("数据库初始化完成");
 
     Ok(())
 }
 
+/// 策略消息插入载荷（用于写入数据库）
 #[derive(Debug, Clone)]
 pub struct StrategyMessageInsert {
-    pub session_id: String,
+    /// 策略分析摘要内容
     pub summary: String,
 }
 
+/// 策略消息记录（从数据库读取）
 #[derive(Debug, Clone)]
 pub struct StrategyMessageRecord {
+    /// 记录唯一标识
     pub id: Uuid,
-    pub session_id: String,
+    /// 策略分析摘要内容
     pub summary: String,
+    /// 创建时间
     pub created_at: DateTime<Utc>,
 }
 
+/// 插入策略消息到数据库
+/// 
+/// 将 AI 生成的策略分析结果存储到 strategies 表
 pub async fn insert_strategy_message(payload: StrategyMessageInsert) -> Result<()> {
     let DatabaseSettings { url, schema } = database_settings();
 
@@ -342,13 +474,13 @@ pub async fn insert_strategy_message(payload: StrategyMessageInsert) -> Result<(
     };
 
     let sql = format!(
-        "INSERT INTO {schema}.strategies (session_id, summary)
-         VALUES ($1, $2);",
+        "INSERT INTO {schema}.strategies (summary)
+         VALUES ($1);",
         schema = schema,
     );
 
     client
-        .execute(&sql, &[&payload.session_id, &payload.summary])
+        .execute(&sql, &[&payload.summary])
         .await
         .map(|_| ())
         .map_err(|err| {
@@ -357,6 +489,9 @@ pub async fn insert_strategy_message(payload: StrategyMessageInsert) -> Result<(
         })
 }
 
+/// 查询最近的策略消息列表
+/// 
+/// 按创建时间倒序返回指定数量的策略记录，用于前端展示历史分析
 pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRecord>> {
     let DatabaseSettings { url, schema } = database_settings();
 
@@ -367,7 +502,7 @@ pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRe
 
     let client = connect_client(&url).await?;
     let sql = format!(
-        "SELECT id::text AS id_text, session_id, summary, created_at
+        "SELECT id::text AS id_text, summary, created_at
          FROM {schema}.strategies
          ORDER BY created_at DESC
          LIMIT $1;",
@@ -388,7 +523,6 @@ pub async fn fetch_strategy_messages(limit: i64) -> Result<Vec<StrategyMessageRe
 
         records.push(StrategyMessageRecord {
             id,
-            session_id: row.get("session_id"),
             summary: row.get("summary"),
             created_at: row.get("created_at"),
         });
