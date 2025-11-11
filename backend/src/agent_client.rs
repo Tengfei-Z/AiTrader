@@ -2,18 +2,10 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize)]
-pub struct AgentAnalysisRequest {
-    pub session_id: String,
-}
+use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AgentAnalysisResponse {
-    pub session_id: String,
-    pub instrument_id: String,
-    pub analysis_type: String,
     pub summary: String,
     #[serde(default)]
     pub suggestions: Vec<String>,
@@ -48,13 +40,12 @@ impl AgentClient {
         )
     }
 
-    pub async fn analysis(&self, request: AgentAnalysisRequest) -> Result<AgentAnalysisResponse> {
+    pub async fn analysis(&self) -> Result<AgentAnalysisResponse> {
         let url = self.url("/analysis/");
         tracing::info!(target: "agent_client", url = %url, "dispatching_agent_analysis");
         let response = self
             .http
             .post(url)
-            .json(&request)
             .send()
             .await
             .context("failed to call agent analysis endpoint")?;
