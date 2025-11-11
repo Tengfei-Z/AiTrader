@@ -119,15 +119,9 @@ _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分
 
 class StrategyAnalyzer:
     async def analyze(self, request: AnalysisRequest) -> AnalysisResponse:
-        instrument_id = "BTC-USDT-SWAP"
-        analysis_type = "market_overview"
-
-        history = await conversation_manager.get_history(request.session_id, limit=5)
+        history = await conversation_manager.get_history("", limit=5)
         logger.info(
             "analysis_history_loaded",
-            session_id=request.session_id,
-            instrument=instrument_id,
-            analysis_type=analysis_type,
             history_messages=len(history),
         )
 
@@ -137,11 +131,7 @@ class StrategyAnalyzer:
         messages.append(
             ChatMessage(
                 role="user",
-                content=(
-                    f"Instrument: {instrument_id}\n"
-                    f"Analysis type: {analysis_type}\n"
-                    "请严格按照职责行事，若需要行情、账户或交易操作，请自行调用 MCP 工具。"
-                ),
+                content="请严格按照职责行事，若需要行情、账户或交易操作，请自行调用 MCP 工具。",
             )
         )
 
@@ -152,8 +142,6 @@ class StrategyAnalyzer:
         async def _dispatch_chat() -> dict[str, Any]:
             logger.info(
                 "deepseek_analysis_dispatch",
-                session_id=request.session_id,
-                instrument=instrument_id,
                 history=len(history),
             )
             return await deepseek_client.chat_completion(
@@ -221,16 +209,12 @@ class StrategyAnalyzer:
             if not tool_calls:
                 logger.info(
                     "strategy_no_tool_calls",
-                    session_id=request.session_id,
-                    instrument=instrument_id,
                     iteration=iteration,
                 )
                 break
 
             logger.info(
                 "strategy_tool_calls_detected",
-                session_id=request.session_id,
-                instrument=instrument_id,
                 iteration=iteration,
                 tool_count=len(tool_calls),
             )
@@ -239,8 +223,6 @@ class StrategyAnalyzer:
             if iteration == max_iterations:
                 logger.warning(
                     "strategy_tool_loop_maxed",
-                    session_id=request.session_id,
-                    instrument=instrument_id,
                     max_iterations=max_iterations,
                 )
                 break
@@ -251,8 +233,6 @@ class StrategyAnalyzer:
         summary = choice.get("content", "No analysis generated.")
         logger.info(
             "strategy_final_response",
-            session_id=request.session_id,
-            instrument=instrument_id,
             summary_preview=summary[:800] if isinstance(summary, str) else str(summary)[:800],
         )
 
@@ -265,40 +245,33 @@ class StrategyAnalyzer:
             ]
 
         response = AnalysisResponse(
-            session_id=request.session_id,
-            instrument_id=instrument_id,
-            analysis_type=analysis_type,
             summary=summary,
             suggestions=[s for s in suggestions if s],
             created_at=datetime.now(tz=timezone.utc),
         )
 
         await conversation_manager.add_message(
-            request.session_id,
+            "",
             ChatMessage(role="assistant", content=summary),
         )
 
         logger.info(
             "analysis_response_prepared",
-            session_id=request.session_id,
             suggestions=len(response.suggestions),
         )
 
-        await publish_task_result(
-            {
-                "type": "task_result",
-                "task_id": response.session_id,
-                "status": "completed",
-                "analysis": {
-                    "session_id": response.session_id,
-                    "instrument_id": response.instrument_id,
-                    "analysis_type": response.analysis_type,
-                    "summary": response.summary,
-                    "suggestions": response.suggestions,
-                    "completed_at": response.created_at.isoformat(),
-                },
-                "orders": [event.to_dict() for event in event_collector.order_events],
-            }
+        # 推送订单更新事件（如果有订单）
+        for order_event in event_collector.order_events:
+            await publish_task_result(
+                {
+                    "type": "order_update",
+                    **order_event.to_dict(),
+                }
+            )
+
+        logger.info(
+            "strategy_analysis_completed",
+            orders_count=len(event_collector.order_events),
         )
 
         return response
