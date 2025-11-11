@@ -1,15 +1,40 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tracing::{error, info, warn};
 use url::Url;
+use uuid::Uuid;
 
 use crate::db;
 use crate::settings::CONFIG;
+
+/// 全局 WebSocket 发送器（用于其他模块发送消息到 Agent）
+static WS_SENDER: once_cell::sync::OnceCell<mpsc::UnboundedSender<OutgoingMessage>> =
+    once_cell::sync::OnceCell::new();
+
+/// 待处理的分析请求（用于关联请求和响应）
+type PendingAnalyses = Arc<Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<AnalysisResult>>>>;
+
+/// 发送到 Agent 的消息
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OutgoingMessage {
+    TriggerAnalysis { request_id: String },
+}
+
+/// 从 Agent 接收的分析结果
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnalysisResult {
+    pub summary: String,
+    #[serde(default)]
+    pub suggestions: Vec<String>,
+}
 
 pub async fn run_agent_events_listener() {
     let base_url = match CONFIG.agent_base_url() {
@@ -28,6 +53,17 @@ pub async fn run_agent_events_listener() {
         }
     };
 
+    // 创建消息发送通道
+    let (tx, mut rx) = mpsc::unbounded_channel::<OutgoingMessage>();
+    
+    // 注册全局发送器
+    if let Err(_) = WS_SENDER.set(tx.clone()) {
+        warn!("WebSocket sender already initialized");
+    }
+
+    // 待处理的分析请求
+    let pending_analyses: PendingAnalyses = Arc::new(Mutex::new(std::collections::HashMap::new()));
+
     warn!("starting agent websocket subscriber for {ws_url}");
 
     loop {
@@ -38,14 +74,12 @@ pub async fn run_agent_events_listener() {
 
                 loop {
                     tokio::select! {
+                        // 接收来自 Agent 的消息
                         message = read.next() => match message {
                             Some(Ok(Message::Text(text))) => {
-                                if let Err(err) = handle_agent_message(&text).await {
+                                if let Err(err) = handle_agent_message(&text, pending_analyses.clone()).await {
                                     warn!(error = ?err, "failed to process agent websocket message");
                                 }
-                                let _ = write
-                                    .send(Message::Text("{\"status\":\"received\"}".to_string()))
-                                    .await;
                             }
                             Some(Ok(Message::Ping(payload))) => {
                                 let _ = write.send(Message::Pong(payload)).await;
@@ -60,6 +94,23 @@ pub async fn run_agent_events_listener() {
                                 break;
                             }
                         },
+                        
+                        // 发送消息到 Agent
+                        Some(outgoing) = rx.recv() => {
+                            let json = match serde_json::to_string(&outgoing) {
+                                Ok(json) => json,
+                                Err(err) => {
+                                    warn!(error = ?err, "failed to serialize outgoing message");
+                                    continue;
+                                }
+                            };
+                            info!(message = %json, "sending message to agent");
+                            if let Err(err) = write.send(Message::Text(json)).await {
+                                warn!(error = ?err, "failed to send message to agent");
+                                break;
+                            }
+                        },
+                        
                         _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                     }
                 }
@@ -71,6 +122,34 @@ pub async fn run_agent_events_listener() {
 
         tokio::time::sleep(Duration::from_secs(5)).await;
         info!("reconnecting to agent websocket");
+    }
+}
+
+/// 触发策略分析（供其他模块调用）
+pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
+    let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
+    
+    let request_id = Uuid::new_v4().to_string();
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    
+    // 注册请求等待响应
+    // 注意：这里简化处理，实际应该有超时清理机制
+    // TODO: 实现更完善的请求-响应关联机制
+    
+    // 发送触发消息
+    sender
+        .send(OutgoingMessage::TriggerAnalysis {
+            request_id: request_id.clone(),
+        })
+        .map_err(|_| "failed to send trigger message")?;
+    
+    info!(request_id = %request_id, "triggered strategy analysis via websocket");
+    
+    // 等待响应（带超时）
+    match tokio::time::timeout(Duration::from_secs(120), response_rx).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) => Err("response channel closed".to_string()),
+        Err(_) => Err("analysis timeout".to_string()),
     }
 }
 
@@ -87,37 +166,54 @@ fn build_events_url(base_url: &str) -> Result<Url, url::ParseError> {
     Ok(url)
 }
 
-async fn handle_agent_message(payload: &str) -> Result<(), serde_json::Error> {
+async fn handle_agent_message(payload: &str, pending: PendingAnalyses) -> Result<(), serde_json::Error> {
     let message: AgentMessage = serde_json::from_str(payload)?;
     match message {
-        AgentMessage::TaskResult(event) => process_task_result(event).await,
+        AgentMessage::AnalysisResult(result) => process_analysis_result(result, pending).await,
+        AgentMessage::OrderUpdate(event) => process_order_update(event).await,
     }
 }
 
-async fn process_task_result(payload: TaskResultPayload) -> Result<(), serde_json::Error> {
-    let analysis = payload.analysis;
-    let summary_preview: String = analysis.summary.chars().take(120).collect();
+async fn process_analysis_result(
+    payload: AnalysisResultPayload,
+    _pending: PendingAnalyses,
+) -> Result<(), serde_json::Error> {
     info!(
-        task_id = %payload.task_id,
-        status = %payload.status,
-        session_id = %analysis.session_id,
-        instrument = %analysis.instrument_id,
-        summary_preview = %summary_preview,
-        suggestions = analysis.suggestions.len(),
-        "processing agent task_result event"
+        request_id = %payload.request_id,
+        summary_len = payload.analysis.summary.len(),
+        suggestions = payload.analysis.suggestions.len(),
+        "received analysis result from agent"
     );
 
-    for order_payload in payload.orders {
-        let ord_id = order_payload.ord_id.clone().unwrap_or_default();
-        if let Some(event) = order_payload.into_db_event() {
-            if let Err(err) = db::upsert_agent_order(event).await {
-                warn!(
-                    task_id = %payload.task_id,
-                    ord_id = %ord_id,
-                    error = ?err,
-                    "failed to persist agent order event"
-                );
-            }
+    // 存储到数据库
+    if let Err(err) = db::insert_strategy_message(db::StrategyMessageInsert {
+        summary: payload.analysis.summary.clone(),
+    })
+    .await
+    {
+        warn!(error = ?err, "failed to persist analysis result");
+    }
+
+    // TODO: 通知等待的请求（需要实现请求-响应关联机制）
+    
+    Ok(())
+}
+
+async fn process_order_update(payload: OrderUpdatePayload) -> Result<(), serde_json::Error> {
+    info!(
+        ord_id = %payload.ord_id.as_ref().unwrap_or(&"unknown".to_string()),
+        symbol = %payload.symbol.as_ref().unwrap_or(&"unknown".to_string()),
+        status = %payload.status.as_ref().unwrap_or(&"unknown".to_string()),
+        "processing order update event"
+    );
+
+    if let Some(event) = payload.into_db_event() {
+        if let Err(err) = db::upsert_agent_order(event).await {
+            warn!(
+                ord_id = %payload.ord_id.as_ref().unwrap_or(&"unknown".to_string()),
+                error = ?err,
+                "failed to persist agent order event"
+            );
         }
     }
 
@@ -127,30 +223,25 @@ async fn process_task_result(payload: TaskResultPayload) -> Result<(), serde_jso
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AgentMessage {
-    TaskResult(TaskResultPayload),
+    AnalysisResult(AnalysisResultPayload),
+    OrderUpdate(OrderUpdatePayload),
 }
 
 #[derive(Debug, Deserialize)]
-struct TaskResultPayload {
-    task_id: String,
-    status: String,
-    analysis: AgentAnalysisPayload,
-    orders: Vec<AgentOrderPayload>,
+struct AnalysisResultPayload {
+    request_id: String,
+    analysis: AnalysisData,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct AgentAnalysisPayload {
-    session_id: String,
-    instrument_id: String,
-    analysis_type: String,
+struct AnalysisData {
     summary: String,
+    #[serde(default)]
     suggestions: Vec<String>,
-    completed_at: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentOrderPayload {
+struct OrderUpdatePayload {
     #[serde(rename = "ordId")]
     ord_id: Option<String>,
     symbol: Option<String>,
@@ -166,7 +257,7 @@ struct AgentOrderPayload {
     metadata: Value,
 }
 
-impl AgentOrderPayload {
+impl OrderUpdatePayload {
     fn into_db_event(self) -> Option<db::AgentOrderEvent> {
         let ord_id = self.ord_id?;
         Some(db::AgentOrderEvent {
