@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::agent_client::{AgentAnalysisRequest, AgentClient};
+use crate::agent_client::AgentClient;
 use crate::db::{fetch_strategy_messages, insert_strategy_message, StrategyMessageInsert};
 use crate::types::ApiResponse;
 use crate::AppState;
@@ -17,7 +17,6 @@ use crate::AppState;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategyMessage {
     pub id: String,
-    pub session_id: String,
     pub summary: String,
     pub created_at: String,
 }
@@ -35,7 +34,6 @@ async fn get_strategy_chat() -> impl IntoResponse {
                 .into_iter()
                 .map(|record| StrategyMessage {
                     id: record.id.to_string(),
-                    session_id: record.session_id,
                     summary: record.summary,
                     created_at: record.created_at.to_rfc3339(),
                 })
@@ -59,60 +57,36 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
         return Json(ApiResponse::<()>::error("AI Agent 未配置或初始化失败"));
     };
 
-    let run_id = {
-        let mut counter = state.strategy_run_counter.write().await;
-        *counter += 1;
-        *counter
-    };
-
-    tracing::info!(run_id, "Triggering agent strategy analysis");
-
-    let session_id = format!("strategy-auto-{run_id}");
-    tracing::info!(
-        run_id,
-        session_id = %session_id,
-        "Dispatching agent analysis request"
-    );
+    tracing::info!("Triggering agent strategy analysis");
 
     tokio::spawn(async move {
-        if let Err(err) = run_strategy_job(agent_client, run_id, session_id).await {
-            tracing::warn!(run_id, %err, "Strategy analysis task failed");
+        if let Err(err) = run_strategy_job(agent_client).await {
+            tracing::warn!(%err, "Strategy analysis task failed");
         }
     });
 
     Json(ApiResponse::ok(()))
 }
 
-async fn run_strategy_job(
-    agent_client: AgentClient,
-    run_id: u64,
-    session_id: String,
-) -> Result<()> {
+async fn run_strategy_job(agent_client: AgentClient) -> Result<()> {
     let timeout_budget = Duration::from_secs(60);
-    let request = AgentAnalysisRequest {
-        session_id: session_id.clone(),
-    };
 
-    let response = match tokio::time::timeout(timeout_budget, agent_client.analysis(request)).await
+    let response = match tokio::time::timeout(timeout_budget, agent_client.analysis()).await
     {
         Err(_) => {
-            tracing::error!(run_id, "Agent analysis timed out");
+            tracing::error!("Agent analysis timed out");
             return Err(anyhow!("agent_analysis_timeout"));
         }
         Ok(result) => match result {
             Ok(resp) => resp,
             Err(err) => {
-                tracing::error!(run_id, error = %err, "Agent analysis failed");
+                tracing::error!(error = %err, "Agent analysis failed");
                 return Err(err);
             }
         },
     };
 
     tracing::info!(
-        run_id,
-        session_id = %response.session_id,
-        instrument_id = %response.instrument_id,
-        analysis_type = %response.analysis_type,
         completed_at = %response.created_at,
         summary_preview = %truncate_for_log(&response.summary, 256),
         suggestions = response.suggestions.len(),
@@ -129,24 +103,17 @@ async fn run_strategy_job(
         }
     }
 
-    let summary_label = format!("第 {} 次策略执行", run_id);
-    let summary_body = format!("{summary_label}\n\n{content}");
-
-    tracing::debug!(run_id, "Persisting strategy message to database");
+    tracing::debug!("Persisting strategy message to database");
 
     if let Err(err) = insert_strategy_message(StrategyMessageInsert {
-        session_id: response.session_id.clone(),
-        summary: summary_body,
+        summary: content,
     })
     .await
     {
-        tracing::warn!(run_id, %err, "写入策略摘要到数据库失败");
+        tracing::warn!(%err, "写入策略摘要到数据库失败");
     }
 
-    tracing::info!(
-        run_id,
-        "Strategy run completed and stored in background task"
-    );
+    tracing::info!("Strategy run completed and stored in background task");
     Ok(())
 }
 
