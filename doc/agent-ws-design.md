@@ -21,7 +21,7 @@ Agent (OKX client + LLM bridge)
 
 ### 3. 消息协议
 
-#### 3.1. 任务下发（Rust → agent）
+#### 3.1. 任务下发（Rust → agent，启动策略/下单）
 
 ```json
 {
@@ -40,6 +40,8 @@ Agent (OKX client + LLM bridge)
 }
 ```
 
+- `task_request` 代表 Rust 要 agent 执行的策略命令（如开启某个策略、下单/撤单），对应前面的 `strategies` 结论；`payload` 里可扩展 `strategy_id`、`confidence`、`stop_loss` 等辅助字段。
+- Rust 下发 `place_order` 时，可把 `strategy_ids` 数组塞入，agent 只负责对 OKX 发起请求并返回结果，由 Rust 在 `orders` 表建立记录并追踪后续事件。
 - Agent 可增加 `metadata` 里需要的模式示意：止盈/止损、算法版本、策略摘要等。
 
 #### 3.2. 初始响应（agent → Rust）
