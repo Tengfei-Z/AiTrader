@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -61,6 +62,39 @@ def build_attach_algo_orders(order: PlaceOrderInput) -> list[dict[str, str]]:
         attach.append(_algo_order("tp", order.tp_trigger_px))
     return attach
 
+
+def _to_decimal(value: Any) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return None
+
+
+async def _apply_default_triggers(order: PlaceOrderInput, payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("slTriggerPx") or payload.get("tpTriggerPx"):
+        return payload
+
+    ticker = await okx_client.get_ticker(order.inst_id)
+    data = ticker.get("data") if isinstance(ticker, dict) else []
+    if not data:
+        return payload
+
+    last_decimal = _to_decimal(data[0].get("last"))
+    if last_decimal is None:
+        return payload
+
+    step = Decimal(1).scaleb(last_decimal.as_tuple().exponent)
+    buy_factors = (Decimal("0.985"), Decimal("1.015"))
+    sell_factors = (Decimal("1.015"), Decimal("0.985"))
+    sl_factor, tp_factor = buy_factors if order.side == "buy" else sell_factors
+
+    sl = (last_decimal * sl_factor).quantize(step, rounding=ROUND_HALF_UP)
+    tp = (last_decimal * tp_factor).quantize(step, rounding=ROUND_HALF_UP)
+
+    payload["slTriggerPx"] = format(sl, "f")
+    payload["tpTriggerPx"] = format(tp, "f")
+    return payload
+
 class CancelOrderInput(BaseModel):
     """撤单参数，至少提供 OKX 订单 ID 或客户端订单 ID。"""
 
@@ -115,6 +149,7 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
     """
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
+    payload = await _apply_default_triggers(order, payload)
     attach = build_attach_algo_orders(order)
     if attach:
         payload["attachAlgoOrds"] = attach

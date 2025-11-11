@@ -97,7 +97,7 @@ agent/
 1. 先用 `get_positions` 确认当前持仓方向与数量。
 2. 决定方向后填写 `side` 与对应 `posSide` (`buy`→`long`、`sell`→`short`)。
 3. 附上 `sz`、`tdMode`，若为限价单再提供 `px`。
-4. 如果提供 `slTriggerPx`/`tpTriggerPx`，工具会自动生成对应 `attachAlgoOrds`；若无需止盈止损，可留空。
+4. 如果提供 `slTriggerPx`/`tpTriggerPx`，工具会自动生成对应 `attachAlgoOrds`；若留空，工具会基于最新价自动生成一个上下浮动约 1.5% 的止盈止损，仍能满足 OKX 校验。
 5. 添加 `reduceOnly: true` 表示只减仓，默认可省略。
 
 示例：
