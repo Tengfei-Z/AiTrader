@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub agent: Option<AgentConfig>,
     #[serde(default = "default_okx_use_simulated")]
     pub okx_use_simulated: bool,
+    #[serde(default = "default_initial_equity")]
+    pub initial_equity: f64,
 }
 
 impl AppConfig {
@@ -49,11 +51,17 @@ impl AppConfig {
             Err(_) => None,
         };
 
+        let initial_equity = env::var("INITIAL_EQUITY")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or_else(default_initial_equity);
+
         Ok(Self {
             okx_base_url,
             okx_credentials,
             agent,
             okx_use_simulated,
+            initial_equity,
         })
     }
 
@@ -95,6 +103,10 @@ fn default_okx_base_url() -> String {
 
 fn default_okx_use_simulated() -> bool {
     true
+}
+
+fn default_initial_equity() -> f64 {
+    122_000.0
 }
 
 fn env_bool(key: &str, default: bool) -> bool {
