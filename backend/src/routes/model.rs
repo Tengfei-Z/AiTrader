@@ -1,15 +1,11 @@
-use std::time::Duration;
-
-use anyhow::{anyhow, Result};
 use axum::{
-    extract::State,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::agent_client::AgentClient;
+use crate::agent_subscriber;
 use crate::db::{fetch_strategy_messages, insert_strategy_message, StrategyMessageInsert};
 use crate::types::ApiResponse;
 use crate::AppState;
@@ -49,18 +45,13 @@ async fn get_strategy_chat() -> impl IntoResponse {
     }
 }
 
-async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoResponse {
+async fn trigger_strategy_run() -> impl IntoResponse {
     tracing::info!("HTTP POST /model/strategy-run invoked from UI");
 
-    let Some(agent_client) = state.agent.clone() else {
-        tracing::error!("Agent client not initialised");
-        return Json(ApiResponse::<()>::error("AI Agent 未配置或初始化失败"));
-    };
-
-    tracing::info!("Triggering agent strategy analysis");
+    tracing::info!("Triggering agent strategy analysis via WebSocket");
 
     tokio::spawn(async move {
-        if let Err(err) = run_strategy_job(agent_client).await {
+        if let Err(err) = run_strategy_job().await {
             tracing::warn!(%err, "Strategy analysis task failed");
         }
     });
@@ -68,29 +59,15 @@ async fn trigger_strategy_run(State(state): State<AppState>) -> impl IntoRespons
     Json(ApiResponse::ok(()))
 }
 
-async fn run_strategy_job(agent_client: AgentClient) -> Result<()> {
-    let timeout_budget = Duration::from_secs(60);
+async fn run_strategy_job() -> Result<(), String> {
+    tracing::info!("Triggering strategy analysis via WebSocket");
 
-    let response = match tokio::time::timeout(timeout_budget, agent_client.analysis()).await
-    {
-        Err(_) => {
-            tracing::error!("Agent analysis timed out");
-            return Err(anyhow!("agent_analysis_timeout"));
-        }
-        Ok(result) => match result {
-            Ok(resp) => resp,
-            Err(err) => {
-                tracing::error!(error = %err, "Agent analysis failed");
-                return Err(err);
-            }
-        },
-    };
+    let response = agent_subscriber::trigger_analysis().await?;
 
     tracing::info!(
-        completed_at = %response.created_at,
         summary_preview = %truncate_for_log(&response.summary, 256),
         suggestions = response.suggestions.len(),
-        "Agent analysis completed"
+        "Agent analysis completed via WebSocket"
     );
 
     let mut content = format!("【市场分析】\n{}\n", response.summary);
