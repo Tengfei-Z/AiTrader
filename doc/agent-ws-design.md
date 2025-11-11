@@ -17,6 +17,7 @@ Agent (OKX client + LLM bridge)
 
 - Rust 通过内部 `POST /analysis/`（触发策略执行/下单）向 agent 唯一下发任务；agent 返回前会调度 LLM、判断策略、完成 OKX 交易，并在所有结果准备完毕后才通过 WebSocket 把 `task_result` 以及后续事件发送给 Rust。  
 - agent 维持心跳/重连，确认 `session_id`/`agent_id`，在 `task_result` 后继续推送 `order_event`/`pnl_update`，Rust 根据这些消息更新 `orders`/`balances`，agent 本身不写 DB。
+- Rust 还为 agent 暴露 `ws://<rust-host>/agent/ws` 长链，agent 每次 `task_result` 与后续事件都通过这个通道发送给后端；后端对每条消息回复 `{"status":"ok"}`，并在收到后立即入库。
 
 ### 3. 消息协议
 

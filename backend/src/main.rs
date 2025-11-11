@@ -3,11 +3,13 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 mod agent_client;
+mod agent_events;
 mod db;
 mod okx;
 mod server_config;
 mod settings;
 
+use crate::agent_events::agent_websocket;
 use crate::db::{
     fetch_balance_snapshots, fetch_initial_equity, fetch_latest_balance_snapshot,
     fetch_order_history, fetch_strategy_messages, init_database, insert_balance_snapshot,
@@ -401,6 +403,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));
 
     let router = Router::new()
+        .route("/agent/ws", get(agent_websocket))
         .merge(api_routes())
         .nest("/api", api_routes())
         .with_state(app_state)
@@ -621,7 +624,10 @@ async fn get_initial_equity() -> impl IntoResponse {
 }
 
 async fn set_initial_equity(Json(payload): Json<InitialEquityPayload>) -> impl IntoResponse {
-    info!(amount = payload.amount, "POST /account/initial-equity invoked");
+    info!(
+        amount = payload.amount,
+        "POST /account/initial-equity invoked"
+    );
     if payload.amount < 0.0 {
         return Json(ApiResponse::<Option<InitialEquityRecord>>::error(
             "初始资金不能为负值",

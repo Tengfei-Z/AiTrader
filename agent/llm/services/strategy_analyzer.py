@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from ...core.logging_config import get_logger
+from ...core.rust_bridge import publish_task_result
 from ...mcp.server import call_tool, get_tools_schema
 from ..schemas.analysis import AnalysisRequest, AnalysisResponse
 from ..schemas.chat import ChatMessage
@@ -14,6 +16,71 @@ from .conversation_manager import conversation_manager
 from .deepseek_client import deepseek_client
 
 logger = get_logger(__name__)
+
+@dataclass
+class OrderEvent:
+    ord_id: str
+    symbol: str | None
+    side: str | None
+    order_type: str | None
+    price: str | None
+    size: str | None
+    filled_size: str | None
+    status: str | None
+    metadata: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ordId": self.ord_id,
+            "symbol": self.symbol,
+            "side": self.side,
+            "order_type": self.order_type,
+            "price": self.price,
+            "size": self.size,
+            "filled_size": self.filled_size,
+            "status": self.status,
+            "metadata": self.metadata,
+        }
+
+
+class AgentEventCollector:
+    def __init__(self) -> None:
+        self.order_events: list[OrderEvent] = []
+
+    def record_tool_call(
+        self, name: str, arguments: dict[str, Any], result: dict[str, Any]
+    ) -> None:
+        if name != "place_order":
+            return
+
+        payloads = result.get("data") or []
+        if isinstance(payloads, dict):
+            payloads = [payloads]
+        if not isinstance(payloads, list):
+            payloads = [payloads]
+
+        for entry in payloads:
+            if not isinstance(entry, dict):
+                continue
+            ord_id = entry.get("ordId") or entry.get("orderId")
+            if not ord_id:
+                continue
+            self.order_events.append(
+                OrderEvent(
+                    ord_id=ord_id,
+                    symbol=arguments.get("instId") or entry.get("instId"),
+                    side=arguments.get("side"),
+                    order_type=arguments.get("ordType"),
+                    price=arguments.get("px") or entry.get("px"),
+                    size=arguments.get("sz") or entry.get("sz"),
+                    filled_size=entry.get("fillSz") or entry.get("filledSize"),
+                    status=entry.get("sMsg") or entry.get("state") or "placed",
+                    metadata={
+                        "tool_arguments": arguments,
+                        "tool_response": entry,
+                    },
+                )
+            )
 
 _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
 
@@ -78,6 +145,8 @@ class StrategyAnalyzer:
             )
         )
 
+        event_collector = AgentEventCollector()
+
         tools_schema = get_tools_schema()
 
         async def _dispatch_chat() -> dict[str, Any]:
@@ -105,9 +174,9 @@ class StrategyAnalyzer:
                     tool_call_id=tool_call.get("id"),
                 )
                 try:
-                    arguments = (
-                        json.loads(arguments_raw) if isinstance(arguments_raw, str) else arguments_raw
-                    ) or {}
+                arguments = (
+                    json.loads(arguments_raw) if isinstance(arguments_raw, str) else arguments_raw
+                ) or {}
                 except json.JSONDecodeError as exc:
                     if isinstance(arguments_raw, str):
                         try:
@@ -124,6 +193,8 @@ class StrategyAnalyzer:
                     arguments=arguments,
                     result_summary=str(result)[:800],
                 )
+
+                event_collector.record_tool_call(name, arguments, result)
 
                 messages.append(
                     ChatMessage(
@@ -211,6 +282,23 @@ class StrategyAnalyzer:
             "analysis_response_prepared",
             session_id=request.session_id,
             suggestions=len(response.suggestions),
+        )
+
+        await publish_task_result(
+            {
+                "type": "task_result",
+                "task_id": response.session_id,
+                "status": "completed",
+                "analysis": {
+                    "session_id": response.session_id,
+                    "instrument_id": response.instrument_id,
+                    "analysis_type": response.analysis_type,
+                    "summary": response.summary,
+                    "suggestions": response.suggestions,
+                    "completed_at": response.created_at.isoformat(),
+                },
+                "orders": [event.to_dict() for event in event_collector.order_events],
+            }
         )
 
         return response

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{
     collections::HashSet,
     env, fs,
@@ -348,10 +348,7 @@ pub async fn insert_strategy_message(payload: StrategyMessageInsert) -> Result<(
     );
 
     client
-        .execute(
-            &sql,
-            &[&payload.session_id, &payload.summary],
-        )
+        .execute(&sql, &[&payload.session_id, &payload.summary])
         .await
         .map(|_| ())
         .map_err(|err| {
@@ -557,6 +554,116 @@ pub struct BalanceSnapshotInsert {
     pub locked: f64,
     pub valuation: f64,
     pub source: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentOrderEvent {
+    pub ord_id: String,
+    pub symbol: String,
+    pub side: String,
+    pub order_type: Option<String>,
+    pub price: Option<f64>,
+    pub size: f64,
+    pub filled_size: Option<f64>,
+    pub status: String,
+    pub metadata: Value,
+}
+
+pub async fn upsert_agent_order(event: AgentOrderEvent) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("未配置数据库连接字符串，无法写入 agent order");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let metadata = normalize_order_metadata(event.metadata, &event.ord_id);
+    let status = event.status.clone();
+    let is_terminal = is_terminal_status(&status);
+
+    let update_sql = format!(
+        "UPDATE {schema}.orders
+         SET status = $2,
+             filled_size = COALESCE($3, filled_size),
+             metadata = metadata || $4,
+             closed_at = CASE WHEN $5 THEN NOW() ELSE closed_at END
+         WHERE metadata->>'ordId' = $1;",
+        schema = schema,
+    );
+
+    let rows_updated = client
+        .execute(
+            &update_sql,
+            &[
+                &event.ord_id,
+                &status,
+                &event.filled_size,
+                &metadata,
+                &is_terminal,
+            ],
+        )
+        .await?;
+
+    if rows_updated == 0 {
+        let insert_sql = format!(
+            "INSERT INTO {schema}.orders (
+                symbol,
+                side,
+                order_type,
+                price,
+                size,
+                filled_size,
+                status,
+                metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);",
+            schema = schema
+        );
+        client
+            .execute(
+                &insert_sql,
+                &[
+                    &event.symbol,
+                    &event.side,
+                    &event.order_type,
+                    &event.price,
+                    &event.size,
+                    &event.filled_size,
+                    &status,
+                    &metadata,
+                ],
+            )
+            .await?;
+    }
+
+    Ok(())
+}
+
+fn normalize_order_metadata(metadata: Value, ord_id: &str) -> Value {
+    match metadata {
+        Value::Object(mut map) => {
+            map.entry("ordId")
+                .or_insert_with(|| Value::String(ord_id.to_string()));
+            Value::Object(map)
+        }
+        other => {
+            let mut map = Map::new();
+            map.insert("ordId".to_string(), Value::String(ord_id.to_string()));
+            map.insert("payload".to_string(), other);
+            Value::Object(map)
+        }
+    }
+}
+
+fn is_terminal_status(status: &str) -> bool {
+    let normalized = status.to_lowercase();
+    normalized.contains("filled")
+        || normalized.contains("cancel")
+        || normalized.contains("closed")
+        || normalized.contains("reject")
 }
 
 pub async fn fetch_latest_balance_snapshot(asset: &str) -> Result<Option<BalanceSnapshotRecord>> {

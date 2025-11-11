@@ -184,6 +184,8 @@ FastMCP 工具内部直接调用 OKX REST：
 - `OKX_USE_SIMULATED`：是否对请求附带 `X-SIMULATED-TRADING: 1`（默认开启，设为 `false` 走实盘）  
 - `AGENT_HOST` / `AGENT_PORT`：FastAPI 监听地址  
 - `AGENT_BASE_URL`：提供给 Rust 的 Agent 地址（后端读取）  
+- `RUST_WS_URL`：Rust API 的 WebSocket 事件通道，agent 会在 `/analysis/` 业务完成后推送 `task_result`（示例 `ws://rust:3000/agent/ws`）  
+- `RUST_WS_TIMEOUT_SECONDS`：等待 Rust WebSocket ACK 的超时时间（默认 5 秒）  
 - `LOG_FILE`：日志文件路径，默认 `log/agent.log`
 
 ## 测试
