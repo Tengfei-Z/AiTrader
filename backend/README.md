@@ -2,14 +2,19 @@
 
 这个目录现在只包含一个 Rust crate（`src/`），负责提供 REST API、加载配置以及访问 OKX。
 
-## 目录结构
+## 架构概览
 
-- `src/main.rs`：Axum 入口，路由、状态管理、Agent 转发逻辑。
-- `src/agent_client.rs`：与 Python Agent 交互的 HTTP 客户端封装。
-- `src/server_config.rs`：读取 `config/config.yaml` 的可选绑定/代理配置。
-- `src/settings.rs`：环境变量与 `.env` 加载，提供全局 `CONFIG`。
-- `src/db.rs`：PostgreSQL 初始化与迁移工具（当前主要用于账户/策略相关表）。
-- `src/okx/`：OKX REST 客户端、模型与签名逻辑。
+- `src/main.rs`：启动流程、全局 `AppState`、后台任务、路由汇总，将请求分发至 `routes/` 子模块。
+- `src/routes/`：按功能拆路由。
+  - `routes::market`：`/market/*` 行情接口 + DTO。
+  - `routes::account`：`/account/*` 接口、余额快照循环和所有 OKX 数据逻辑。
+  - `routes::model`：`/model/*` 策略对话与 `strategy-run` 触发。
+- `src/agent_client.rs`：Rust → Python Agent HTTP 请求（`POST /analysis/`），保持同步调用层。
+- `src/agent_subscriber.rs`：websocket client，复用 `AGENT_BASE_URL` 监听 `/agent/events/ws`，解析 `task_result` 并以 `db::upsert_agent_order` 更新数据库。
+- `src/db.rs`：数据库初始化、迁移、查询以及 `orders`/`balances` 操作。
+- `src/okx/`：OKX REST 客户端封装。
+- `src/settings.rs` + `src/server_config.rs`：配置、环境变量、代理设置集中管理。
+- `src/types.rs`：公共 `ApiResponse<T>` 响应结构。
 
 ## 运行服务
 
