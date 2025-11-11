@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, AnyHttpUrl, AnyUrl, Field, SecretStr
+from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,14 +29,6 @@ class AgentSettings(BaseSettings):
 
     agent_host: str = Field("0.0.0.0", description="FastAPI bind host")
     agent_port: int = Field(8001, description="FastAPI bind port")
-    rust_ws_url: AnyUrl | None = Field(
-        None,
-        description="Rust server WebSocket endpoint for agent events (e.g. ws://rust:3000/agent/ws)",
-    )
-    rust_ws_timeout_seconds: float = Field(
-        5.0,
-        description="How long (seconds) to wait for the Rust WebSocket RPC to respond",
-    )
 
     deepseek_api_key: SecretStr = Field(..., description="DeepSeek API key")
     deepseek_api_base: AnyHttpUrl = Field(

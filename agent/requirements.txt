@@ -13,4 +13,3 @@ httpx[cli]>=0.28.1
 ruff>=0.4
 mypy>=1.8
 pydantic-settings>=2.5.2
-websockets>=11.0

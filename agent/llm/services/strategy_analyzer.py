@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from ...core.event_manager import publish_task_result
 from ...core.logging_config import get_logger
-from ...core.rust_bridge import publish_task_result
 from ...mcp.server import call_tool, get_tools_schema
 from ..schemas.analysis import AnalysisRequest, AnalysisResponse
 from ..schemas.chat import ChatMessage

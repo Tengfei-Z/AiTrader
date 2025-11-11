@@ -3,13 +3,14 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 mod agent_client;
-mod agent_events;
+mod agent_subscriber;
 mod db;
 mod okx;
 mod server_config;
 mod settings;
 
 use crate::agent_events::agent_websocket;
+use crate::agent_subscriber::run_agent_events_listener;
 use crate::db::{
     fetch_balance_snapshots, fetch_initial_equity, fetch_latest_balance_snapshot,
     fetch_order_history, fetch_strategy_messages, init_database, insert_balance_snapshot,
@@ -398,12 +399,12 @@ async fn main() -> anyhow::Result<()> {
     };
     let background_state = app_state.clone();
     tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });
+    tokio::spawn(async { run_agent_events_listener().await });
     let bind_addr = settings
         .bind_addr()
         .unwrap_or_else(|_| "0.0.0.0:3000".parse().expect("invalid default addr"));
 
     let router = Router::new()
-        .route("/agent/ws", get(agent_websocket))
         .merge(api_routes())
         .nest("/api", api_routes())
         .with_state(app_state)
