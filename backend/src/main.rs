@@ -32,7 +32,7 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 
 #[derive(Clone)]
 struct AppState {
-    okx_simulated: Option<OkxRestClient>,
+    okx_client: Option<OkxRestClient>,
     agent: Option<AgentClient>,
     strategy_run_counter: Arc<tokio::sync::RwLock<u64>>,
 }
@@ -56,18 +56,16 @@ async fn main() -> Result<()> {
         http: http_proxy,
         https: https_proxy,
     };
-    let simulated_flag = CONFIG.okx_use_simulated();
-    let okx_simulated = match OkxRestClient::from_config_with_proxy(
+    let okx_client = match OkxRestClient::from_config_with_proxy(
         &CONFIG,
         proxy_options.clone(),
-        simulated_flag,
     ) {
         Ok(client) => {
-            info!(simulated = simulated_flag, "Initialized OKX client");
+            info!("Initialized OKX client");
             Some(client)
         }
         Err(err) => {
-            tracing::error!(error = ?err, simulated = simulated_flag, "Failed to initialise OKX client");
+            tracing::error!(error = ?err, "Failed to initialise OKX client");
             None
         }
     };
@@ -87,7 +85,7 @@ async fn main() -> Result<()> {
     };
 
     let app_state = AppState {
-        okx_simulated,
+        okx_client,
         agent: agent_client,
         strategy_run_counter: Arc::new(tokio::sync::RwLock::new(0)),
     };
