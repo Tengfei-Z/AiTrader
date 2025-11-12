@@ -258,10 +258,24 @@ pub struct OrderHistoryEntry {
     #[serde(rename = "lever")]
     #[serde(default)]
     pub lever: Option<String>,
-    #[serde(rename = "reduceOnly")]
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_bool")]
+    #[serde(
+        rename = "reduceOnly",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
     pub reduce_only: Option<bool>,
+    #[serde(
+        rename = "closeOnTrigger",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
+    pub close_on_trigger: Option<bool>,
+    #[serde(
+        rename = "postOnly",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
+    pub post_only: Option<bool>,
     #[serde(rename = "tradeId")]
     #[serde(default)]
     pub trade_id: Option<String>,
