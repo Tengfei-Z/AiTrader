@@ -9,6 +9,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::db;
+use crate::order_sync;
 use crate::settings::CONFIG;
 
 /// 全局 WebSocket 发送器（用于其他模块发送消息到 Agent）
@@ -183,7 +184,7 @@ async fn process_analysis_result(
         summary_len = payload.analysis.summary.len(),
         "received analysis result from agent"
     );
-
+    
     // 存储到数据库
     let response = AnalysisResult {
         summary: payload.analysis.summary.clone(),
@@ -210,11 +211,23 @@ async fn process_analysis_result(
 }
 
 async fn process_order_update(payload: OrderUpdatePayload) -> Result<(), serde_json::Error> {
-    if let Some(ord_id) = payload.ord_id {
-        info!(ord_id = %ord_id, "received agent order id");
-    } else {
-        warn!("received agent order update without ord_id");
-    }
+    let ord_id = match payload.ord_id {
+        Some(ord_id) => ord_id,
+        None => {
+            warn!("received agent order update without ord_id");
+            return Ok(());
+        }
+    };
+
+    let ord_id_clone = ord_id.clone();
+    tokio::spawn(async move {
+        if let Err(err) = order_sync::process_agent_order_event(&ord_id_clone).await {
+            warn!(error = ?err, ord_id = %ord_id_clone, "failed to sync agent order");
+        } else {
+            info!(ord_id = %ord_id_clone, "processed agent order update");
+        }
+    });
+
     Ok(())
 }
 

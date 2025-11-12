@@ -6,7 +6,8 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::{Client, Method, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{self, Value};
-use tracing::instrument;
+use tracing::{instrument, warn};
+use url::form_urlencoded;
 
 /// OKX API v5 的路径前缀
 const API_PREFIX: &str = "/api/v5";
@@ -106,7 +107,7 @@ impl OkxRestClient {
         if response.data.is_empty() {
             tracing::warn!("获取 ticker 数据为空: {}", inst_id);
         } else {
-            tracing::info!("成功获取 {} 的 ticker 数据", inst_id);
+            tracing::trace!("成功获取 {} 的 ticker 数据", inst_id);
         }
 
         response
@@ -123,7 +124,7 @@ impl OkxRestClient {
     pub async fn get_account_balance(&self) -> Result<super::models::AccountBalanceResponse> {
         let path = format!("{API_PREFIX}/account/balance");
         let response: super::models::AccountBalanceResponse = self.get(&path, None).await?;
-        tracing::info!("成功获取账户余额信息");
+        tracing::trace!("成功获取账户余额信息");
         Ok(response)
     }
 
@@ -151,6 +152,46 @@ impl OkxRestClient {
 
         let response: ResponseWrapper = self.get(&path, None).await?;
         tracing::info!("获取到 {} 条持仓记录", response.data.len());
+        Ok(response.data)
+    }
+
+    /// 获取订单历史
+    pub async fn get_order_history(
+        &self,
+        inst_type: Option<&str>,
+        inst_id: Option<&str>,
+        state: Option<&str>,
+        ord_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<super::models::OrderHistoryEntry>> {
+        let mut path = format!("{API_PREFIX}/trade/orders-history");
+        append_query_param_if_some(&mut path, "instType", inst_type);
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        append_query_param_if_some(&mut path, "state", state);
+        append_query_param_if_some(&mut path, "ordId", ord_id);
+        if let Some(limit_value) = limit {
+            append_query_param(&mut path, "limit", &limit_value.to_string());
+        }
+
+        let response: super::models::OrderHistoryResponse = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
+    /// 获取成交回报（fills）
+    pub async fn get_fills(
+        &self,
+        inst_id: Option<&str>,
+        ord_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<super::models::FillDetail>> {
+        let mut path = format!("{API_PREFIX}/trade/fills");
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        append_query_param_if_some(&mut path, "ordId", ord_id);
+        if let Some(limit_value) = limit {
+            append_query_param(&mut path, "limit", &limit_value.to_string());
+        }
+
+        let response: super::models::FillResponse = self.get(&path, None).await?;
         Ok(response.data)
     }
 
@@ -246,8 +287,17 @@ impl OkxRestClient {
         // 记录原始响应用于调试
         tracing::debug!("OKX response body: {}", body);
 
-        // 从文本反序列化为目标类型
-        serde_json::from_str::<T>(body).map_err(|err| OkxError::Deserialize(err.into()).into())
+        match serde_json::from_str::<T>(body) {
+            Ok(parsed) => Ok(parsed),
+            Err(err) => {
+                warn!(
+                    error = ?err,
+                    response_body = %body,
+                    "failed to deserialize OKX response"
+                );
+                Err(OkxError::Deserialize(err.into()).into())
+            }
+        }
     }
 }
 
@@ -256,4 +306,22 @@ impl OkxRestClient {
 /// OKX API 要求使用此格式的时间戳进行签名
 fn current_timestamp_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn append_query_param_if_some(path: &mut String, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        append_query_param(path, key, value);
+    }
+}
+
+fn append_query_param(path: &mut String, key: &str, value: &str) {
+    if path.contains('?') {
+        path.push('&');
+    } else {
+        path.push('?');
+    }
+
+    path.push_str(key);
+    path.push('=');
+    path.push_str(&form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>());
 }

@@ -3,6 +3,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use serde::Deserialize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -166,4 +167,122 @@ pub struct PositionHistoryDetail {
     pub c_time: Option<String>,
     #[serde(default)]
     pub u_time: Option<String>,
+}
+
+fn deserialize_optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as DeError;
+
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Bool(v)) => Ok(Some(v)),
+        Some(serde_json::Value::Number(num)) => {
+            if let Some(int_val) = num.as_i64() {
+                match int_val {
+                    0 => Ok(Some(false)),
+                    1 => Ok(Some(true)),
+                    _ => Err(D::Error::custom(format!(
+                        "invalid boolean number: {int_val}"
+                    ))),
+                }
+            } else {
+                Err(D::Error::custom("invalid numeric boolean"))
+            }
+        }
+        Some(serde_json::Value::String(s)) => {
+            let normalized = s.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "true" | "1" | "yes" | "on" => Ok(Some(true)),
+                "false" | "0" | "no" | "off" => Ok(Some(false)),
+                _ => Err(D::Error::custom(format!(
+                    "invalid boolean string: {normalized}"
+                ))),
+            }
+        }
+        Some(other) => Err(D::Error::custom(format!(
+            "invalid boolean type: {other}"
+        ))),
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderHistoryEntry {
+    #[serde(default)]
+    pub inst_type: Option<String>,
+    #[serde(rename = "instId")]
+    pub inst_id: String,
+    #[serde(rename = "ordId")]
+    pub ord_id: String,
+    #[serde(rename = "clOrdId")]
+    pub cl_ord_id: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    pub side: String,
+    #[serde(rename = "posSide")]
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    #[serde(rename = "ordType")]
+    pub ord_type: String,
+    #[serde(rename = "tdMode")]
+    #[serde(default)]
+    pub td_mode: Option<String>,
+    #[serde(rename = "sz")]
+    pub sz: String,
+    #[serde(rename = "accFillSz")]
+    #[serde(default)]
+    pub acc_fill_sz: String,
+    #[serde(rename = "fillSz")]
+    #[serde(default)]
+    pub fill_sz: Option<String>,
+    #[serde(rename = "fillPx")]
+    #[serde(default)]
+    pub fill_px: Option<String>,
+    #[serde(rename = "px")]
+    #[serde(default)]
+    pub px: Option<String>,
+    pub state: String,
+    #[serde(rename = "lever")]
+    #[serde(default)]
+    pub lever: Option<String>,
+    #[serde(
+        rename = "reduceOnly",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
+    pub reduce_only: Option<bool>,
+    #[serde(
+        rename = "closeOnTrigger",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
+    pub close_on_trigger: Option<bool>,
+    #[serde(
+        rename = "postOnly",
+        default,
+        deserialize_with = "deserialize_optional_bool"
+    )]
+    pub post_only: Option<bool>,
+    #[serde(rename = "tradeId")]
+    #[serde(default)]
+    pub trade_id: Option<String>,
+    #[serde(rename = "uTime")]
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(rename = "cTime")]
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct OrderHistoryResponse {
+    pub data: Vec<OrderHistoryEntry>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FillResponse {
+    pub data: Vec<FillDetail>,
 }

@@ -6,6 +6,7 @@ use std::{
 mod agent_subscriber;
 mod db;
 mod okx;
+mod order_sync;
 mod routes;
 mod server_config;
 mod settings;
@@ -71,7 +72,12 @@ async fn main() -> Result<()> {
 
     let background_state = app_state.clone();
     tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });
+    let sync_client = app_state.okx_client.clone();
+    order_sync::init_client(sync_client.clone());
     tokio::spawn(async { run_agent_events_listener().await });
+    tokio::spawn(async move {
+        order_sync::run_periodic_position_sync().await;
+    });
 
     let bind_addr = settings
         .bind_addr()
@@ -109,8 +115,8 @@ fn init_tracing() {
 
     let env_filter = EnvFilter::from_default_env()
         .add_directive(Level::INFO.into())
-        .add_directive("reqwest=debug".parse().unwrap())
-        .add_directive("hyper=debug".parse().unwrap());
+        .add_directive("reqwest=info".parse().unwrap())
+        .add_directive("hyper=info".parse().unwrap());
 
     let fmt_stdout = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
     let fmt_file = tracing_subscriber::fmt::layer()

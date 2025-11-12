@@ -35,19 +35,47 @@ class AgentEventCollector:
         if name != "place_order":
             return
 
-        payloads = result.get("data") or []
-        if isinstance(payloads, dict):
-            payloads = [payloads]
-        if not isinstance(payloads, list):
-            payloads = [payloads]
+        payloads = self._extract_payloads(result)
+        logger.info(
+            "strategy_place_order_result",
+            tool=name,
+            arguments=arguments,
+            payload_count=len(payloads),
+        )
 
         for entry in payloads:
             if not isinstance(entry, dict):
                 continue
-            ord_id = entry.get("ordId") or entry.get("orderId")
+            ord_id = (
+                entry.get("ordId")
+                or entry.get("orderId")
+                or entry.get("order_id")
+                or entry.get("tradeId")
+            )
             if not ord_id:
+                logger.info(
+                    "strategy_place_order_no_ord_id",
+                    tool=name,
+                    payload=entry,
+                )
                 continue
             self.order_events.append(OrderEvent(ord_id=ord_id))
+            logger.info(
+                "strategy_place_order_recorded",
+                tool=name,
+                ord_id=ord_id,
+            )
+
+    def _extract_payloads(self, result: dict[str, Any]) -> list[Any]:
+        payload = result.get("data") or result.get("result")
+        if payload is None:
+            return []
+
+        if isinstance(payload, dict):
+            return [payload]
+        if isinstance(payload, list):
+            return payload
+        return [payload]
 
 _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
 
@@ -81,7 +109,12 @@ _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分
 - 所有分析必须输出明确方向（多或空），并配合执行至少一个对应方向的订单。
 - 多空两端都可考虑，方向由趋势与风险收益比决定。
 - 顺势而为，尊重趋势变化。
-- 保持耐心，等待高质量信号。"""
+- 保持耐心，等待高质量信号。
+
+其它要求：
+1. 下单默认使用 5x 杠杆，除非明确说明需要其他倍数并给出理由。
+2. 可以更积极地捕捉机会，但依然要注意仓位控制，避免过度放大头寸。
+3. 所有操作都需有对应理由并输出在响应中。"""
 
 
 class StrategyAnalyzer:

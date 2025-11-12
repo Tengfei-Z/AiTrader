@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::agent_subscriber;
-use crate::db::{fetch_strategy_messages, insert_strategy_message, StrategyMessageInsert};
+use crate::db::fetch_strategy_messages;
 use crate::types::ApiResponse;
 use crate::AppState;
 
@@ -52,34 +52,28 @@ async fn trigger_strategy_run() -> impl IntoResponse {
     tracing::info!("Triggering agent strategy analysis via WebSocket");
 
     tokio::spawn(async move {
-        if let Err(err) = run_strategy_job().await {
-            tracing::warn!(%err, "Strategy analysis task failed");
-        }
+        run_strategy_job().await;
     });
 
     Json(ApiResponse::ok(()))
 }
 
-async fn run_strategy_job() -> Result<(), String> {
+async fn run_strategy_job() {
     tracing::info!("Triggering strategy analysis via WebSocket");
 
-    let response = agent_subscriber::trigger_analysis().await?;
+    match agent_subscriber::trigger_analysis().await {
+        Ok(response) => {
+            tracing::info!(
+                summary_preview = %truncate_for_log(&response.summary, 256),
+                "Agent analysis completed via WebSocket"
+            );
 
-    tracing::info!(
-        summary_preview = %truncate_for_log(&response.summary, 256),
-        "Agent analysis completed via WebSocket"
-    );
-
-    let content = format!("【市场分析】\n{}\n", response.summary);
-
-    tracing::debug!("Persisting strategy message to database");
-
-    if let Err(err) = insert_strategy_message(StrategyMessageInsert { summary: content }).await {
-        tracing::warn!(%err, "写入策略摘要到数据库失败");
+            tracing::info!("Strategy run completed and stored in background task");
+        }
+        Err(err) => {
+            tracing::warn!(%err, "Strategy analysis task failed");
+        }
     }
-
-    tracing::info!("Strategy run completed and stored in background task");
-    Ok(())
 }
 
 fn truncate_for_log(text: &str, max_len: usize) -> String {

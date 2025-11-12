@@ -49,12 +49,12 @@ async fn get_ticker(
     Query(SymbolQuery { symbol }): Query<SymbolQuery>,
 ) -> impl IntoResponse {
     let use_simulated = CONFIG.okx_use_simulated();
-    tracing::info!(symbol = %symbol, use_simulated, "received ticker request");
+    tracing::trace!(symbol = %symbol, use_simulated, "received ticker request");
 
     if let Some(client) = state.okx_client.clone() {
         match client.get_ticker(&symbol).await {
             Ok(remote) => {
-                tracing::info!(
+                tracing::trace!(
                     symbol = %symbol,
                     use_simulated,
                     last = %remote.last,
