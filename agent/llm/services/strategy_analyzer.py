@@ -35,22 +35,23 @@ class AgentEventCollector:
         if name != "place_order":
             return
 
-        payloads = result.get("data") or []
-        if isinstance(payloads, dict):
-            payloads = [payloads]
-        if not isinstance(payloads, list):
-            payloads = [payloads]
+        payloads = self._extract_payloads(result)
         logger.info(
             "strategy_place_order_result",
             tool=name,
             arguments=arguments,
-            raw_payload_count=len(payloads),
+            payload_count=len(payloads),
         )
 
         for entry in payloads:
             if not isinstance(entry, dict):
                 continue
-            ord_id = entry.get("ordId") or entry.get("orderId")
+            ord_id = (
+                entry.get("ordId")
+                or entry.get("orderId")
+                or entry.get("order_id")
+                or entry.get("tradeId")
+            )
             if not ord_id:
                 logger.info(
                     "strategy_place_order_no_ord_id",
@@ -64,6 +65,17 @@ class AgentEventCollector:
                 tool=name,
                 ord_id=ord_id,
             )
+
+    def _extract_payloads(self, result: dict[str, Any]) -> list[Any]:
+        payload = result.get("data") or result.get("result")
+        if payload is None:
+            return []
+
+        if isinstance(payload, dict):
+            return [payload]
+        if isinstance(payload, list):
+            return payload
+        return [payload]
 
 _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分析市场、制定交易计划并执行策略。目标是最大化风险调整后的收益（如 Sharpe Ratio），同时保障账户稳健运行。
 
