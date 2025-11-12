@@ -23,7 +23,7 @@ const StrategyChatCard = ({
 }: Props) => {
   const orderedMessages = (messages ?? [])
     .slice()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   const spinning = Boolean(loading || starting);
 
   const content = (

@@ -11,6 +11,7 @@ use crate::types::ApiResponse;
 use crate::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StrategyMessage {
     pub id: String,
     pub summary: String,
