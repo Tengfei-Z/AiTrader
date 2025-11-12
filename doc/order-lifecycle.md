@@ -83,7 +83,7 @@
 
 - **定位仓位**：agent 事件里会附带 `instId`/`side`/`posSide`，Rust 可以用这些字段定位到具体 `positions` 行（`inst_id`+方向），再据 `filled_size`、`size` 等调整该行 `qty` 与 `avg_price`。
 - **建/平关联**：初次建仓时把 `positions.entry_ord_id` 填为那笔 ordId；一旦该仓位被 agent 平掉，就在同一行写入 `exit_ord_id=当前 ordId`、`closed_at=now()`、`action_kind="exit"`，前端即可通过这对 id 关联建平事件。
-- **被动平仓**：若周期同步发现某个 `inst_id+pos_side` 不再出现在 OKX `/positions`（该接口只返回活跃仓位），就把 `action_kind="forced"`、`size=0`、`closed_at` 补齐，但仅作用于已有 `entry_ord_id` 的行，避免把 agent 未知的旧订单写入。
+- **被动平仓**：若周期同步发现某个 `inst_id+pos_side` 不再出现在 OKX `/positions`（该接口只返回活跃仓位），就把 `action_kind="forced"`、`size=0`、`closed_at` 补齐。由于同步只处理已有的 `positions` 行（来自 agent 订单），即便 `entry_ord_id` 为空也会标记成被动平仓，不会引入新 ordId。
 - **前端呈现**：只要画面显示 `positions`，通过 `closed_at` + `action_kind` 就能分别识别当前持仓、主动平仓与被动平仓，无需额外展示 `orders`。
 
 ## 5. 周期轮询补全

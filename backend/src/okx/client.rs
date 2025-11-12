@@ -107,7 +107,7 @@ impl OkxRestClient {
         if response.data.is_empty() {
             tracing::warn!("获取 ticker 数据为空: {}", inst_id);
         } else {
-            tracing::info!("成功获取 {} 的 ticker 数据", inst_id);
+            tracing::trace!("成功获取 {} 的 ticker 数据", inst_id);
         }
 
         response
@@ -124,7 +124,7 @@ impl OkxRestClient {
     pub async fn get_account_balance(&self) -> Result<super::models::AccountBalanceResponse> {
         let path = format!("{API_PREFIX}/account/balance");
         let response: super::models::AccountBalanceResponse = self.get(&path, None).await?;
-        tracing::info!("成功获取账户余额信息");
+        tracing::trace!("成功获取账户余额信息");
         Ok(response)
     }
 
