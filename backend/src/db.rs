@@ -877,13 +877,13 @@ pub async fn upsert_agent_order(event: AgentOrderEvent) -> Result<()> {
     let update_sql = format!(
         "UPDATE {schema}.orders
          SET status = $2,
-             filled_size = COALESCE($3, filled_size),
+             filled_size = COALESCE(($3::double precision)::numeric, filled_size),
              metadata = metadata || $4,
              last_event_at = NOW(),
              action_kind = COALESCE($5, action_kind),
              td_mode = COALESCE($6, td_mode),
              pos_side = COALESCE($7, pos_side),
-             leverage = COALESCE($8, leverage),
+             leverage = COALESCE(($8::double precision)::numeric, leverage),
              closed_at = CASE WHEN $9 THEN NOW() ELSE closed_at END
          WHERE ord_id = $1;",
         schema = schema,
@@ -922,7 +922,21 @@ pub async fn upsert_agent_order(event: AgentOrderEvent) -> Result<()> {
                 leverage,
                 action_kind,
                 metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);",
+            ) VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                ($7::double precision)::numeric,
+                ($8::double precision)::numeric,
+                ($9::double precision)::numeric,
+                $10,
+                ($11::double precision)::numeric,
+                $12,
+                $13
+            );",
             schema = schema
         );
         client
@@ -977,7 +991,21 @@ pub async fn insert_trade_record(record: TradeRecord) -> Result<()> {
             realized_pnl,
             ts,
             metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            ($8::double precision)::numeric,
+            ($9::double precision)::numeric,
+            ($10::double precision)::numeric,
+            ($11::double precision)::numeric,
+            $12,
+            $13
+        )
         ON CONFLICT (ord_id, trade_id) DO NOTHING;",
         schema = schema,
     );
@@ -1036,7 +1064,24 @@ pub async fn upsert_position_snapshot(snapshot: PositionSnapshot) -> Result<()> 
             exit_ord_id,
             metadata,
             updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+        ) VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            ($5::double precision)::numeric,
+            ($6::double precision)::numeric,
+            ($7::double precision)::numeric,
+            ($8::double precision)::numeric,
+            ($9::double precision)::numeric,
+            $10,
+            $11,
+            $12,
+            $13,
+            $14,
+            $15,
+            NOW()
+        )
         ON CONFLICT (inst_id, pos_side) DO UPDATE SET
             td_mode = EXCLUDED.td_mode,
             side = EXCLUDED.side,

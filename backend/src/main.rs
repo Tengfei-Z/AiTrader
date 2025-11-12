@@ -115,8 +115,8 @@ fn init_tracing() {
 
     let env_filter = EnvFilter::from_default_env()
         .add_directive(Level::INFO.into())
-        .add_directive("reqwest=debug".parse().unwrap())
-        .add_directive("hyper=debug".parse().unwrap());
+        .add_directive("reqwest=info".parse().unwrap())
+        .add_directive("hyper=info".parse().unwrap());
 
     let fmt_stdout = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
     let fmt_file = tracing_subscriber::fmt::layer()
