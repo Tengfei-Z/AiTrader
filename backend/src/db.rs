@@ -1102,6 +1102,7 @@ pub async fn mark_position_forced_exit(inst_id: &str, pos_side: &str) -> Result<
          WHERE inst_id = $1
            AND pos_side = $2
            AND size = 0
+           AND entry_ord_id IS NOT NULL
            AND (action_kind IS NULL OR action_kind <> 'exit');",
         schema = schema
     );
