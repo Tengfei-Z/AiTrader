@@ -7,7 +7,7 @@ use serde_json;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use tokio::time::sleep;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::db::{self, PositionSnapshot, TradeRecord};
 use crate::okx::{self, OkxRestClient};
@@ -42,6 +42,8 @@ pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
         .into_iter()
         .find(|entry| entry.ord_id == ord_id)
         .ok_or_else(|| anyhow!("order history missing {ord_id}"))?;
+
+    info!(?order, "fetched order history entry");
 
     let event = event_from_order_detail(&order)?;
     db::upsert_agent_order(event).await?;

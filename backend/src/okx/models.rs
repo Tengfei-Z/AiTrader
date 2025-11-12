@@ -3,6 +3,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use serde::Deserialize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -172,50 +173,39 @@ fn deserialize_optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D:
 where
     D: serde::Deserializer<'de>,
 {
-    struct Visitor;
+    use serde::de::Error as DeError;
 
-    impl<'de> serde::de::Visitor<'de> for Visitor {
-        type Value = Option<bool>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(formatter, "a bool or string that can be parsed as bool")
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Bool(v)) => Ok(Some(v)),
+        Some(serde_json::Value::Number(num)) => {
+            if let Some(int_val) = num.as_i64() {
+                match int_val {
+                    0 => Ok(Some(false)),
+                    1 => Ok(Some(true)),
+                    _ => Err(D::Error::custom(format!(
+                        "invalid boolean number: {int_val}"
+                    ))),
+                }
+            } else {
+                Err(D::Error::custom("invalid numeric boolean"))
+            }
         }
-
-        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(Some(v))
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            serde::Deserialize::deserialize(deserializer).map(Some)
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            let normalized = value.trim().to_ascii_lowercase();
+        Some(serde_json::Value::String(s)) => {
+            let normalized = s.trim().to_ascii_lowercase();
             match normalized.as_str() {
                 "true" | "1" | "yes" | "on" => Ok(Some(true)),
                 "false" | "0" | "no" | "off" => Ok(Some(false)),
-                _ => Err(E::custom("invalid boolean string")),
+                _ => Err(D::Error::custom(format!(
+                    "invalid boolean string: {normalized}"
+                ))),
             }
         }
+        Some(other) => Err(D::Error::custom(format!(
+            "invalid boolean type: {other}"
+        ))),
     }
-
-    deserializer.deserialize_option(Visitor)
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]

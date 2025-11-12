@@ -6,7 +6,7 @@ use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::{Client, Method, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{self, Value};
-use tracing::instrument;
+use tracing::{instrument, warn};
 use url::form_urlencoded;
 
 /// OKX API v5 的路径前缀
@@ -287,8 +287,17 @@ impl OkxRestClient {
         // 记录原始响应用于调试
         tracing::debug!("OKX response body: {}", body);
 
-        // 从文本反序列化为目标类型
-        serde_json::from_str::<T>(body).map_err(|err| OkxError::Deserialize(err.into()).into())
+        match serde_json::from_str::<T>(body) {
+            Ok(parsed) => Ok(parsed),
+            Err(err) => {
+                warn!(
+                    error = ?err,
+                    response_body = %body,
+                    "failed to deserialize OKX response"
+                );
+                Err(OkxError::Deserialize(err.into()).into())
+            }
+        }
     }
 }
 
