@@ -76,24 +76,24 @@
    - **定时器启动**：若 agent 只发一次，Rust 需开启定时轮询（例如 every minute）调用 OKX `/orders`/`/fills`/`/positions`，用最新数据补全 `trades` 及 `positions` 状态，确保任意 `inst_id` 即使没有后续 websocket 也有更新。
 3. **前端读取**：
    - 持仓页面显示 `positions`（净仓对齐），历史仓位通过 `closed_at IS NOT NULL` 或 `closed_at` 非空的视图。
-   - API `/api/positions` 与 `/api/positions/history` 已切换为直接读取本地 `positions` 表（当前/历史），前端不再连 OKX 的接口。
+   - API `/api/positions` 与 `/api/positions/history` 直接查询本地 `positions` 表（当前/历史），只返回 agent 处理过的 ordId；前端不再连 OKX `/positions`。
    - 若需要 fill 详情/盈亏分解，可直接查询 `trades`。
 
 ## 4. 建/平仓关联与仓位定位
 
 - **定位仓位**：agent 事件里会附带 `instId`/`side`/`posSide`，Rust 可以用这些字段定位到具体 `positions` 行（`inst_id`+方向），再据 `filled_size`、`size` 等调整该行 `qty` 与 `avg_price`。
 - **建/平关联**：初次建仓时把 `positions.entry_ord_id` 填为那笔 ordId；一旦该仓位被 agent 平掉，就在同一行写入 `exit_ord_id=当前 ordId`、`closed_at=now()`、`action_kind="exit"`，前端即可通过这对 id 关联建平事件。
-- **被动平仓**：若轮询补全发现某个 `positions.qty` 变 0 但没有 `exit` 事件，设 `action_kind="forced"`，可把 `exit_ord_id` 塞成造成清仓的 fill ordId（若可得），并继续保留 `entry_ord_id`，方便回溯。
+- **被动平仓**：若周期同步发现某个 `inst_id+pos_side` 不再出现在 OKX `/positions`（该接口只返回活跃仓位），就把 `action_kind="forced"`、`size=0`、`closed_at` 补齐，但仅作用于已有 `entry_ord_id` 的行，避免把 agent 未知的旧订单写入。
 - **前端呈现**：只要画面显示 `positions`，通过 `closed_at` + `action_kind` 就能分别识别当前持仓、主动平仓与被动平仓，无需额外展示 `orders`。
 
 ## 5. 周期轮询补全
    - 由于 agent 可能只在下单时推送一次 ordId，Rust 后端需要周期性（例如每分钟/每个策略运行后）调用 OKX 的 `/fills` 和 `/positions`，用命令行接口补齐 `trades` 与 `positions` 的缺口。
-   - 这个定时任务会按照 `inst_id`/`ord_id` 聚集，对比当前 DB 状态与 REST 返回的数据，将漏掉的 fill 入库或修正 `positions.qty`/`closed_at`，同时更新 `orders.status`。
+   - 这个定时任务会拉取 OKX `/positions`（只返回活跃仓位），按 `inst_id+pos_side` 与本地 `positions` 对比：对新出现的更新 snapshot、对于不再返回的（且已有 `entry_ord_id`）标记 `forced` 平仓并写 `closed_at`。
    - 脚本还可以作为对账工具，帮助定位 agent 丢包或 OKX 状态延迟。
 
 ## 6. Agent 与后端协同建议
 
-- Agent 负责把 “事件 + metadata” 及时推送，后端只消费并写入 DB，不用再轮询 OKX 。
+- Agent 负责把 “事件 + metadata” 及时推送，并且后端仅记录 agent 送来的 `ordId` —— 周期补全不引入新的订单号，避免写入旧订单。后端再次同步 OKX 时也只会标记还在 `positions` 表里、曾由 agent 处理过的行。
 - 若 agent 事件缺字段（例如只剩 `ordId`），后端可加定时任务 `GET /orders/<ordId>` 或 `order_history` 来补全，优先通过 agent 补充 metadata。
 - 为防重复事件，可在 `trades` 上加唯一索引 `ord_id + trade_id`，`orders` 使用 `ord_id` 唯一约束，方便 `upsert`。
 ## 7. 关键优化（最重要的 8 点）

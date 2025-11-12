@@ -1046,7 +1046,11 @@ pub async fn upsert_position_snapshot(snapshot: PositionSnapshot) -> Result<()> 
             margin = EXCLUDED.margin,
             unrealized_pnl = EXCLUDED.unrealized_pnl,
             last_trade_at = COALESCE(EXCLUDED.last_trade_at, positions.last_trade_at),
-            closed_at = COALESCE(EXCLUDED.closed_at, positions.closed_at),
+            closed_at = CASE
+                WHEN EXCLUDED.closed_at IS NOT NULL THEN EXCLUDED.closed_at
+                WHEN EXCLUDED.size <> 0 THEN NULL
+                ELSE positions.closed_at
+            END,
             action_kind = COALESCE(EXCLUDED.action_kind, positions.action_kind),
             entry_ord_id = COALESCE(positions.entry_ord_id, EXCLUDED.entry_ord_id),
             exit_ord_id = COALESCE(EXCLUDED.exit_ord_id, positions.exit_ord_id),
@@ -1097,11 +1101,11 @@ pub async fn mark_position_forced_exit(inst_id: &str, pos_side: &str) -> Result<
     let sql = format!(
         "UPDATE {schema}.positions
          SET action_kind = 'forced',
+             size = 0,
              closed_at = CASE WHEN closed_at IS NULL THEN NOW() ELSE closed_at END,
              updated_at = NOW()
          WHERE inst_id = $1
            AND pos_side = $2
-           AND size = 0
            AND entry_ord_id IS NOT NULL
            AND (action_kind IS NULL OR action_kind <> 'exit');",
         schema = schema

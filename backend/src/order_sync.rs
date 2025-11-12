@@ -5,6 +5,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use once_cell::sync::OnceCell;
 use serde_json;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use tokio::time::sleep;
 use tracing::warn;
 
@@ -73,17 +74,24 @@ pub async fn run_periodic_position_sync() {
 
 async fn sync_positions_from_okx(client: &OkxRestClient) -> Result<()> {
     let positions = client.get_positions(None).await?;
+    let mut seen: HashSet<(String, String)> = HashSet::new();
     for detail in positions {
         let snapshot = position_snapshot_from_detail(&detail)?;
-        let is_zero = snapshot.size == 0.0;
         let inst_id = snapshot.inst_id.clone();
         let pos_side = snapshot.pos_side.clone();
+        seen.insert((inst_id.clone(), pos_side.clone()));
 
         db::upsert_position_snapshot(snapshot).await?;
+    }
 
-        if is_zero {
-            if let Err(err) = db::mark_position_forced_exit(&inst_id, &pos_side).await {
-                warn!(error = ?err, inst_id = %inst_id, pos_side = %pos_side, "failed to mark forced exit");
+    let existing = db::fetch_position_snapshots(false, None, None).await?;
+    for snapshot in existing {
+        let key = (snapshot.inst_id.clone(), snapshot.pos_side.clone());
+        if !seen.contains(&key) {
+            if let Err(err) =
+                db::mark_position_forced_exit(&snapshot.inst_id, &snapshot.pos_side).await
+            {
+                warn!(error = ?err, inst_id = %snapshot.inst_id, pos_side = %snapshot.pos_side, "failed to close missing position");
             }
         }
     }
