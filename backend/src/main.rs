@@ -72,8 +72,9 @@ async fn main() -> Result<()> {
 
     let background_state = app_state.clone();
     tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });
+    let sync_client = app_state.okx_client.clone();
+    order_sync::init_client(sync_client.clone());
     tokio::spawn(async { run_agent_events_listener().await });
-    order_sync::init_client(app_state.okx_client.clone());
     tokio::spawn(async move {
         order_sync::run_periodic_position_sync().await;
     });
