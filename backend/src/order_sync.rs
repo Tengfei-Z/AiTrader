@@ -75,7 +75,17 @@ async fn sync_positions_from_okx(client: &OkxRestClient) -> Result<()> {
     let positions = client.get_positions(None).await?;
     for detail in positions {
         let snapshot = position_snapshot_from_detail(&detail)?;
+        let is_zero = snapshot.size == 0.0;
+        let inst_id = snapshot.inst_id.clone();
+        let pos_side = snapshot.pos_side.clone();
+
         db::upsert_position_snapshot(snapshot).await?;
+
+        if is_zero {
+            if let Err(err) = db::mark_position_forced_exit(&inst_id, &pos_side).await {
+                warn!(error = ?err, inst_id = %inst_id, pos_side = %pos_side, "failed to mark forced exit");
+            }
+        }
     }
     Ok(())
 }

@@ -6,14 +6,16 @@ use axum::{
     routing::get,
     Router,
 };
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::time::sleep;
 
 use crate::db;
 use crate::db::{
     fetch_balance_snapshots, fetch_initial_equity, fetch_latest_balance_snapshot,
-    fetch_order_history, insert_balance_snapshot, insert_initial_equity, BalanceSnapshotInsert,
+    fetch_position_snapshots, insert_balance_snapshot, insert_initial_equity,
+    BalanceSnapshotInsert,
 };
 use crate::okx::{self, OkxRestClient};
 use crate::settings::CONFIG;
@@ -177,72 +179,26 @@ fn default_initial_equity_record() -> InitialEquityRecord {
     }
 }
 
-/// 当前持仓信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Position {
-    /// 交易对符号（如 BTC-USDT-SWAP）
-    symbol: String,
-    /// 持仓方向（long/short/net）
+/// 当前/历史持仓快照（由 backend positions 表提供）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PositionSnapshotResponse {
+    inst_id: String,
+    pos_side: String,
+    td_mode: Option<String>,
     side: String,
-    /// 开仓价格
-    entry_price: Option<f64>,
-    /// 当前价格（标记价格或最新价）
-    current_price: Option<f64>,
-    /// 持仓数量
-    quantity: Option<f64>,
-    /// 杠杆倍数
-    leverage: Option<f64>,
-    /// 强平价格
-    liquidation_price: Option<f64>,
-    /// 保证金
+    size: f64,
+    avg_price: Option<f64>,
+    mark_px: Option<f64>,
     margin: Option<f64>,
-    /// 未实现盈亏
     unrealized_pnl: Option<f64>,
-    /// 开仓时间
-    entry_time: Option<String>,
-    /// 止盈触发价格
-    #[serde(skip_serializing_if = "Option::is_none")]
-    take_profit_trigger: Option<f64>,
-    /// 止盈委托价格
-    #[serde(skip_serializing_if = "Option::is_none")]
-    take_profit_price: Option<f64>,
-    /// 止盈触发类型
-    #[serde(skip_serializing_if = "Option::is_none")]
-    take_profit_type: Option<String>,
-    /// 止损触发价格
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stop_loss_trigger: Option<f64>,
-    /// 止损委托价格
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stop_loss_price: Option<f64>,
-    /// 止损触发类型
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stop_loss_type: Option<String>,
-}
-
-/// 历史持仓记录
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PositionHistory {
-    /// 交易对符号
-    symbol: String,
-    /// 持仓方向
-    side: String,
-    /// 持仓数量
-    quantity: Option<f64>,
-    /// 杠杆倍数
-    leverage: Option<f64>,
-    /// 开仓价格
-    entry_price: Option<f64>,
-    /// 平仓价格
-    exit_price: Option<f64>,
-    /// 保证金
-    margin: Option<f64>,
-    /// 已实现盈亏
-    realized_pnl: Option<f64>,
-    /// 开仓时间
-    entry_time: Option<String>,
-    /// 平仓时间
-    exit_time: Option<String>,
+    last_trade_at: Option<String>,
+    closed_at: Option<String>,
+    action_kind: Option<String>,
+    entry_ord_id: Option<String>,
+    exit_ord_id: Option<String>,
+    metadata: Value,
+    updated_at: String,
 }
 
 /// 交易对查询参数（可选）
@@ -395,99 +351,79 @@ async fn set_initial_equity(
 
 /// 获取当前持仓列表
 ///
-/// 从 OKX 交易所实时获取当前所有持仓信息，仅返回 USDT 交易对的持仓
-async fn get_positions(State(state): State<AppState>) -> impl IntoResponse {
-    let use_simulated = CONFIG.okx_use_simulated();
-    tracing::info!(use_simulated, "received positions request");
-
-    if let Some(client) = state.okx_client.clone() {
-        if let Ok(position_details) = client.get_positions(None).await {
-            let mut positions = Vec::new();
-
-            for detail in position_details {
-                if !detail.inst_id.to_ascii_uppercase().contains("USDT") {
-                    continue;
-                }
-
-                let quantity = parse_optional_number(detail.pos.clone());
-                if quantity
-                    .map(|qty| qty.abs() > f64::EPSILON)
-                    .unwrap_or(false)
-                {
-                    let current_price = parse_optional_number(detail.mark_px.clone())
-                        .or_else(|| parse_optional_number(detail.last.clone()));
-
-                    positions.push(Position {
-                        symbol: detail.inst_id.clone(),
-                        side: detail
-                            .pos_side
-                            .unwrap_or_else(|| "net".to_string())
-                            .to_lowercase(),
-                        entry_price: parse_optional_number(detail.avg_px.clone()),
-                        current_price,
-                        quantity,
-                        leverage: parse_optional_number(detail.lever.clone()),
-                        liquidation_price: parse_optional_number(detail.liq_px.clone()),
-                        margin: parse_optional_number(detail.margin.clone()),
-                        unrealized_pnl: parse_optional_number(detail.upl.clone()),
-                        entry_time: parse_timestamp_millis(detail.c_time.clone()),
-                        take_profit_trigger: parse_optional_number(detail.tp_trigger_px.clone()),
-                        take_profit_price: parse_optional_number(detail.tp_ord_px.clone()),
-                        take_profit_type: optional_string(detail.tp_trigger_px_type.clone()),
-                        stop_loss_trigger: parse_optional_number(detail.sl_trigger_px.clone()),
-                        stop_loss_price: parse_optional_number(detail.sl_ord_px.clone()),
-                        stop_loss_type: optional_string(detail.sl_trigger_px_type.clone()),
-                    });
-                }
-            }
-
-            tracing::info!(
-                use_simulated,
-                position_count = positions.len(),
-                "okx positions parsed"
-            );
-            return Json(ApiResponse::ok(positions));
-        } else {
-            tracing::warn!(use_simulated, "failed to fetch OKX positions");
+/// 从本地 `positions` 表返回当前持仓快照（`closed_at IS NULL`）
+#[axum::debug_handler]
+async fn get_positions() -> Json<ApiResponse<Vec<PositionSnapshotResponse>>> {
+    match fetch_position_snapshots(false, None, None).await {
+        Ok(records) => {
+            let snapshots: Vec<PositionSnapshotResponse> =
+                records.into_iter().map(convert_position_snapshot).collect();
+            Json(ApiResponse::ok(snapshots))
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to fetch current positions from database");
+            Json(ApiResponse::ok(Vec::<PositionSnapshotResponse>::new()))
         }
     }
-
-    Json(ApiResponse::ok(Vec::<Position>::new()))
 }
 
 /// 获取历史持仓记录
 ///
-/// 从数据库读取已平仓的历史持仓信息，支持按交易对过滤
+/// 从本地 `positions` 表读取已平仓仓位，支持按交易对过滤
+#[axum::debug_handler]
 async fn get_positions_history(
-    State(_state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
-) -> impl IntoResponse {
+) -> Json<ApiResponse<Vec<PositionSnapshotResponse>>> {
     let limit = params.limit.map(|v| v as i64);
-    let symbol_filter = params.symbol.clone();
+    let symbol_filter = params.symbol.as_deref();
 
     tracing::info!(?symbol_filter, limit, "received positions history request");
 
-    match fetch_order_history(limit).await {
-        Ok(mut records) => {
-            if let Some(symbol) = symbol_filter {
-                records.retain(|record| record.symbol == symbol);
-            }
-
-            let history: Vec<PositionHistory> = records
-                .into_iter()
-                .map(convert_order_history_record)
-                .collect();
-
+    match fetch_position_snapshots(true, symbol_filter, limit).await {
+        Ok(records) => {
+            let history: Vec<PositionSnapshotResponse> =
+                records.into_iter().map(convert_position_snapshot).collect();
             Json(ApiResponse::ok(history))
         }
         Err(err) => {
-            tracing::warn!(error = %err, "failed to fetch order history from database");
-            Json(ApiResponse::ok(Vec::<PositionHistory>::new()))
+            tracing::warn!(error = %err, "failed to fetch historical positions from database");
+            Json(ApiResponse::ok(Vec::<PositionSnapshotResponse>::new()))
         }
     }
 }
 
-/// 处理可选字符串，去除空白并返回 None（如果为空）
+fn convert_position_snapshot(record: db::PositionSnapshotRecord) -> PositionSnapshotResponse {
+    PositionSnapshotResponse {
+        inst_id: record.inst_id,
+        pos_side: record.pos_side,
+        td_mode: record.td_mode,
+        side: record.side,
+        size: record.size,
+        avg_price: record.avg_price,
+        mark_px: record.mark_px,
+        margin: record.margin,
+        unrealized_pnl: record.unrealized_pnl,
+        last_trade_at: format_datetime(record.last_trade_at),
+        closed_at: format_datetime(record.closed_at),
+        action_kind: record.action_kind,
+        entry_ord_id: record.entry_ord_id,
+        exit_ord_id: record.exit_ord_id,
+        metadata: record.metadata,
+        updated_at: record.updated_at.to_rfc3339(),
+    }
+}
+
+fn format_datetime(value: Option<DateTime<Utc>>) -> Option<String> {
+    value.map(|dt| dt.to_rfc3339())
+}
+
+/// 解析可选的数字字符串为 f64（过滤非有限值）
+fn parse_optional_number(value: Option<String>) -> Option<f64> {
+    optional_string(value)
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+}
+
 fn optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|v| {
         let trimmed = v.trim();
@@ -497,71 +433,6 @@ fn optional_string(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
-}
-
-/// 返回字符串或默认值
-fn string_or_default(value: Option<String>, default: &str) -> String {
-    optional_string(value).unwrap_or_else(|| default.to_string())
-}
-
-/// 将数据库订单历史记录转换为 PositionHistory 格式
-fn convert_order_history_record(record: db::OrderHistoryRecord) -> PositionHistory {
-    // 从 metadata JSON 中提取平仓价格
-    let exit_price = record
-        .metadata
-        .get("exit_price")
-        .and_then(|value| value.as_f64())
-        .or_else(|| {
-            record
-                .metadata
-                .get("avg_exit_price")
-                .and_then(|value| value.as_f64())
-        });
-    // 从 metadata 中提取保证金
-    let margin = record
-        .metadata
-        .get("margin_usdt")
-        .and_then(|value| value.as_f64());
-    // 从 metadata 中提取已实现盈亏
-    let realized_pnl = record
-        .metadata
-        .get("realized_pnl_usdt")
-        .and_then(|value| value.as_f64())
-        .or_else(|| {
-            record
-                .metadata
-                .get("pnl_usdt")
-                .and_then(|value| value.as_f64())
-        });
-
-    PositionHistory {
-        symbol: record.symbol,
-        side: record.side.to_lowercase(),
-        quantity: record.size,
-        leverage: record.leverage,
-        entry_price: record.price,
-        exit_price,
-        margin,
-        realized_pnl,
-        entry_time: Some(record.created_at.to_rfc3339()),
-        exit_time: record.closed_at.map(|dt| dt.to_rfc3339()),
-    }
-}
-
-/// 解析毫秒时间戳为 ISO 8601 字符串
-fn parse_timestamp_millis(value: Option<String>) -> Option<String> {
-    let millis = value?.parse::<i64>().ok()?;
-    chrono::Utc
-        .timestamp_millis_opt(millis)
-        .single()
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-}
-
-/// 解析可选的数字字符串为 f64（过滤非有限值）
-fn parse_optional_number(value: Option<String>) -> Option<f64> {
-    optional_string(value)
-        .and_then(|raw| raw.parse::<f64>().ok())
-        .filter(|v| v.is_finite())
 }
 
 /// 如果余额发生变化则记录新的余额快照

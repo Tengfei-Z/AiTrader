@@ -676,64 +676,110 @@ pub async fn insert_initial_equity(amount: f64) -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
-pub struct OrderHistoryRecord {
-    pub symbol: String,
+pub struct PositionSnapshotRecord {
+    pub inst_id: String,
+    pub pos_side: String,
+    pub td_mode: Option<String>,
     pub side: String,
-    pub price: Option<f64>,
-    pub size: Option<f64>,
-    pub leverage: Option<f64>,
-    pub metadata: Value,
-    pub created_at: DateTime<Utc>,
+    pub size: f64,
+    pub avg_price: Option<f64>,
+    pub mark_px: Option<f64>,
+    pub margin: Option<f64>,
+    pub unrealized_pnl: Option<f64>,
+    pub last_trade_at: Option<DateTime<Utc>>,
     pub closed_at: Option<DateTime<Utc>>,
+    pub action_kind: Option<String>,
+    pub entry_ord_id: Option<String>,
+    pub exit_ord_id: Option<String>,
+    pub metadata: Value,
+    pub updated_at: DateTime<Utc>,
 }
 
-pub async fn fetch_order_history(limit: Option<i64>) -> Result<Vec<OrderHistoryRecord>> {
+pub async fn fetch_position_snapshots(
+    include_history: bool,
+    symbol_filter: Option<&str>,
+    limit: Option<i64>,
+) -> Result<Vec<PositionSnapshotRecord>> {
     let DatabaseSettings { url, schema } = database_settings();
 
     let url = match url {
         Some(url) => url,
         None => {
-            warn!("未配置数据库连接字符串，无法查询订单历史");
+            warn!("无法查询持仓：未配置数据库连接字符串");
             return Err(anyhow!("missing database url"));
         }
     };
 
     let client = connect_client(&url).await?;
 
-    let base_sql = format!(
+    let mut conditions = Vec::new();
+    if include_history {
+        conditions.push("closed_at IS NOT NULL".to_string());
+    } else {
+        conditions.push("closed_at IS NULL".to_string());
+    }
+
+    let mut param_values: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
+    if let Some(symbol) = symbol_filter {
+        param_values.push(Box::new(symbol.to_string()));
+        conditions.push(format!("inst_id = ${}", param_values.len()));
+    }
+
+    let where_clause = format!("WHERE {}", conditions.join(" AND "));
+    let mut sql = format!(
         "SELECT
-            inst_id AS symbol,
+            inst_id,
+            pos_side,
+            td_mode,
             side,
-            price,
             size,
-            leverage,
+            avg_price,
+            mark_px,
+            margin,
+            unrealized_pnl,
+            last_trade_at,
+            closed_at,
+            action_kind,
+            entry_ord_id,
+            exit_ord_id,
             metadata,
-            created_at,
-            closed_at
-        FROM {schema}.orders
-        WHERE closed_at IS NOT NULL
-        ORDER BY closed_at DESC NULLS LAST",
+            updated_at
+        FROM {schema}.positions
+        {where_clause}
+        ORDER BY updated_at DESC NULLS LAST",
         schema = schema,
+        where_clause = where_clause
     );
 
-    let rows = if let Some(limit) = limit {
-        let sql = format!("{base_sql} LIMIT $1");
-        client.query(&sql, &[&limit]).await?
-    } else {
-        client.query(&base_sql, &[]).await?
-    };
+    if let Some(limit) = limit {
+        sql.push_str(&format!(" LIMIT {}", limit));
+    }
+
+    let query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = param_values
+        .iter()
+        .map(|value| value.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+    let rows = client.query(&sql, &query_params).await?;
 
     let mut records = Vec::with_capacity(rows.len());
     for row in rows {
-        records.push(OrderHistoryRecord {
-            symbol: row.get::<_, String>("symbol"),
+        records.push(PositionSnapshotRecord {
+            inst_id: row.get::<_, String>("inst_id"),
+            pos_side: row.get::<_, String>("pos_side"),
+            td_mode: row.get::<_, Option<String>>("td_mode"),
             side: row.get::<_, String>("side"),
-            price: row.get::<_, Option<f64>>("price"),
-            size: row.get::<_, Option<f64>>("size"),
-            leverage: row.get::<_, Option<f64>>("leverage"),
-            metadata: row.get::<_, Value>("metadata"),
-            created_at: row.get::<_, DateTime<Utc>>("created_at"),
+            size: row.get::<_, f64>("size"),
+            avg_price: row.get::<_, Option<f64>>("avg_price"),
+            mark_px: row.get::<_, Option<f64>>("mark_px"),
+            margin: row.get::<_, Option<f64>>("margin"),
+            unrealized_pnl: row.get::<_, Option<f64>>("unrealized_pnl"),
+            last_trade_at: row.get::<_, Option<DateTime<Utc>>>("last_trade_at"),
             closed_at: row.get::<_, Option<DateTime<Utc>>>("closed_at"),
+            action_kind: row.get::<_, Option<String>>("action_kind"),
+            entry_ord_id: row.get::<_, Option<String>>("entry_ord_id"),
+            exit_ord_id: row.get::<_, Option<String>>("exit_ord_id"),
+            metadata: row.get::<_, Value>("metadata"),
+            updated_at: row.get::<_, DateTime<Utc>>("updated_at"),
         });
     }
 
@@ -1032,6 +1078,35 @@ pub async fn upsert_position_snapshot(snapshot: PositionSnapshot) -> Result<()> 
         )
         .await?;
 
+    Ok(())
+}
+
+pub async fn mark_position_forced_exit(inst_id: &str, pos_side: &str) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("无法更新强平状态：未配置数据库 URL");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+
+    let sql = format!(
+        "UPDATE {schema}.positions
+         SET action_kind = 'forced',
+             closed_at = CASE WHEN closed_at IS NULL THEN NOW() ELSE closed_at END,
+             updated_at = NOW()
+         WHERE inst_id = $1
+           AND pos_side = $2
+           AND size = 0
+           AND (action_kind IS NULL OR action_kind <> 'exit');",
+        schema = schema
+    );
+
+    client.execute(&sql, &[&inst_id, &pos_side]).await?;
     Ok(())
 }
 
