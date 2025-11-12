@@ -167,3 +167,118 @@ pub struct PositionHistoryDetail {
     #[serde(default)]
     pub u_time: Option<String>,
 }
+
+fn deserialize_optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Visitor;
+
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = Option<bool>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "a bool or string that can be parsed as bool")
+        }
+
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(v))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            serde::Deserialize::deserialize(deserializer).map(Some)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let normalized = value.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "true" | "1" | "yes" | "on" => Ok(Some(true)),
+                "false" | "0" | "no" | "off" => Ok(Some(false)),
+                _ => Err(E::custom("invalid boolean string")),
+            }
+        }
+    }
+
+    deserializer.deserialize_option(Visitor)
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderHistoryEntry {
+    #[serde(default)]
+    pub inst_type: Option<String>,
+    #[serde(rename = "instId")]
+    pub inst_id: String,
+    #[serde(rename = "ordId")]
+    pub ord_id: String,
+    #[serde(rename = "clOrdId")]
+    pub cl_ord_id: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    pub side: String,
+    #[serde(rename = "posSide")]
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    #[serde(rename = "ordType")]
+    pub ord_type: String,
+    #[serde(rename = "tdMode")]
+    #[serde(default)]
+    pub td_mode: Option<String>,
+    #[serde(rename = "sz")]
+    pub sz: String,
+    #[serde(rename = "accFillSz")]
+    #[serde(default)]
+    pub acc_fill_sz: String,
+    #[serde(rename = "fillSz")]
+    #[serde(default)]
+    pub fill_sz: Option<String>,
+    #[serde(rename = "fillPx")]
+    #[serde(default)]
+    pub fill_px: Option<String>,
+    #[serde(rename = "px")]
+    #[serde(default)]
+    pub px: Option<String>,
+    pub state: String,
+    #[serde(rename = "lever")]
+    #[serde(default)]
+    pub lever: Option<String>,
+    #[serde(rename = "reduceOnly")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_bool")]
+    pub reduce_only: Option<bool>,
+    #[serde(rename = "tradeId")]
+    #[serde(default)]
+    pub trade_id: Option<String>,
+    #[serde(rename = "uTime")]
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(rename = "cTime")]
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct OrderHistoryResponse {
+    pub data: Vec<OrderHistoryEntry>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FillResponse {
+    pub data: Vec<FillDetail>,
+}

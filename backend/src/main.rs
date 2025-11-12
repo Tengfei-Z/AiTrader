@@ -6,6 +6,7 @@ use std::{
 mod agent_subscriber;
 mod db;
 mod okx;
+mod order_sync;
 mod routes;
 mod server_config;
 mod settings;
@@ -72,6 +73,10 @@ async fn main() -> Result<()> {
     let background_state = app_state.clone();
     tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });
     tokio::spawn(async { run_agent_events_listener().await });
+    order_sync::init_client(app_state.okx_client.clone());
+    tokio::spawn(async move {
+        order_sync::run_periodic_position_sync().await;
+    });
 
     let bind_addr = settings
         .bind_addr()

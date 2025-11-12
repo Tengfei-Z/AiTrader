@@ -343,23 +343,81 @@ fn table_creation_statements(schema: &str) -> Vec<String> {
             );",
             schema = schema,
         ),
-        // 4. 创建订单表（存储交易订单）
+        // 4. 创建订单表（存储交易意图）
         format!(
             "CREATE TABLE IF NOT EXISTS {schema}.orders (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 strategy_ids    UUID[] NOT NULL DEFAULT ARRAY[]::uuid[],
-                symbol          TEXT NOT NULL,
+                ord_id          TEXT NOT NULL UNIQUE,
+                inst_id         TEXT NOT NULL,
+                td_mode         TEXT,
+                pos_side        TEXT,
                 side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
                 order_type      TEXT NOT NULL,
-                price           NUMERIC(20, 8),
-                size            NUMERIC(20, 8) NOT NULL,
-                filled_size     NUMERIC(20, 8) NOT NULL DEFAULT 0,
+                price           NUMERIC,
+                size            NUMERIC NOT NULL,
+                filled_size     NUMERIC NOT NULL DEFAULT 0,
                 status          TEXT NOT NULL,
-                leverage        NUMERIC(10, 2),
+                leverage        NUMERIC,
+                action_kind     TEXT,
+                entry_ord_id    TEXT,
+                exit_ord_id     TEXT,
+                last_event_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
                 metadata        JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                 closed_at       TIMESTAMPTZ
             );",
+            schema = schema,
+        ),
+        // 5. 创建成交/回报表（trades）
+        format!(
+            "CREATE TABLE IF NOT EXISTS {schema}.trades (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                ord_id          TEXT NOT NULL,
+                trade_id        TEXT,
+                fingerprint     TEXT,
+                inst_id         TEXT NOT NULL,
+                td_mode         TEXT,
+                pos_side        TEXT,
+                side            TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+                filled_size     NUMERIC NOT NULL,
+                fill_price      NUMERIC,
+                fee             NUMERIC,
+                realized_pnl    NUMERIC,
+                ts              TIMESTAMPTZ NOT NULL DEFAULT now(),
+                metadata        JSONB NOT NULL DEFAULT '{{}}'::jsonb
+            );",
+            schema = schema,
+        ),
+        // 6. 创建持仓快照表（positions）
+        format!(
+            "CREATE TABLE IF NOT EXISTS {schema}.positions (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                inst_id         TEXT NOT NULL,
+                pos_side        TEXT,
+                td_mode         TEXT,
+                side            TEXT NOT NULL CHECK (side IN ('long', 'short', 'net')),
+                size            NUMERIC NOT NULL DEFAULT 0,
+                avg_price       NUMERIC,
+                mark_px         NUMERIC,
+                margin          NUMERIC,
+                unrealized_pnl  NUMERIC,
+                last_trade_at   TIMESTAMPTZ,
+                closed_at       TIMESTAMPTZ,
+                action_kind     TEXT,
+                entry_ord_id    TEXT,
+                exit_ord_id     TEXT,
+                metadata        JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+            );",
+            schema = schema,
+        ),
+        format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS {schema}_trades_ord_id_trade_id_uindex ON {schema}.trades (ord_id, trade_id);",
+            schema = schema,
+        ),
+        format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS {schema}_positions_inst_id_pos_side_uindex ON {schema}.positions (inst_id, pos_side);",
             schema = schema,
         ),
         // 5. 创建余额快照表（用于绘制权益曲线）
@@ -644,7 +702,7 @@ pub async fn fetch_order_history(limit: Option<i64>) -> Result<Vec<OrderHistoryR
 
     let base_sql = format!(
         "SELECT
-            symbol,
+            inst_id AS symbol,
             side,
             price,
             size,
@@ -704,13 +762,53 @@ pub struct BalanceSnapshotInsert {
 #[derive(Debug, Clone)]
 pub struct AgentOrderEvent {
     pub ord_id: String,
-    pub symbol: String,
+    pub inst_id: String,
     pub side: String,
     pub order_type: Option<String>,
     pub price: Option<f64>,
     pub size: f64,
     pub filled_size: Option<f64>,
     pub status: String,
+    pub td_mode: Option<String>,
+    pub pos_side: Option<String>,
+    pub leverage: Option<f64>,
+    pub action_kind: Option<String>,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct TradeRecord {
+    pub ord_id: String,
+    pub trade_id: Option<String>,
+    pub fingerprint: Option<String>,
+    pub inst_id: String,
+    pub td_mode: Option<String>,
+    pub pos_side: Option<String>,
+    pub side: String,
+    pub filled_size: f64,
+    pub fill_price: Option<f64>,
+    pub fee: Option<f64>,
+    pub realized_pnl: Option<f64>,
+    pub ts: DateTime<Utc>,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct PositionSnapshot {
+    pub inst_id: String,
+    pub pos_side: String,
+    pub td_mode: Option<String>,
+    pub side: String,
+    pub size: f64,
+    pub avg_price: Option<f64>,
+    pub mark_px: Option<f64>,
+    pub margin: Option<f64>,
+    pub unrealized_pnl: Option<f64>,
+    pub last_trade_at: Option<DateTime<Utc>>,
+    pub closed_at: Option<DateTime<Utc>>,
+    pub action_kind: Option<String>,
+    pub entry_ord_id: Option<String>,
+    pub exit_ord_id: Option<String>,
     pub metadata: Value,
 }
 
@@ -735,8 +833,13 @@ pub async fn upsert_agent_order(event: AgentOrderEvent) -> Result<()> {
          SET status = $2,
              filled_size = COALESCE($3, filled_size),
              metadata = metadata || $4,
-             closed_at = CASE WHEN $5 THEN NOW() ELSE closed_at END
-         WHERE metadata->>'ordId' = $1;",
+             last_event_at = NOW(),
+             action_kind = COALESCE($5, action_kind),
+             td_mode = COALESCE($6, td_mode),
+             pos_side = COALESCE($7, pos_side),
+             leverage = COALESCE($8, leverage),
+             closed_at = CASE WHEN $9 THEN NOW() ELSE closed_at END
+         WHERE ord_id = $1;",
         schema = schema,
     );
 
@@ -748,6 +851,10 @@ pub async fn upsert_agent_order(event: AgentOrderEvent) -> Result<()> {
                 &status,
                 &event.filled_size,
                 &metadata,
+                &event.action_kind,
+                &event.td_mode,
+                &event.pos_side,
+                &event.leverage,
                 &is_terminal,
             ],
         )
@@ -756,33 +863,174 @@ pub async fn upsert_agent_order(event: AgentOrderEvent) -> Result<()> {
     if rows_updated == 0 {
         let insert_sql = format!(
             "INSERT INTO {schema}.orders (
-                symbol,
+                ord_id,
+                inst_id,
+                td_mode,
+                pos_side,
                 side,
                 order_type,
                 price,
                 size,
                 filled_size,
                 status,
+                leverage,
+                action_kind,
                 metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);",
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);",
             schema = schema
         );
         client
             .execute(
                 &insert_sql,
                 &[
-                    &event.symbol,
+                    &event.ord_id,
+                    &event.inst_id,
+                    &event.td_mode,
+                    &event.pos_side,
                     &event.side,
                     &event.order_type,
                     &event.price,
                     &event.size,
                     &event.filled_size,
                     &status,
+                    &event.leverage,
+                    &event.action_kind,
                     &metadata,
                 ],
             )
             .await?;
     }
+
+    Ok(())
+}
+
+pub async fn insert_trade_record(record: TradeRecord) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("无法写入 trade 记录：未配置数据库 URL");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "INSERT INTO {schema}.trades (
+            ord_id,
+            trade_id,
+            fingerprint,
+            inst_id,
+            td_mode,
+            pos_side,
+            side,
+            filled_size,
+            fill_price,
+            fee,
+            realized_pnl,
+            ts,
+            metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (ord_id, trade_id) DO NOTHING;",
+        schema = schema,
+    );
+
+    client
+        .execute(
+            &sql,
+            &[
+                &record.ord_id,
+                &record.trade_id,
+                &record.fingerprint,
+                &record.inst_id,
+                &record.td_mode,
+                &record.pos_side,
+                &record.side,
+                &record.filled_size,
+                &record.fill_price,
+                &record.fee,
+                &record.realized_pnl,
+                &record.ts,
+                &record.metadata,
+            ],
+        )
+        .await?;
+
+    Ok(())
+}
+
+pub async fn upsert_position_snapshot(snapshot: PositionSnapshot) -> Result<()> {
+    let DatabaseSettings { url, schema } = database_settings();
+
+    let url = match url {
+        Some(url) => url,
+        None => {
+            warn!("无法写入持仓：未配置数据库 URL");
+            return Err(anyhow!("missing database url"));
+        }
+    };
+
+    let client = connect_client(&url).await?;
+    let sql = format!(
+        "INSERT INTO {schema}.positions (
+            inst_id,
+            pos_side,
+            td_mode,
+            side,
+            size,
+            avg_price,
+            mark_px,
+            margin,
+            unrealized_pnl,
+            last_trade_at,
+            closed_at,
+            action_kind,
+            entry_ord_id,
+            exit_ord_id,
+            metadata,
+            updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+        ON CONFLICT (inst_id, pos_side) DO UPDATE SET
+            td_mode = EXCLUDED.td_mode,
+            side = EXCLUDED.side,
+            size = EXCLUDED.size,
+            avg_price = EXCLUDED.avg_price,
+            mark_px = EXCLUDED.mark_px,
+            margin = EXCLUDED.margin,
+            unrealized_pnl = EXCLUDED.unrealized_pnl,
+            last_trade_at = COALESCE(EXCLUDED.last_trade_at, positions.last_trade_at),
+            closed_at = COALESCE(EXCLUDED.closed_at, positions.closed_at),
+            action_kind = COALESCE(EXCLUDED.action_kind, positions.action_kind),
+            entry_ord_id = COALESCE(positions.entry_ord_id, EXCLUDED.entry_ord_id),
+            exit_ord_id = COALESCE(EXCLUDED.exit_ord_id, positions.exit_ord_id),
+            metadata = positions.metadata || EXCLUDED.metadata,
+            updated_at = NOW();",
+        schema = schema,
+    );
+
+    client
+        .execute(
+            &sql,
+            &[
+                &snapshot.inst_id,
+                &snapshot.pos_side,
+                &snapshot.td_mode,
+                &snapshot.side,
+                &snapshot.size,
+                &snapshot.avg_price,
+                &snapshot.mark_px,
+                &snapshot.margin,
+                &snapshot.unrealized_pnl,
+                &snapshot.last_trade_at,
+                &snapshot.closed_at,
+                &snapshot.action_kind,
+                &snapshot.entry_ord_id,
+                &snapshot.exit_ord_id,
+                &snapshot.metadata,
+            ],
+        )
+        .await?;
 
     Ok(())
 }

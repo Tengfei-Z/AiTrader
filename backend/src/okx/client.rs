@@ -7,6 +7,7 @@ use reqwest::{Client, Method, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{self, Value};
 use tracing::instrument;
+use url::form_urlencoded;
 
 /// OKX API v5 的路径前缀
 const API_PREFIX: &str = "/api/v5";
@@ -154,6 +155,46 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
+    /// 获取订单历史
+    pub async fn get_order_history(
+        &self,
+        inst_type: Option<&str>,
+        inst_id: Option<&str>,
+        state: Option<&str>,
+        ord_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<super::models::OrderHistoryEntry>> {
+        let mut path = format!("{API_PREFIX}/trade/orders-history");
+        append_query_param_if_some(&mut path, "instType", inst_type);
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        append_query_param_if_some(&mut path, "state", state);
+        append_query_param_if_some(&mut path, "ordId", ord_id);
+        if let Some(limit_value) = limit {
+            append_query_param(&mut path, "limit", &limit_value.to_string());
+        }
+
+        let response: super::models::OrderHistoryResponse = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
+    /// 获取成交回报（fills）
+    pub async fn get_fills(
+        &self,
+        inst_id: Option<&str>,
+        ord_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<super::models::FillDetail>> {
+        let mut path = format!("{API_PREFIX}/trade/fills");
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        append_query_param_if_some(&mut path, "ordId", ord_id);
+        if let Some(limit_value) = limit {
+            append_query_param(&mut path, "limit", &limit_value.to_string());
+        }
+
+        let response: super::models::FillResponse = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
     /// 内部方法：发送 GET 请求并反序列化响应
     async fn get<T>(&self, path_and_query: &str, body: Option<Value>) -> Result<T>
     where
@@ -256,4 +297,22 @@ impl OkxRestClient {
 /// OKX API 要求使用此格式的时间戳进行签名
 fn current_timestamp_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn append_query_param_if_some(path: &mut String, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        append_query_param(path, key, value);
+    }
+}
+
+fn append_query_param(path: &mut String, key: &str, value: &str) {
+    if path.contains('?') {
+        path.push('&');
+    } else {
+        path.push('?');
+    }
+
+    path.push_str(key);
+    path.push('=');
+    path.push_str(&form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>());
 }
