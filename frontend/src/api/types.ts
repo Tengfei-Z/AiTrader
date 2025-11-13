@@ -45,37 +45,30 @@ export interface BalanceSnapshotItem {
   recordedAt: string;
 }
 
-export interface PositionItem {
-  symbol: string;
+export type JsonMap = Record<string, unknown>;
+
+export interface PositionSnapshot {
+  instId: string;
+  posSide: string;
+  tdMode?: string;
   side: string;
-  entry_price?: number;
-  current_price?: number;
-  quantity?: number;
-  leverage?: number;
-  liquidation_price?: number;
+  size: number;
+  avgPrice?: number;
+  markPx?: number;
   margin?: number;
-  unrealized_pnl?: number;
-  entry_time?: string;
-  take_profit_trigger?: number;
-  take_profit_price?: number;
-  take_profit_type?: string;
-  stop_loss_trigger?: number;
-  stop_loss_price?: number;
-  stop_loss_type?: string;
+  unrealizedPnl?: number;
+  lastTradeAt?: string;
+  closedAt?: string;
+  actionKind?: string;
+  entryOrdId?: string;
+  exitOrdId?: string;
+  metadata?: JsonMap;
+  updatedAt: string;
 }
 
-export interface PositionHistoryItem {
-  symbol: string;
-  side: string;
-  quantity?: number;
-  leverage?: number;
-  entry_price?: number;
-  exit_price?: number;
-  margin?: number;
-  realized_pnl?: number;
-  entry_time?: string;
-  exit_time?: string;
-}
+export type PositionItem = PositionSnapshot;
+
+export type PositionHistoryItem = PositionSnapshot;
 
 export interface StrategyMessage {
   id: string;
