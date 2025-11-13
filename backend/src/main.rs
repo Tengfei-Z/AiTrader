@@ -1,6 +1,7 @@
 use std::{
     fs,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 mod agent_subscriber;
@@ -12,7 +13,9 @@ mod server_config;
 mod settings;
 mod types;
 
-use crate::agent_subscriber::run_agent_events_listener;
+use crate::agent_subscriber::{
+    is_analysis_busy_error, run_agent_events_listener, trigger_analysis,
+};
 use crate::db::init_database;
 use crate::okx::OkxRestClient;
 use crate::routes::{api_routes, run_balance_snapshot_loop};
@@ -78,6 +81,12 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         order_sync::run_periodic_position_sync().await;
     });
+    if CONFIG.strategy_schedule_enabled() {
+        let interval = Duration::from_secs(CONFIG.strategy_schedule_interval_secs());
+        tokio::spawn(async move {
+            run_strategy_scheduler_loop(interval).await;
+        });
+    }
 
     let bind_addr = settings
         .bind_addr()
@@ -130,5 +139,31 @@ fn init_tracing() {
 
     if tracing::subscriber::set_global_default(subscriber).is_err() {
         tracing::warn!("tracing already initialised");
+    }
+}
+
+async fn run_strategy_scheduler_loop(interval: Duration) {
+    info!(
+        seconds = interval.as_secs(),
+        "strategy scheduler loop enabled"
+    );
+
+    loop {
+        match trigger_analysis().await {
+            Ok(result) => {
+                info!(
+                    summary_len = result.summary.len(),
+                    "scheduled strategy analysis completed"
+                );
+            }
+            Err(err) if is_analysis_busy_error(&err) => {
+                info!("scheduled strategy analysis skipped: previous run active");
+            }
+            Err(err) => {
+                warn!(%err, "scheduled strategy analysis failed");
+            }
+        }
+
+        tokio::time::sleep(interval).await;
     }
 }

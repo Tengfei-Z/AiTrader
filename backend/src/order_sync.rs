@@ -35,7 +35,13 @@ pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
     let client = okx_client().ok_or_else(|| anyhow!("order sync okx client unavailable"))?;
 
     let historical_orders = client
-        .get_order_history(Some(DEFAULT_INST_TYPE), Some(DEFAULT_INST_ID), None, Some(ord_id), Some(1))
+        .get_order_history(
+            Some(DEFAULT_INST_TYPE),
+            Some(DEFAULT_INST_ID),
+            None,
+            Some(ord_id),
+            Some(1),
+        )
         .await?;
 
     let order = historical_orders
@@ -78,9 +84,7 @@ pub async fn run_periodic_position_sync() {
 }
 
 async fn sync_positions_from_okx(client: &OkxRestClient) -> Result<()> {
-    let positions = client
-        .get_positions(Some(DEFAULT_INST_TYPE))
-        .await?;
+    let positions = client.get_positions(Some(DEFAULT_INST_TYPE)).await?;
     let mut seen: HashSet<(String, String)> = HashSet::new();
     for detail in positions
         .into_iter()

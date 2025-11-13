@@ -1,8 +1,16 @@
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tracing::{error, info, warn};
@@ -13,15 +21,26 @@ use crate::order_sync;
 use crate::settings::CONFIG;
 
 /// 全局 WebSocket 发送器（用于其他模块发送消息到 Agent）
-static WS_SENDER: once_cell::sync::OnceCell<mpsc::UnboundedSender<OutgoingMessage>> =
-    once_cell::sync::OnceCell::new();
+static WS_SENDER: OnceCell<mpsc::UnboundedSender<OutgoingMessage>> = OnceCell::new();
 
 /// 触发分析的等待队列（无需标识即可顺序匹配）
-static PENDING_ANALYSES: once_cell::sync::OnceCell<PendingAnalyses> =
-    once_cell::sync::OnceCell::new();
+static PENDING_ANALYSES: OnceCell<PendingAnalyses> = OnceCell::new();
+
+/// 控制策略分析串行执行，避免重复触发。
+static ANALYSIS_PERMIT: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(1)));
+
+const ANALYSIS_BUSY_ERROR: &str = "analysis already running";
+static NEXT_PENDING_ID: AtomicU64 = AtomicU64::new(1);
+
+/// 待处理的分析请求（携带标识便于在超时/断连时清理）
+#[derive(Debug)]
+struct PendingAnalysis {
+    id: u64,
+    sender: oneshot::Sender<AnalysisResult>,
+}
 
 /// 待处理的分析请求队列（用于关联请求和响应）
-type PendingAnalyses = Arc<Mutex<VecDeque<oneshot::Sender<AnalysisResult>>>>;
+type PendingAnalyses = Arc<Mutex<VecDeque<PendingAnalysis>>>;
 
 /// 发送到 Agent 的消息
 #[derive(Debug, Serialize)]
@@ -118,6 +137,7 @@ pub async fn run_agent_events_listener() {
                         _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                     }
                 }
+                fail_all_pending(pending_analyses.clone(), "agent websocket disconnected").await;
             }
             Err(err) => {
                 warn!(error = ?err, "failed to connect to agent websocket");
@@ -131,30 +151,62 @@ pub async fn run_agent_events_listener() {
 
 /// 触发策略分析（供其他模块调用）
 pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
+    let semaphore = Lazy::force(&ANALYSIS_PERMIT).clone();
+    let permit = match semaphore.try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            info!("strategy analysis already in progress, skipping trigger");
+            return Err(ANALYSIS_BUSY_ERROR.to_string());
+        }
+    };
+
+    let result = trigger_analysis_inner().await;
+    drop(permit);
+
+    result
+}
+
+async fn trigger_analysis_inner() -> Result<AnalysisResult, String> {
     let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
     let pending = PENDING_ANALYSES
         .get()
-        .ok_or("analysis queue not initialized")?;
+        .ok_or("analysis queue not initialized")?
+        .clone();
 
     let (response_tx, response_rx) = oneshot::channel();
+    let request_id = NEXT_PENDING_ID.fetch_add(1, Ordering::Relaxed);
     {
         let mut queue = pending.lock().await;
-        queue.push_back(response_tx);
+        queue.push_back(PendingAnalysis {
+            id: request_id,
+            sender: response_tx,
+        });
     }
 
     // 发送触发消息
-    sender
-        .send(OutgoingMessage::TriggerAnalysis)
-        .map_err(|_| "failed to send trigger message")?;
+    if let Err(_) = sender.send(OutgoingMessage::TriggerAnalysis) {
+        remove_pending_by_id(pending.clone(), request_id).await;
+        return Err("failed to send trigger message".to_string());
+    }
 
     info!("triggered strategy analysis via websocket");
 
     // 等待响应（带超时）
     match tokio::time::timeout(Duration::from_secs(120), response_rx).await {
         Ok(Ok(result)) => Ok(result),
-        Ok(Err(_)) => Err("response channel closed".to_string()),
-        Err(_) => Err("analysis timeout".to_string()),
+        Ok(Err(_)) => {
+            remove_pending_by_id(pending.clone(), request_id).await;
+            Err("response channel closed".to_string())
+        }
+        Err(_) => {
+            remove_pending_by_id(pending.clone(), request_id).await;
+            Err("analysis timeout".to_string())
+        }
     }
+}
+
+pub fn is_analysis_busy_error(err: &str) -> bool {
+    err == ANALYSIS_BUSY_ERROR
 }
 
 fn build_events_url(base_url: &str) -> Result<Url, url::ParseError> {
@@ -184,7 +236,7 @@ async fn process_analysis_result(
         summary_len = payload.analysis.summary.len(),
         "received analysis result from agent"
     );
-    
+
     // 存储到数据库
     let response = AnalysisResult {
         summary: payload.analysis.summary.clone(),
@@ -199,9 +251,13 @@ async fn process_analysis_result(
     }
 
     let mut queue = pending.lock().await;
-    if let Some(next) = queue.pop_front() {
-        if let Err(err) = next.send(response) {
-            warn!(error = ?err, "failed to deliver analysis result to caller");
+    if let Some(entry) = queue.pop_front() {
+        if let Err(err) = entry.sender.send(response) {
+            warn!(
+                error = ?err,
+                request_id = entry.id,
+                "failed to deliver analysis result to caller"
+            );
         }
     } else {
         warn!("received analysis result but no caller is waiting");
@@ -229,6 +285,33 @@ async fn process_order_update(payload: OrderUpdatePayload) -> Result<(), serde_j
     });
 
     Ok(())
+}
+
+async fn remove_pending_by_id(pending: PendingAnalyses, request_id: u64) {
+    let mut queue = pending.lock().await;
+    let before = queue.len();
+    queue.retain(|entry| entry.id != request_id);
+    let removed = before.saturating_sub(queue.len());
+    if removed > 0 {
+        info!(
+            request_id = request_id,
+            removed = removed,
+            "dropped pending analysis sender due to failure"
+        );
+    }
+}
+
+async fn fail_all_pending(pending: PendingAnalyses, reason: &str) {
+    let mut queue = pending.lock().await;
+    let dropped = queue.len();
+    if dropped > 0 {
+        queue.clear();
+        warn!(
+            dropped = dropped,
+            reason = %reason,
+            "cleared pending strategy analyses"
+        );
+    }
 }
 
 #[derive(Debug, Deserialize)]
