@@ -1,11 +1,18 @@
 
-# AiTrader 概览
+# AiTrader
 
-AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用 **React + TypeScript**，后端以 **Rust** 提供账户、行情与路由服务，同时通过独立的 **Python Agent** 承载大模型对话与策略分析能力。
+AiTrader 是一个围绕 OKX 交易所构建的量化交易系统：前端基于 **React + TypeScript** 提供交易与 AI 对话界面，后端使用 **Rust (Axum)** 统一接入 OKX 与自研业务 API，独立的 **Python Agent** 则承载 DeepSeek 模型对话、策略分析与工具调用。整体强调“交易业务（Rust）”与“AI 能力（Python）”的清晰分层。
 
-系统保持“业务逻辑（Rust）”与“AI 能力（Python）”的明确分层：Rust 负责管理交易所访问与业务 API，Python Agent 直接调用 DeepSeek 模型并通过自身定义的工具访问 OKX。
+## 技术栈速览
 
-## 架构一览
+| 模块 | 技术 | 角色 |
+| --- | --- | --- |
+| 前端 | React, TypeScript, Vite, pnpm | 行情与账户展示、策略与 AI 对话 |
+| API 服务 | Rust, Axum, sqlx, PostgreSQL | OKX REST 代理、账户/行情/策略 API、任务调度 |
+| Agent | Python, FastAPI, FastMCP, DeepSeek | 大模型推理、OKX 工具调用、策略分析 |
+| 部署 | systemd, nginx, bash scripts | 一键构建与服务编排 |
+
+## 架构
 
 ```
 ┌──────────────────────────────┐
@@ -36,59 +43,67 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
 
 ## 仓库结构
 
-- `frontend/`：前端单页应用，展示行情、账户以及与 Agent 的对话窗口。
-- `backend/`：单一 Rust crate，`src/` 下包含 Axum 入口、配置加载、PostgreSQL 初始化与 OKX 客户端实现。
-- `agent/`：Python 端 Agent，包含 FastAPI 服务、DeepSeek 接入、FastMCP 工具与测试脚本。
+- `frontend/`：React 单页应用，覆盖行情看板、账户/持仓视图与 Agent 对话窗口。
+- `backend/`：Rust crate，内含 Axum 入口、配置加载、PostgreSQL 初始化、OKX 客户端与任务调度。
+- `agent/`：Python Agent，包含 FastAPI 服务、DeepSeek 接入、FastMCP 工具、策略脚本与测试。
+- `config/`、`nginx/`、`doc/`：配置模板、部署脚本与设计文档。
 
-## 关键能力
+## 核心服务
 
 ### Rust API Server
-- 暴露行情、订单簿、成交、账户余额、持仓等 REST 接口（主要来自 OKX 模拟账户）。
-- 维护策略运行记录，并提供 `/model/strategy-run` 入口将请求转发给 Python Agent。
-- 统一加载 `.env` 中的 OKX 凭证、Agent 地址等配置。
+- 提供行情、订单簿、成交、账户余额、持仓等 REST 接口（默认对接 OKX 模拟盘）。
+- 维护策略运行/对话记录，并通过 `/model/strategy-run` 等端点转发请求给 Python Agent。
+- 统一加载 `.env`，管理 OKX 凭证、Agent 地址、数据库 URL、定时任务等配置。
 
 ### Python Agent
-- 使用 FastAPI 暴露 `/analysis` 端点，面向策略分析和下单决策。
-- 通过 FastMCP 定义 OKX 相关函数（订单、行情、账户），由大模型在分析过程中自动调用。
-- 提供会话记忆、SSE 扩展点及后续多模型扩展计划。
-- 搭配 `tests/` 目录覆盖配置、会话管理、API 路由等关键单元。
+- FastAPI 暴露 `/analysis` 等端点，驱动 DeepSeek Chat 进行策略分析与自然语言交互。
+- 借助 FastMCP 定义下单、行情、账户等 OKX 工具，让模型可在推理中自动调用。
+- 提供会话记忆、SSE 扩展点，`tests/` 中覆盖配置、会话管理与 API 路由单测。
+
+### 前端
+- 使用 React + TypeScript + Vite，配合 pnpm 管理依赖。
+- 与 Rust API 拉取行情/账户数据，并通过 SSE/HTTP 与 Agent 交互。
+- UI 重点在策略监控与人工干预入口。
+
+## 配置与环境变量
+
+- **OKX 凭证**：`OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`。`OKX_USE_SIMULATED` 控制是否启用模拟盘（默认 true）。
+- **合约列表**：`OKX_INST_IDS=BTC-USDT-SWAP,ETH-USDT-SWAP` 等，用于指定需要同步的合约；默认仅跟踪 `BTC-USDT-SWAP`。
+- **Agent**：`DEEPSEEK_API_KEY`、`AGENT_PORT`、`AGENT_HOST` 等；可将 `agent/.env.example` 复制为仓库根目录 `.env` 并补齐。
+- **调度**：`STRATEGY_SCHEDULE_ENABLED=true` 与 `STRATEGY_SCHEDULE_INTERVAL_SECS=60` 控制 Rust 端的策略轮询，若检测到已有任务在执行，会自动跳过。
+- **数据库**：`DATABASE_URL` 由 `.env` 提供，`backend` 启动时自动迁移/初始化。
 
 ## 快速上手
 
-1. **准备环境变量**
-   - Rust 服务需要 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`，是否走模拟盘由 `OKX_USE_SIMULATED` 控制。
-   - 通过 `OKX_INST_IDS` 指定需要同步的合约列表（例如 `OKX_INST_IDS=BTC-USDT-SWAP,ETH-USDT-SWAP`），系统会按顺序依次同步；默认仅跟踪 `BTC-USDT-SWAP`。
-   - Python Agent 需要 `DEEPSEEK_API_KEY`、`OKX_*`、`AGENT_PORT` 等配置，可将 `agent/.env.example` 复制为仓库根目录下的 `.env` 并填写；同样通过 `OKX_USE_SIMULATED=false` 可切换到实盘（默认开启模拟）。
-   - 若希望自动触发策略分析，可设置 `STRATEGY_SCHEDULE_ENABLED=true` 并通过 `STRATEGY_SCHEDULE_INTERVAL_SECS` 指定轮询秒数；该定时器运行在 Rust 服务侧，若检测到正在执行的任务会跳过本次。
-
-2. **启动 Python Agent**
+1. **安装依赖**
+   - Rust stable toolchain、cargo、PostgreSQL。
+   - Python 3.11+，推荐使用 `uv` 或 `pip` 创建虚拟环境。
+   - Node.js 18+ 与 pnpm。
+2. **准备 `.env`**
+   - 复制 `agent/.env.example` 到仓库根目录 `.env`，补齐 OKX、DeepSeek、数据库、Agent 端口等变量。
+3. **启动 Python Agent**
    ```bash
    cd agent
    uv pip install -r requirements.txt -r requirements-dev.txt
    uvicorn llm.main:app --host 0.0.0.0 --port 8001
    ```
-
-3. **启动 Rust API Server**
+4. **启动 Rust API Server**
    ```bash
    cd backend
    cargo run
    ```
-
-4. **前端开发**
+5. **启动前端**
    ```bash
    cd frontend
    pnpm install
    pnpm dev
    ```
 
-5. **部署构建（可选）**
-   ```bash
-   bash nginx/build.sh
-   ```
-   该脚本会构建后端/前端并在 `agent/.venv` 安装依赖，配合后续的 systemd/nginx setup 直接部署产物；数据库配置由 `.env` 提供，不再由脚本注入。
+## 构建与部署
 
-## 后续工作
+```bash
+bash nginx/build.sh
+```
 
-- 为 API Server 增加更多 OKX 账户与交易端点，并补齐测试。
-- 在 Python Agent 中拓展工具集（如资金费率、交易执行）并提供端到端回归。
-- 逐步将 `new.md` 中的设计内容合并进正式文档与 README，删除临时文件。
+脚本会构建前端与后端、在 `agent/.venv` 安装依赖，并输出可直接用于 systemd + nginx 的产物；数据库连接信息完全来自 `.env`。
+
