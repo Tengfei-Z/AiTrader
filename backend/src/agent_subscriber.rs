@@ -27,7 +27,7 @@ static WS_SENDER: OnceCell<mpsc::UnboundedSender<OutgoingMessage>> = OnceCell::n
 static PENDING_ANALYSES: OnceCell<PendingAnalyses> = OnceCell::new();
 
 /// 控制策略分析串行执行，避免重复触发。
-static ANALYSIS_PERMIT: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(1));
+static ANALYSIS_PERMIT: Lazy<Arc<Semaphore>> = Lazy::new(|| Arc::new(Semaphore::new(1)));
 
 const ANALYSIS_BUSY_ERROR: &str = "analysis already running";
 static NEXT_PENDING_ID: AtomicU64 = AtomicU64::new(1);
@@ -151,7 +151,8 @@ pub async fn run_agent_events_listener() {
 
 /// 触发策略分析（供其他模块调用）
 pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
-    let permit = match ANALYSIS_PERMIT.try_acquire_owned() {
+    let semaphore = Lazy::force(&ANALYSIS_PERMIT).clone();
+    let permit = match semaphore.try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => {
             info!("strategy analysis already in progress, skipping trigger");
@@ -169,7 +170,8 @@ async fn trigger_analysis_inner() -> Result<AnalysisResult, String> {
     let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
     let pending = PENDING_ANALYSES
         .get()
-        .ok_or("analysis queue not initialized")?;
+        .ok_or("analysis queue not initialized")?
+        .clone();
 
     let (response_tx, response_rx) = oneshot::channel();
     let request_id = NEXT_PENDING_ID.fetch_add(1, Ordering::Relaxed);
