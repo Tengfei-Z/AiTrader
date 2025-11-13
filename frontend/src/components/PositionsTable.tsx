@@ -15,6 +15,32 @@ const formatNumber = (value?: number, fractionDigits = 2) =>
       })
     : '-';
 
+const readMetadataNumber = (metadata: PositionItem['metadata'], key: string) => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const raw = metadata[key];
+  if (raw === null || raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? raw : undefined;
+  }
+  if (typeof raw === 'string') {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const readMetadataString = (metadata: PositionItem['metadata'], key: string) => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const raw = metadata[key];
+  return typeof raw === 'string' ? raw : undefined;
+};
+
 const renderExitPlan = (trigger?: number, order?: number, triggerType?: string) => {
   if (trigger === undefined && order === undefined) {
     return '-';
@@ -35,8 +61,8 @@ const renderExitPlan = (trigger?: number, order?: number, triggerType?: string) 
 const columns: ColumnsType<PositionItem> = [
   {
     title: '合约',
-    dataIndex: 'symbol',
-    key: 'symbol'
+    dataIndex: 'instId',
+    key: 'instId'
   },
   {
     title: '方向',
@@ -49,64 +75,62 @@ const columns: ColumnsType<PositionItem> = [
   },
   {
     title: '数量',
-    dataIndex: 'quantity',
-    key: 'quantity',
+    dataIndex: 'size',
+    key: 'size',
     render: (value: number | undefined) => formatNumber(value, 4)
   },
   {
     title: '杠杆',
-    dataIndex: 'leverage',
     key: 'leverage',
-    render: (value: number | undefined) => (value ? `${formatNumber(value, 2)}x` : '-')
+    render: (_: unknown, record) => {
+      const leverage = readMetadataNumber(record.metadata, 'lever');
+      return leverage ? `${formatNumber(leverage, 2)}x` : '-';
+    }
   },
   {
     title: '开仓价',
-    dataIndex: 'entry_price',
-    key: 'entry_price',
+    dataIndex: 'avgPrice',
+    key: 'avgPrice',
     render: (value: number | undefined) => formatNumber(value)
   },
   {
     title: '当前价',
-    dataIndex: 'current_price',
-    key: 'current_price',
+    dataIndex: 'markPx',
+    key: 'markPx',
     render: (value: number | undefined) => formatNumber(value)
   },
   {
     title: '未实现盈亏',
-    dataIndex: 'unrealized_pnl',
-    key: 'unrealized_pnl',
-    render: (value: number | undefined) => formatNumber(value)
-  },
-  {
-    title: '强平价',
-    dataIndex: 'liquidation_price',
-    key: 'liquidation_price',
-    render: (value: number | undefined) => formatNumber(value)
-  },
-  {
-    title: '保证金',
-    dataIndex: 'margin',
-    key: 'margin',
+    dataIndex: 'unrealizedPnl',
+    key: 'unrealizedPnl',
     render: (value: number | undefined) => formatNumber(value)
   },
   {
     title: '止盈',
     key: 'take_profit',
     render: (_: unknown, record) =>
-      renderExitPlan(record.take_profit_trigger, record.take_profit_price, record.take_profit_type)
+      renderExitPlan(
+        readMetadataNumber(record.metadata, 'tpTriggerPx'),
+        readMetadataNumber(record.metadata, 'tpOrdPx'),
+        readMetadataString(record.metadata, 'tpTriggerPxType')
+      )
   },
   {
     title: '止损',
     key: 'stop_loss',
     render: (_: unknown, record) =>
-      renderExitPlan(record.stop_loss_trigger, record.stop_loss_price, record.stop_loss_type)
+      renderExitPlan(
+        readMetadataNumber(record.metadata, 'slTriggerPx'),
+        readMetadataNumber(record.metadata, 'slOrdPx'),
+        readMetadataString(record.metadata, 'slTriggerPxType')
+      )
   }
 ];
 
 const PositionsTable = ({ positions, loading, embedded }: Props) => {
   const table = (
     <Table
-      rowKey={(record) => `${record.symbol}-${record.side}-${record.entry_time ?? 'na'}`}
+      rowKey={(record) => `${record.instId}-${record.side}-${record.updatedAt}`}
       dataSource={positions ?? []}
       columns={columns}
       pagination={false}

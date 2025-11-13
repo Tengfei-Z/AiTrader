@@ -7,5 +7,6 @@ export const useStrategyChat = (enabled = true) =>
     queryFn: fetchStrategyChat,
     enabled,
     staleTime: 30_000,
-    refetchInterval: 60_000
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: true
   });
