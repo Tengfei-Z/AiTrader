@@ -70,6 +70,9 @@ async fn run_strategy_job() {
 
             tracing::info!("Strategy run completed and stored in background task");
         }
+        Err(err) if agent_subscriber::is_analysis_busy_error(&err) => {
+            tracing::info!("Strategy analysis already running; skipping manual trigger");
+        }
         Err(err) => {
             tracing::warn!(%err, "Strategy analysis task failed");
         }

@@ -35,6 +35,10 @@ pub struct AppConfig {
     pub initial_equity: f64,
     #[serde(default = "default_reset_database")]
     pub reset_database: bool,
+    #[serde(default = "default_strategy_schedule_enabled")]
+    pub strategy_schedule_enabled: bool,
+    #[serde(default = "default_strategy_schedule_interval_secs")]
+    pub strategy_schedule_interval_secs: u64,
 }
 
 impl AppConfig {
@@ -60,6 +64,13 @@ impl AppConfig {
 
         let reset_database = env_bool("RESET_DATABASE", false);
 
+        let strategy_schedule_enabled = env_bool("STRATEGY_SCHEDULE_ENABLED", false);
+        let strategy_schedule_interval_secs = env::var("STRATEGY_SCHEDULE_INTERVAL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|secs| *secs > 0)
+            .unwrap_or_else(default_strategy_schedule_interval_secs);
+
         Ok(Self {
             okx_base_url,
             okx_credentials,
@@ -67,6 +78,8 @@ impl AppConfig {
             okx_use_simulated,
             initial_equity,
             reset_database,
+            strategy_schedule_enabled,
+            strategy_schedule_interval_secs,
         })
     }
 
@@ -96,6 +109,14 @@ impl AppConfig {
     pub fn should_reset_database(&self) -> bool {
         self.reset_database
     }
+
+    pub fn strategy_schedule_enabled(&self) -> bool {
+        self.strategy_schedule_enabled
+    }
+
+    pub fn strategy_schedule_interval_secs(&self) -> u64 {
+        self.strategy_schedule_interval_secs
+    }
 }
 
 fn env_var_non_empty(key: &str) -> Result<String, env::VarError> {
@@ -120,6 +141,14 @@ fn default_initial_equity() -> f64 {
 
 fn default_reset_database() -> bool {
     false
+}
+
+fn default_strategy_schedule_enabled() -> bool {
+    false
+}
+
+fn default_strategy_schedule_interval_secs() -> u64 {
+    300
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

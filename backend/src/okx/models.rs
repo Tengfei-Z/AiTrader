@@ -2,8 +2,8 @@ use super::error::OkxError;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use serde::Deserialize;
+use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -202,9 +202,7 @@ where
                 ))),
             }
         }
-        Some(other) => Err(D::Error::custom(format!(
-            "invalid boolean type: {other}"
-        ))),
+        Some(other) => Err(D::Error::custom(format!("invalid boolean type: {other}"))),
     }
 }
 

@@ -1,8 +1,9 @@
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
+use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tracing::{error, info, warn};
@@ -13,12 +14,15 @@ use crate::order_sync;
 use crate::settings::CONFIG;
 
 /// 全局 WebSocket 发送器（用于其他模块发送消息到 Agent）
-static WS_SENDER: once_cell::sync::OnceCell<mpsc::UnboundedSender<OutgoingMessage>> =
-    once_cell::sync::OnceCell::new();
+static WS_SENDER: OnceCell<mpsc::UnboundedSender<OutgoingMessage>> = OnceCell::new();
 
 /// 触发分析的等待队列（无需标识即可顺序匹配）
-static PENDING_ANALYSES: once_cell::sync::OnceCell<PendingAnalyses> =
-    once_cell::sync::OnceCell::new();
+static PENDING_ANALYSES: OnceCell<PendingAnalyses> = OnceCell::new();
+
+/// 控制策略分析串行执行，避免重复触发。
+static ANALYSIS_PERMIT: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(1));
+
+const ANALYSIS_BUSY_ERROR: &str = "analysis already running";
 
 /// 待处理的分析请求队列（用于关联请求和响应）
 type PendingAnalyses = Arc<Mutex<VecDeque<oneshot::Sender<AnalysisResult>>>>;
@@ -131,6 +135,21 @@ pub async fn run_agent_events_listener() {
 
 /// 触发策略分析（供其他模块调用）
 pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
+    let permit = match ANALYSIS_PERMIT.try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            info!("strategy analysis already in progress, skipping trigger");
+            return Err(ANALYSIS_BUSY_ERROR.to_string());
+        }
+    };
+
+    let result = trigger_analysis_inner().await;
+    drop(permit);
+
+    result
+}
+
+async fn trigger_analysis_inner() -> Result<AnalysisResult, String> {
     let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
     let pending = PENDING_ANALYSES
         .get()
@@ -155,6 +174,10 @@ pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
         Ok(Err(_)) => Err("response channel closed".to_string()),
         Err(_) => Err("analysis timeout".to_string()),
     }
+}
+
+pub fn is_analysis_busy_error(err: &str) -> bool {
+    err == ANALYSIS_BUSY_ERROR
 }
 
 fn build_events_url(base_url: &str) -> Result<Url, url::ParseError> {
@@ -184,7 +207,7 @@ async fn process_analysis_result(
         summary_len = payload.analysis.summary.len(),
         "received analysis result from agent"
     );
-    
+
     // 存储到数据库
     let response = AnalysisResult {
         summary: payload.analysis.summary.clone(),
