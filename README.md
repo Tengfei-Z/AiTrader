@@ -57,6 +57,7 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统，前端使用
 
 1. **准备环境变量**
    - Rust 服务需要 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`，是否走模拟盘由 `OKX_USE_SIMULATED` 控制。
+   - 通过 `OKX_INST_IDS` 指定需要同步的合约列表（例如 `OKX_INST_IDS=BTC-USDT-SWAP,ETH-USDT-SWAP`），系统会按顺序依次同步；默认仅跟踪 `BTC-USDT-SWAP`。
    - Python Agent 需要 `DEEPSEEK_API_KEY`、`OKX_*`、`AGENT_PORT` 等配置，可将 `agent/.env.example` 复制为仓库根目录下的 `.env` 并填写；同样通过 `OKX_USE_SIMULATED=false` 可切换到实盘（默认开启模拟）。
    - 若希望自动触发策略分析，可设置 `STRATEGY_SCHEDULE_ENABLED=true` 并通过 `STRATEGY_SCHEDULE_INTERVAL_SECS` 指定轮询秒数；该定时器运行在 Rust 服务侧，若检测到正在执行的任务会跳过本次。
 

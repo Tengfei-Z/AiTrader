@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub agent: Option<AgentConfig>,
     #[serde(default = "default_okx_use_simulated")]
     pub okx_use_simulated: bool,
+    #[serde(default = "default_okx_inst_ids")]
+    pub okx_inst_ids: Vec<String>,
     #[serde(default = "default_initial_equity")]
     pub initial_equity: f64,
     #[serde(default = "default_reset_database")]
@@ -51,6 +53,11 @@ impl AppConfig {
 
         let okx_base_url = env::var("OKX_BASE_URL").unwrap_or_else(|_| default_okx_base_url());
         let okx_use_simulated = env_bool("OKX_USE_SIMULATED", true);
+        let okx_inst_ids = env::var("OKX_INST_IDS")
+            .ok()
+            .map(|raw| parse_okx_inst_ids(&raw))
+            .and_then(|list| if list.is_empty() { None } else { Some(list) })
+            .unwrap_or_else(default_okx_inst_ids);
 
         let agent = match env_var_non_empty("AGENT_BASE_URL") {
             Ok(base_url) => Some(AgentConfig { base_url }),
@@ -76,6 +83,7 @@ impl AppConfig {
             okx_credentials,
             agent,
             okx_use_simulated,
+            okx_inst_ids,
             initial_equity,
             reset_database,
             strategy_schedule_enabled,
@@ -106,6 +114,10 @@ impl AppConfig {
         self.okx_use_simulated
     }
 
+    pub fn okx_inst_ids(&self) -> &[String] {
+        &self.okx_inst_ids
+    }
+
     pub fn should_reset_database(&self) -> bool {
         self.reset_database
     }
@@ -133,6 +145,10 @@ fn default_okx_base_url() -> String {
 
 fn default_okx_use_simulated() -> bool {
     true
+}
+
+fn default_okx_inst_ids() -> Vec<String> {
+    vec!["BTC-USDT-SWAP".to_string()]
 }
 
 fn default_initial_equity() -> f64 {
@@ -200,4 +216,13 @@ fn load_okx_credentials(key: &str, secret: &str, passphrase: &str) -> Option<Okx
         }),
         _ => None,
     }
+}
+
+fn parse_okx_inst_ids(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|entry| entry.trim())
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| entry.to_uppercase())
+        .collect()
 }
