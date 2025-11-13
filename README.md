@@ -107,8 +107,3 @@ bash nginx/build.sh
 
 脚本会构建前端与后端、在 `agent/.venv` 安装依赖，并输出可直接用于 systemd + nginx 的产物；数据库连接信息完全来自 `.env`。
 
-## 后续规划
-
-- 扩展 Rust API 的 OKX 账户与交易端点，并补充集成测试。
-- 丰富 Python Agent 的工具集（资金费率、批量下单等）并建设端到端回归。
-- 将 `doc/new.md` 等设计草稿融入正式文档，逐步清理临时文件。
