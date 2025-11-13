@@ -33,6 +33,8 @@ const BALANCE_ASSET: &str = "USDT";
 const BALANCE_SOURCE: &str = "okx";
 /// 余额快照变化容差阈值（小于此值的变化不记录新快照）
 const BALANCE_SNAPSHOT_TOLERANCE: f64 = 1e-6;
+/// 余额快照采样间隔（秒）
+const BALANCE_SNAPSHOT_INTERVAL_SECS: u64 = 30;
 
 /// 账户余额信息（返回给前端的格式）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -464,7 +466,7 @@ async fn record_balance_snapshot_if_changed(
 
 /// 定期余额快照循环任务
 ///
-/// 每 5 秒从 OKX 获取一次账户余额，如果有变化则记录到数据库
+/// 每 30 秒从 OKX 获取一次账户余额，如果有变化则记录到数据库
 /// 用于生成账户权益曲线图
 pub async fn run_balance_snapshot_loop(state: AppState) {
     loop {
@@ -487,6 +489,6 @@ pub async fn run_balance_snapshot_loop(state: AppState) {
                 }
             }
         }
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(BALANCE_SNAPSHOT_INTERVAL_SECS)).await;
     }
 }

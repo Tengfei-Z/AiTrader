@@ -1,13 +1,14 @@
 import { useQueries } from '@tanstack/react-query';
 import { fetchTicker } from '@api/market';
 import type { Ticker } from '@api/types';
+import { DEFAULT_TICKER_REFETCH_INTERVAL } from './constants';
 
 export const useMultipleTickers = (symbols: string[]) => {
   const results = useQueries({
     queries: symbols.map((symbol) => ({
       queryKey: ['ticker', symbol],
       queryFn: () => fetchTicker(symbol),
-      refetchInterval: 5000,
+      refetchInterval: DEFAULT_TICKER_REFETCH_INTERVAL,
     })),
   });
 
