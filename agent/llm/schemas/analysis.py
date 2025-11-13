@@ -6,9 +6,10 @@ from pydantic import BaseModel
 
 
 class AnalysisRequest(BaseModel):
-    pass
+    symbol: str | None = None
 
 
 class AnalysisResponse(BaseModel):
     summary: str
     created_at: datetime
+    symbol: str | None = None

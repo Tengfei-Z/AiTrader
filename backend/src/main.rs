@@ -14,7 +14,8 @@ mod settings;
 mod types;
 
 use crate::agent_subscriber::{
-    is_analysis_busy_error, run_agent_events_listener, trigger_analysis,
+    is_analysis_busy_error, is_websocket_uninitialized_error, run_agent_events_listener,
+    trigger_analysis,
 };
 use crate::db::init_database;
 use crate::okx::OkxRestClient;
@@ -148,19 +149,50 @@ async fn run_strategy_scheduler_loop(interval: Duration) {
         "strategy scheduler loop enabled"
     );
 
+    const WS_RETRY_DELAY: Duration = Duration::from_secs(5);
+    const WS_RETRY_MAX_ATTEMPTS: usize = 3;
+
     loop {
-        match trigger_analysis().await {
-            Ok(result) => {
-                info!(
-                    summary_len = result.summary.len(),
-                    "scheduled strategy analysis completed"
-                );
-            }
-            Err(err) if is_analysis_busy_error(&err) => {
-                info!("scheduled strategy analysis skipped: previous run active");
-            }
-            Err(err) => {
-                warn!(%err, "scheduled strategy analysis failed");
+        let inst_ids: Vec<String> = CONFIG.okx_inst_ids().to_vec();
+        for symbol in inst_ids {
+            let mut attempts = 0;
+            loop {
+                match trigger_analysis(Some(symbol.as_str())).await {
+                    Ok(result) => {
+                        info!(
+                            summary_len = result.summary.len(),
+                            symbol = result.symbol.as_deref().unwrap_or(&symbol),
+                            "scheduled strategy analysis completed"
+                        );
+                        break;
+                    }
+                    Err(err) if is_analysis_busy_error(&err) => {
+                        info!(%symbol, "scheduled strategy analysis skipped: previous run active");
+                        break;
+                    }
+                    Err(err) if is_websocket_uninitialized_error(&err) => {
+                        if attempts >= WS_RETRY_MAX_ATTEMPTS {
+                            warn!(
+                                %symbol,
+                                attempts,
+                                "scheduled strategy analysis aborted after websocket retries"
+                            );
+                            break;
+                        }
+                        attempts += 1;
+                        warn!(
+                            %symbol,
+                            attempts,
+                            "scheduled strategy analysis deferred: websocket not ready, retrying soon"
+                        );
+                        tokio::time::sleep(WS_RETRY_DELAY).await;
+                        continue;
+                    }
+                    Err(err) => {
+                        warn!(%err, %symbol, "scheduled strategy analysis failed");
+                        break;
+                    }
+                }
             }
         }
 

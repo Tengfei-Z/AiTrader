@@ -11,11 +11,11 @@ use tracing::{info, warn};
 
 use crate::db::{self, PositionSnapshot, TradeRecord};
 use crate::okx::{self, OkxRestClient};
+use crate::settings::CONFIG;
 
 static ORDER_SYNC_CLIENT: OnceCell<Option<OkxRestClient>> = OnceCell::new();
 
 const DEFAULT_INST_TYPE: &str = "SWAP";
-const DEFAULT_INST_ID: &str = "BTC-USDT-SWAP";
 
 /// 初始化 order-sync 所需的 OKX 客户端实例。
 pub fn init_client(client: Option<OkxRestClient>) {
@@ -34,20 +34,28 @@ fn okx_client() -> Option<OkxRestClient> {
 pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
     let client = okx_client().ok_or_else(|| anyhow!("order sync okx client unavailable"))?;
 
-    let historical_orders = client
-        .get_order_history(
-            Some(DEFAULT_INST_TYPE),
-            Some(DEFAULT_INST_ID),
-            None,
-            Some(ord_id),
-            Some(1),
-        )
-        .await?;
+    let mut order = None;
+    for inst_id in CONFIG.okx_inst_ids().iter() {
+        let historical_orders = client
+            .get_order_history(
+                Some(DEFAULT_INST_TYPE),
+                Some(inst_id.as_str()),
+                None,
+                Some(ord_id),
+                Some(1),
+            )
+            .await?;
 
-    let order = historical_orders
-        .into_iter()
-        .find(|entry| entry.ord_id == ord_id)
-        .ok_or_else(|| anyhow!("order history missing {ord_id}"))?;
+        if let Some(entry) = historical_orders
+            .into_iter()
+            .find(|entry| entry.ord_id == ord_id)
+        {
+            order = Some(entry);
+            break;
+        }
+    }
+
+    let order = order.ok_or_else(|| anyhow!("order history missing {ord_id}"))?;
 
     info!(?order, "fetched order history entry");
 
@@ -85,10 +93,11 @@ pub async fn run_periodic_position_sync() {
 
 async fn sync_positions_from_okx(client: &OkxRestClient) -> Result<()> {
     let positions = client.get_positions(Some(DEFAULT_INST_TYPE)).await?;
+    let allowed_inst_ids: HashSet<String> = CONFIG.okx_inst_ids().iter().cloned().collect();
     let mut seen: HashSet<(String, String)> = HashSet::new();
     for detail in positions
         .into_iter()
-        .filter(|detail| detail.inst_id == DEFAULT_INST_ID)
+        .filter(|detail| allowed_inst_ids.contains(&detail.inst_id))
     {
         let snapshot = position_snapshot_from_detail(&detail)?;
         let inst_id = snapshot.inst_id.clone();
@@ -98,8 +107,11 @@ async fn sync_positions_from_okx(client: &OkxRestClient) -> Result<()> {
         db::upsert_position_snapshot(snapshot).await?;
     }
 
-    let existing = db::fetch_position_snapshots(false, Some(DEFAULT_INST_ID), None).await?;
+    let existing = db::fetch_position_snapshots(false, None, None).await?;
     for snapshot in existing {
+        if !allowed_inst_ids.contains(&snapshot.inst_id) {
+            continue;
+        }
         let key = (snapshot.inst_id.clone(), snapshot.pos_side.clone());
         if !seen.contains(&key) {
             if let Err(err) =

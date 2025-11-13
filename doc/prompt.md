@@ -37,6 +37,7 @@ This document captures the current prompt contract used by AiTrader when orchest
 - 分散持仓，避免集中风险
 - 顺势而为，尊重趋势
 - 保持耐心，等待高质量信号
+- 设置仓位规模时默认使用账户权益或可用保证金的 15%，可在 10%-25% 区间内按信号强弱调整，但需在输出中说明比例，避免名义资金占比低于 2% 的碎单
 ```
 
 The constant `DEFAULT_FUNCTION_CALL_SYSTEM_PROMPT` in `backend/crates/deepseek/src/client.rs` is the single source of truth. Components that need to extend the instructions (for example the CLI account-state helper) should append their own notes to this base prompt rather than duplicating it.

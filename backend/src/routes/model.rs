@@ -4,11 +4,16 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tokio::time::{sleep, Duration};
 
 use crate::agent_subscriber;
 use crate::db::fetch_strategy_messages;
+use crate::settings::CONFIG;
 use crate::types::ApiResponse;
 use crate::AppState;
+
+const WS_RETRY_DELAY: Duration = Duration::from_secs(5);
+const WS_RETRY_MAX_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,22 +64,49 @@ async fn trigger_strategy_run() -> impl IntoResponse {
 }
 
 async fn run_strategy_job() {
-    tracing::info!("Triggering strategy analysis via WebSocket");
+    let inst_ids: Vec<String> = CONFIG.okx_inst_ids().to_vec();
+    for symbol in inst_ids {
+        tracing::info!(%symbol, "Triggering strategy analysis via WebSocket");
 
-    match agent_subscriber::trigger_analysis().await {
-        Ok(response) => {
-            tracing::info!(
-                summary_preview = %truncate_for_log(&response.summary, 256),
-                "Agent analysis completed via WebSocket"
-            );
-
-            tracing::info!("Strategy run completed and stored in background task");
-        }
-        Err(err) if agent_subscriber::is_analysis_busy_error(&err) => {
-            tracing::info!("Strategy analysis already running; skipping manual trigger");
-        }
-        Err(err) => {
-            tracing::warn!(%err, "Strategy analysis task failed");
+        let mut attempts = 0;
+        loop {
+            match agent_subscriber::trigger_analysis(Some(symbol.as_str())).await {
+                Ok(response) => {
+                    tracing::info!(
+                        summary_preview = %truncate_for_log(&response.summary, 256),
+                        symbol = response.symbol.as_deref().unwrap_or(&symbol),
+                        "Agent analysis completed via WebSocket"
+                    );
+                    tracing::info!("Strategy run completed and stored in background task");
+                    break;
+                }
+                Err(err) if agent_subscriber::is_analysis_busy_error(&err) => {
+                    tracing::info!(%symbol, "Strategy analysis already running; skipping manual trigger");
+                    break;
+                }
+                Err(err) if agent_subscriber::is_websocket_uninitialized_error(&err) => {
+                    if attempts >= WS_RETRY_MAX_ATTEMPTS {
+                        tracing::warn!(
+                            %symbol,
+                            attempts,
+                            "Strategy analysis aborted after websocket initialization retries"
+                        );
+                        break;
+                    }
+                    attempts += 1;
+                    tracing::warn!(
+                        %symbol,
+                        attempts,
+                        "Strategy analysis deferred: websocket not ready, retrying shortly"
+                    );
+                    sleep(WS_RETRY_DELAY).await;
+                    continue;
+                }
+                Err(err) => {
+                    tracing::warn!(%err, %symbol, "Strategy analysis task failed");
+                    break;
+                }
+            }
         }
     }
 }

@@ -46,13 +46,14 @@ type PendingAnalyses = Arc<Mutex<VecDeque<PendingAnalysis>>>;
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum OutgoingMessage {
-    TriggerAnalysis,
+    TriggerAnalysis { symbol: Option<String> },
 }
 
 /// 从 Agent 接收的分析结果
 #[derive(Debug, Clone, Deserialize)]
 pub struct AnalysisResult {
     pub summary: String,
+    pub symbol: Option<String>,
 }
 
 pub async fn run_agent_events_listener() {
@@ -150,7 +151,7 @@ pub async fn run_agent_events_listener() {
 }
 
 /// 触发策略分析（供其他模块调用）
-pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
+pub async fn trigger_analysis(symbol: Option<&str>) -> Result<AnalysisResult, String> {
     let semaphore = Lazy::force(&ANALYSIS_PERMIT).clone();
     let permit = match semaphore.try_acquire_owned() {
         Ok(permit) => permit,
@@ -160,13 +161,13 @@ pub async fn trigger_analysis() -> Result<AnalysisResult, String> {
         }
     };
 
-    let result = trigger_analysis_inner().await;
+    let result = trigger_analysis_inner(symbol.map(|s| s.to_string())).await;
     drop(permit);
 
     result
 }
 
-async fn trigger_analysis_inner() -> Result<AnalysisResult, String> {
+async fn trigger_analysis_inner(symbol: Option<String>) -> Result<AnalysisResult, String> {
     let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
     let pending = PENDING_ANALYSES
         .get()
@@ -184,7 +185,7 @@ async fn trigger_analysis_inner() -> Result<AnalysisResult, String> {
     }
 
     // 发送触发消息
-    if let Err(_) = sender.send(OutgoingMessage::TriggerAnalysis) {
+    if let Err(_) = sender.send(OutgoingMessage::TriggerAnalysis { symbol }) {
         remove_pending_by_id(pending.clone(), request_id).await;
         return Err("failed to send trigger message".to_string());
     }
@@ -207,6 +208,10 @@ async fn trigger_analysis_inner() -> Result<AnalysisResult, String> {
 
 pub fn is_analysis_busy_error(err: &str) -> bool {
     err == ANALYSIS_BUSY_ERROR
+}
+
+pub fn is_websocket_uninitialized_error(err: &str) -> bool {
+    err.eq_ignore_ascii_case("websocket not initialized")
 }
 
 fn build_events_url(base_url: &str) -> Result<Url, url::ParseError> {
@@ -240,6 +245,7 @@ async fn process_analysis_result(
     // 存储到数据库
     let response = AnalysisResult {
         summary: payload.analysis.summary.clone(),
+        symbol: payload.analysis.symbol.clone(),
     };
 
     if let Err(err) = db::insert_strategy_message(db::StrategyMessageInsert {
@@ -329,6 +335,7 @@ struct AnalysisResultPayload {
 #[derive(Debug, Deserialize)]
 struct AnalysisData {
     summary: String,
+    symbol: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
