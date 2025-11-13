@@ -12,7 +12,10 @@ logger = get_logger(__name__)
 
 @router.post("/", response_model=AnalysisResponse)
 async def analyze_market(request: AnalysisRequest) -> AnalysisResponse:
-    logger.info("analysis_request_received")
+    logger.info(
+        "analysis_request_received",
+        symbol=request.symbol,
+    )
     try:
         response = await strategy_analyzer.analyze(request)
     except Exception as exc:  # pragma: no cover - FastAPI converts
@@ -22,5 +25,6 @@ async def analyze_market(request: AnalysisRequest) -> AnalysisResponse:
     logger.info(
         "analysis_request_completed",
         summary_preview=response.summary[:120],
+        symbol=response.symbol,
     )
     return response

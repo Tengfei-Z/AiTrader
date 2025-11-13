@@ -124,10 +124,22 @@ class StrategyAnalyzer:
         logger.info(
             "analysis_history_loaded",
             history_messages=len(history),
+            symbol=request.symbol,
         )
 
         messages: list[ChatMessage] = [ChatMessage(role="system", content=_SYSTEM_PROMPT)]
         messages.extend(history)
+
+        if request.symbol:
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=(
+                        f"本轮策略分析的唯一目标合约是 {request.symbol}。"
+                        "所有行情查询、仓位评估与下单操作都必须聚焦该合约，禁止跨其他合约交易。"
+                    ),
+                )
+            )
 
         messages.append(
             ChatMessage(
@@ -144,6 +156,7 @@ class StrategyAnalyzer:
             logger.info(
                 "deepseek_analysis_dispatch",
                 history=len(history),
+                symbol=request.symbol,
             )
             return await deepseek_client.chat_completion(
                 messages,
@@ -161,6 +174,7 @@ class StrategyAnalyzer:
                     tool=name,
                     raw_arguments=arguments_raw,
                     tool_call_id=tool_call.get("id"),
+                    symbol=request.symbol,
                 )
                 try:
                     arguments = (
@@ -181,6 +195,7 @@ class StrategyAnalyzer:
                     tool=name,
                     arguments=arguments,
                     result_summary=str(result)[:800],
+                    symbol=request.symbol,
                 )
 
                 event_collector.record_tool_call(name, arguments, result)
@@ -211,6 +226,7 @@ class StrategyAnalyzer:
                 logger.info(
                     "strategy_no_tool_calls",
                     iteration=iteration,
+                    symbol=request.symbol,
                 )
                 break
 
@@ -218,6 +234,7 @@ class StrategyAnalyzer:
                 "strategy_tool_calls_detected",
                 iteration=iteration,
                 tool_count=len(tool_calls),
+                symbol=request.symbol,
             )
             await _handle_tool_calls(tool_calls)
 
@@ -225,6 +242,7 @@ class StrategyAnalyzer:
                 logger.warning(
                     "strategy_tool_loop_maxed",
                     max_iterations=max_iterations,
+                    symbol=request.symbol,
                 )
                 break
 
@@ -235,11 +253,13 @@ class StrategyAnalyzer:
         logger.info(
             "strategy_final_response",
             summary_preview=summary[:800] if isinstance(summary, str) else str(summary)[:800],
+            symbol=request.symbol,
         )
 
         response = AnalysisResponse(
             summary=summary,
             created_at=datetime.now(tz=timezone.utc),
+            symbol=request.symbol,
         )
 
         await conversation_manager.add_message(
@@ -247,7 +267,7 @@ class StrategyAnalyzer:
             ChatMessage(role="assistant", content=summary),
         )
 
-        logger.info("analysis_response_prepared")
+        logger.info("analysis_response_prepared", symbol=request.symbol)
 
         # 推送订单更新事件（如果有订单）
         for order_event in event_collector.order_events:
