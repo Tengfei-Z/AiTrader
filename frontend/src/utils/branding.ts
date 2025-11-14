@@ -11,4 +11,4 @@ export const BRAND_TAGLINE = pickValue(
   import.meta.env.VITE_APP_BRAND_TAGLINE,
   DEFAULT_BRAND_TAGLINE
 );
-export const BRAND_CONSOLE_TITLE = `${BRAND_NAME} 控制台`;
+export const BRAND_CONSOLE_TITLE = BRAND_NAME;
