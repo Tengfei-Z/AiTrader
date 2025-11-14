@@ -19,7 +19,7 @@ const AiConsolePage = () => {
   const { data: positions, isLoading: positionsLoading } = usePositions();
   const { data: positionHistory, isLoading: positionHistoryLoading } = usePositionHistory();
   const {
-    data: strategyMessages,
+    data: strategyChat,
     isLoading: strategyLoading,
     refetch: refetchStrategyChat
   } = useStrategyChat();
@@ -139,9 +139,9 @@ const AiConsolePage = () => {
             positionsLoading={positionsLoading}
             history={positionHistory}
             historyLoading={positionHistoryLoading}
-            strategyMessages={strategyMessages}
+            strategyMessages={strategyChat?.messages}
             strategyLoading={strategyLoading}
-            onStrategyRefresh={refetchStrategyChat}
+            manualTriggerEnabled={strategyChat?.allowManualTrigger}
             onStrategyStart={handleStrategyStart}
             strategyRunning={strategyRunning}
             className="full-height-card"

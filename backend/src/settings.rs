@@ -47,6 +47,8 @@ pub struct AppConfig {
     pub strategy_schedule_enabled: bool,
     #[serde(default = "default_strategy_schedule_interval_secs")]
     pub strategy_schedule_interval_secs: u64,
+    #[serde(default = "default_strategy_manual_trigger_enabled")]
+    pub strategy_manual_trigger_enabled: bool,
 }
 
 impl AppConfig {
@@ -93,6 +95,7 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|secs| *secs > 0)
             .unwrap_or_else(default_strategy_schedule_interval_secs);
+        let strategy_manual_trigger_enabled = env_bool("STRATEGY_MANUAL_TRIGGER_ENABLED", false);
 
         Ok(Self {
             okx_base_url,
@@ -107,6 +110,7 @@ impl AppConfig {
             reset_database,
             strategy_schedule_enabled,
             strategy_schedule_interval_secs,
+            strategy_manual_trigger_enabled,
         })
     }
 
@@ -147,6 +151,10 @@ impl AppConfig {
 
     pub fn strategy_schedule_interval_secs(&self) -> u64 {
         self.strategy_schedule_interval_secs
+    }
+
+    pub fn strategy_manual_trigger_enabled(&self) -> bool {
+        self.strategy_manual_trigger_enabled
     }
 
     pub fn initial_equity_env_override(&self) -> Option<f64> {
@@ -196,6 +204,10 @@ fn default_strategy_schedule_enabled() -> bool {
 
 fn default_strategy_schedule_interval_secs() -> u64 {
     300
+}
+
+fn default_strategy_manual_trigger_enabled() -> bool {
+    false
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

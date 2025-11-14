@@ -83,6 +83,11 @@ export interface StrategyMessage {
   createdAt: string;
 }
 
+export interface StrategyChatPayload {
+  allowManualTrigger: boolean;
+  messages: StrategyMessage[];
+}
+
 export interface InitialEquityRecord {
   amount: string;
   recordedAt: string;

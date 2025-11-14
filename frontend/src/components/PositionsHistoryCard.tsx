@@ -12,9 +12,9 @@ interface Props {
   positionsLoading?: boolean;
   historyLoading?: boolean;
   strategyLoading?: boolean;
-  onStrategyRefresh?: () => void;
   onStrategyStart?: () => void;
   strategyRunning?: boolean;
+  manualTriggerEnabled?: boolean;
   className?: string;
 }
 
@@ -25,9 +25,9 @@ const PositionsHistoryCard = ({
   positionsLoading,
   historyLoading,
   strategyLoading,
-  onStrategyRefresh,
   onStrategyStart,
   strategyRunning,
+  manualTriggerEnabled,
   className
 }: Props) => {
   const wrapTabContent = (node: ReactNode, scrollable?: boolean) => (
@@ -71,9 +71,9 @@ const PositionsHistoryCard = ({
         <StrategyChatCard
           messages={strategyMessages}
           loading={strategyLoading}
-          onRefresh={onStrategyRefresh}
           onStart={onStrategyStart}
           starting={strategyRunning}
+          manualTriggerEnabled={manualTriggerEnabled}
           embedded
         />
       </Card>

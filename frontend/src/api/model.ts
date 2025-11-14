@@ -1,9 +1,14 @@
 import client from './client';
-import type { ApiResponse, StrategyMessage } from './types';
+import type { ApiResponse, StrategyChatPayload } from './types';
 
 export const fetchStrategyChat = async () => {
-  const { data } = await client.get<ApiResponse<StrategyMessage[]>>('/model/strategy-chat');
-  return data.data ?? [];
+  const { data } = await client.get<ApiResponse<StrategyChatPayload>>('/model/strategy-chat');
+  return (
+    data.data ?? {
+      allowManualTrigger: false,
+      messages: []
+    }
+  );
 };
 
 export const triggerStrategyRun = async () => {

@@ -23,6 +23,13 @@ pub struct StrategyMessage {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyChatPayload {
+    pub allow_manual_trigger: bool,
+    pub messages: Vec<StrategyMessage>,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/strategy-chat", get(get_strategy_chat))
@@ -40,11 +47,15 @@ async fn get_strategy_chat() -> impl IntoResponse {
                     created_at: record.created_at.to_rfc3339(),
                 })
                 .collect::<Vec<_>>();
-            Json(ApiResponse::ok(messages))
+            let payload = StrategyChatPayload {
+                allow_manual_trigger: CONFIG.strategy_manual_trigger_enabled(),
+                messages,
+            };
+            Json(ApiResponse::ok(payload))
         }
         Err(err) => {
             tracing::warn!(error = ?err, "failed to fetch strategy chat from database");
-            Json(ApiResponse::<Vec<StrategyMessage>>::error(
+            Json(ApiResponse::<StrategyChatPayload>::error(
                 "无法获取策略对话",
             ))
         }

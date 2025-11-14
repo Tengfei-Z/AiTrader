@@ -6,25 +6,26 @@ interface Props {
   messages?: StrategyMessage[];
   loading?: boolean;
   className?: string;
-  onRefresh?: () => void;
   onStart?: () => void;
   starting?: boolean;
   embedded?: boolean;
+  manualTriggerEnabled?: boolean;
 }
 
 const StrategyChatCard = ({
   messages,
   loading,
   className,
-  onRefresh,
   onStart,
   starting,
-  embedded
+  embedded,
+  manualTriggerEnabled
 }: Props) => {
   const orderedMessages = (messages ?? [])
     .slice()
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   const spinning = Boolean(loading || starting);
+  const allowManualTrigger = Boolean(manualTriggerEnabled);
 
   const content = (
     <Flex vertical gap={16} className="strategy-chat-panel">
@@ -32,18 +33,17 @@ const StrategyChatCard = ({
         <Typography.Title level={5} className="strategy-chat-panel__title">
           策略对话
         </Typography.Title>
-        <Flex align="center" gap={8}>
-          {onStart && (
-            <Button type="primary" size="small" onClick={onStart} loading={starting}>
-              启动策略
-            </Button>
-          )}
-          {onRefresh && (
-            <Button type="link" size="small" onClick={onRefresh}>
-              刷新
-            </Button>
-          )}
-        </Flex>
+        {onStart && (
+          <Flex align="center" gap={12}>
+            {allowManualTrigger ? (
+              <Button type="primary" size="small" onClick={onStart} loading={starting}>
+                启动策略
+              </Button>
+            ) : (
+              <Typography.Text type="secondary">手动触发已关闭</Typography.Text>
+            )}
+          </Flex>
+        )}
       </Flex>
       {orderedMessages.length === 0 ? (
         <Empty description="暂无对话记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
