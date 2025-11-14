@@ -34,7 +34,7 @@ const BALANCE_SOURCE: &str = "okx";
 /// 余额快照变化容差阈值（小于此值的变化不记录新快照）
 const BALANCE_SNAPSHOT_TOLERANCE: f64 = 1e-6;
 /// 余额快照采样间隔（秒）
-const BALANCE_SNAPSHOT_INTERVAL_SECS: u64 = 30;
+const BALANCE_SNAPSHOT_INTERVAL_SECS: u64 = 30 * 60;
 
 /// 账户余额信息（返回给前端的格式）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +148,17 @@ struct BalanceSnapshotListQuery {
     limit: Option<usize>,
     /// 资产类型过滤
     asset: Option<String>,
+    /// 仅返回该时间点之后的记录（RFC3339）
+    after: Option<String>,
+}
+
+/// 余额快照列表响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BalanceSnapshotListPayload {
+    snapshots: Vec<BalanceSnapshotResponse>,
+    has_more: bool,
+    next_cursor: Option<String>,
 }
 
 /// 最新余额查询参数
@@ -253,17 +264,35 @@ async fn get_balances(State(state): State<AppState>) -> impl IntoResponse {
 async fn get_balance_snapshots(
     Query(params): Query<BalanceSnapshotListQuery>,
 ) -> impl IntoResponse {
-    let limit = params
+    let requested_limit = params
         .limit
         .unwrap_or(DEFAULT_BALANCE_SNAPSHOT_LIMIT)
+        .max(1)
         .min(MAX_BALANCE_SNAPSHOT_LIMIT);
+    let fetch_limit = requested_limit.saturating_add(1);
     let asset = params.asset.unwrap_or_else(|| BALANCE_ASSET.to_string());
+    let after = params.after.as_deref().and_then(|raw| {
+        DateTime::parse_from_rfc3339(raw)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|err| tracing::warn!(%raw, error = ?err, "invalid after parameter"))
+            .ok()
+    });
 
-    tracing::info!(asset = %asset, limit, "received balance snapshots request");
+    tracing::info!(
+        asset = %asset,
+        limit = requested_limit,
+        after = %params.after.as_deref().unwrap_or("earliest"),
+        "received balance snapshots request"
+    );
 
-    match fetch_balance_snapshots(&asset, limit as i64).await {
-        Ok(records) => {
-            let payload: Vec<BalanceSnapshotResponse> = records
+    match fetch_balance_snapshots(&asset, fetch_limit as i64, after).await {
+        Ok(mut records) => {
+            let has_more = (records.len() as usize) == (fetch_limit as usize);
+            if has_more {
+                records.pop();
+            }
+
+            let snapshots: Vec<BalanceSnapshotResponse> = records
                 .into_iter()
                 .map(|record| BalanceSnapshotResponse {
                     asset: record.asset,
@@ -274,11 +303,22 @@ async fn get_balance_snapshots(
                     recorded_at: record.recorded_at.to_rfc3339(),
                 })
                 .collect();
-            Json(ApiResponse::ok(payload))
+
+            let next_cursor = if has_more {
+                snapshots.last().map(|snapshot| snapshot.recorded_at.clone())
+            } else {
+                None
+            };
+
+            Json(ApiResponse::ok(BalanceSnapshotListPayload {
+                snapshots,
+                has_more,
+                next_cursor,
+            }))
         }
         Err(err) => {
             tracing::warn!(error = ?err, "failed to fetch balance snapshots");
-            Json(ApiResponse::<Vec<BalanceSnapshotResponse>>::error(
+            Json(ApiResponse::<BalanceSnapshotListPayload>::error(
                 "unable to fetch balance snapshots",
             ))
         }
@@ -322,8 +362,11 @@ async fn get_initial_equity() -> Json<ApiResponse<Option<InitialEquityRecord>>> 
             amount: format_amount(amount),
             recorded_at: recorded_at.to_rfc3339(),
         },
-        Ok(None) => default_initial_equity_record(),
-        Err(_) => default_initial_equity_record(),
+        Ok(None) => seed_initial_equity_from_config().await.unwrap_or_else(default_initial_equity_record),
+        Err(err) => {
+            tracing::warn!(error = ?err, "failed to fetch initial equity, using defaults");
+            default_initial_equity_record()
+        }
     };
     Json(ApiResponse::ok(Some(initial)))
 }
@@ -419,6 +462,28 @@ fn format_datetime(value: Option<DateTime<Utc>>) -> Option<String> {
     value.map(|dt| dt.to_rfc3339())
 }
 
+async fn seed_initial_equity_from_config() -> Option<InitialEquityRecord> {
+    let amount = CONFIG.initial_equity;
+    tracing::info!(amount, "seeding initial equity from configuration");
+
+    if let Err(err) = insert_initial_equity(amount).await {
+        tracing::warn!(error = ?err, "failed to insert initial equity from config");
+        return None;
+    }
+
+    match fetch_initial_equity().await {
+        Ok(Some((stored_amount, recorded_at))) => Some(InitialEquityRecord {
+            amount: format_amount(stored_amount),
+            recorded_at: recorded_at.to_rfc3339(),
+        }),
+        Ok(None) => None,
+        Err(err) => {
+            tracing::warn!(error = ?err, "failed to re-fetch initial equity after seeding");
+            None
+        }
+    }
+}
+
 /// 解析可选的数字字符串为 f64（过滤非有限值）
 fn parse_optional_number(value: Option<String>) -> Option<f64> {
     optional_string(value)
@@ -445,10 +510,25 @@ async fn record_balance_snapshot_if_changed(
     locked: f64,
     valuation: f64,
 ) -> anyhow::Result<()> {
+    let abs_threshold = CONFIG.balance_snapshot_min_abs_change.max(0.0);
+    let rel_threshold = CONFIG.balance_snapshot_min_relative_change.max(0.0);
+
     // 获取最近一次的余额快照
     if let Some(previous) = fetch_latest_balance_snapshot(BALANCE_ASSET).await? {
+        let diff = (previous.valuation - valuation).abs();
         // 如果总估值变化小于容差阈值，则跳过记录
-        if (previous.valuation - valuation).abs() < BALANCE_SNAPSHOT_TOLERANCE {
+        if diff < BALANCE_SNAPSHOT_TOLERANCE {
+            return Ok(());
+        }
+
+        let previous_abs = previous.valuation.abs();
+        let relative_change = if previous_abs > f64::EPSILON {
+            diff / previous_abs
+        } else {
+            f64::INFINITY
+        };
+
+        if diff < abs_threshold && relative_change < rel_threshold {
             return Ok(());
         }
     }

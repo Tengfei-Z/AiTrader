@@ -35,6 +35,10 @@ pub struct AppConfig {
     pub okx_inst_ids: Vec<String>,
     #[serde(default = "default_initial_equity")]
     pub initial_equity: f64,
+    #[serde(default = "default_snapshot_min_abs_change")]
+    pub balance_snapshot_min_abs_change: f64,
+    #[serde(default = "default_snapshot_min_relative_change")]
+    pub balance_snapshot_min_relative_change: f64,
     #[serde(default = "default_reset_database")]
     pub reset_database: bool,
     #[serde(default = "default_strategy_schedule_enabled")]
@@ -68,6 +72,16 @@ impl AppConfig {
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap_or_else(default_initial_equity);
+        let balance_snapshot_min_abs_change = env::var("BALANCE_SNAPSHOT_MIN_ABS_CHANGE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| *v >= 0.0)
+            .unwrap_or_else(default_snapshot_min_abs_change);
+        let balance_snapshot_min_relative_change = env::var("BALANCE_SNAPSHOT_MIN_RELATIVE_CHANGE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| *v >= 0.0)
+            .unwrap_or_else(default_snapshot_min_relative_change);
 
         let reset_database = env_bool("RESET_DATABASE", false);
 
@@ -85,6 +99,8 @@ impl AppConfig {
             okx_use_simulated,
             okx_inst_ids,
             initial_equity,
+            balance_snapshot_min_abs_change,
+            balance_snapshot_min_relative_change,
             reset_database,
             strategy_schedule_enabled,
             strategy_schedule_interval_secs,
@@ -153,6 +169,14 @@ fn default_okx_inst_ids() -> Vec<String> {
 
 fn default_initial_equity() -> f64 {
     122_000.0
+}
+
+fn default_snapshot_min_abs_change() -> f64 {
+    1.0
+}
+
+fn default_snapshot_min_relative_change() -> f64 {
+    0.0001
 }
 
 fn default_reset_database() -> bool {
