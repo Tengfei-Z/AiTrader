@@ -3,6 +3,7 @@ import type {
   ApiResponse,
   BalanceItem,
   BalanceSnapshotItem,
+  BalanceSnapshotListPayload,
   FillItem,
   InitialEquityRecord,
   PositionHistoryItem,
@@ -27,14 +28,56 @@ export const fetchBalances = async () => {
   }));
 };
 
-export const fetchBalanceSnapshots = async (params: { asset?: string; limit?: number } = {}) => {
-  const { data } = await client.get<ApiResponse<BalanceSnapshotItem[]>>(
+export interface BalanceSnapshotQueryParams {
+  asset?: string;
+  limit?: number;
+  after?: string;
+}
+
+const emptySnapshotPayload: BalanceSnapshotListPayload = {
+  snapshots: [],
+  hasMore: false,
+  nextCursor: null
+};
+
+export const fetchBalanceSnapshots = async (params: BalanceSnapshotQueryParams = {}) => {
+  const { data } = await client.get<ApiResponse<BalanceSnapshotListPayload>>(
     '/account/balances/snapshots',
     {
       params
     }
   );
-  return data.data;
+  return data.data ?? emptySnapshotPayload;
+};
+
+export const fetchAllBalanceSnapshots = async (params: BalanceSnapshotQueryParams = {}) => {
+  const snapshots: BalanceSnapshotItem[] = [];
+  const visitedCursors = new Set<string>();
+
+  const baseParams: BalanceSnapshotQueryParams = { ...params };
+  let cursor = baseParams.after;
+  delete baseParams.after;
+
+  while (true) {
+    const requestParams: BalanceSnapshotQueryParams = cursor
+      ? { ...baseParams, after: cursor }
+      : { ...baseParams };
+
+    const response = await fetchBalanceSnapshots(requestParams);
+    snapshots.push(...response.snapshots);
+
+    if (!response.hasMore || !response.nextCursor) {
+      break;
+    }
+    if (visitedCursors.has(response.nextCursor)) {
+      break;
+    }
+
+    visitedCursors.add(response.nextCursor);
+    cursor = response.nextCursor;
+  }
+
+  return snapshots;
 };
 
 export const fetchLatestBalanceSnapshot = async (asset?: string) => {

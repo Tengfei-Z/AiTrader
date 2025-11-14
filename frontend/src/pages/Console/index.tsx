@@ -49,7 +49,38 @@ const AiConsolePage = () => {
         .sort((a, b) => a.time - b.time)
     );
   }, [balanceSnapshots]);
-  const equityCurve = snapshotCurve;
+
+  const initialEquityPoint = useMemo(() => {
+    if (!initialEquityRecord) {
+      return null;
+    }
+    const recordedAt = new Date(initialEquityRecord.recordedAt).getTime();
+    const amount = Number(initialEquityRecord.amount);
+    if (!Number.isFinite(recordedAt) || !Number.isFinite(amount)) {
+      return null;
+    }
+    return { time: recordedAt, equity: amount };
+  }, [initialEquityRecord]);
+
+  const equityCurve = useMemo(() => {
+    if (!initialEquityPoint) {
+      return snapshotCurve;
+    }
+
+    const merged = [...snapshotCurve];
+    const existingIndex = merged.findIndex(
+      (point) => Math.abs(point.time - initialEquityPoint.time) < 1000
+    );
+
+    if (existingIndex >= 0) {
+      merged[existingIndex] = { ...merged[existingIndex], equity: initialEquityPoint.equity };
+    } else {
+      merged.unshift(initialEquityPoint);
+    }
+
+    return merged.sort((a, b) => a.time - b.time);
+  }, [initialEquityPoint, snapshotCurve]);
+
   const currentEquity = equityCurve.length
     ? equityCurve[equityCurve.length - 1]?.equity
     : initialAmount;

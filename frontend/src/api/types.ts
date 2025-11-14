@@ -45,6 +45,12 @@ export interface BalanceSnapshotItem {
   recordedAt: string;
 }
 
+export interface BalanceSnapshotListPayload {
+  snapshots: BalanceSnapshotItem[];
+  hasMore: boolean;
+  nextCursor?: string | null;
+}
+
 export type JsonMap = Record<string, unknown>;
 
 export interface PositionSnapshot {

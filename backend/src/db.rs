@@ -712,12 +712,16 @@ pub async fn insert_initial_equity(amount: f64) -> Result<()> {
         }
     };
 
-    let client = connect_client(&url).await?;
-    let sql = format!(
+    let mut client = connect_client(&url).await?;
+    let tx = client.transaction().await?;
+    let delete_sql = format!("DELETE FROM {schema}.initial_equities;", schema = schema);
+    tx.execute(&delete_sql, &[]).await?;
+    let insert_sql = format!(
         "INSERT INTO {schema}.initial_equities (amount) VALUES (($1::double precision)::numeric(20, 8));",
         schema = schema
     );
-    client.execute(&sql, &[&amount]).await?;
+    tx.execute(&insert_sql, &[&amount]).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -1272,6 +1276,7 @@ pub async fn fetch_latest_balance_snapshot(asset: &str) -> Result<Option<Balance
 pub async fn fetch_balance_snapshots(
     asset: &str,
     limit: i64,
+    after: Option<DateTime<Utc>>,
 ) -> Result<Vec<BalanceSnapshotRecord>> {
     let DatabaseSettings { url, schema } = database_settings();
 
@@ -1284,7 +1289,8 @@ pub async fn fetch_balance_snapshots(
     };
 
     let client = connect_client(&url).await?;
-    let sql = format!(
+
+    let mut sql = format!(
         "SELECT asset,
                 available::double precision AS available,
                 locked::double precision AS locked,
@@ -1292,12 +1298,28 @@ pub async fn fetch_balance_snapshots(
                 source,
                 recorded_at
          FROM {schema}.balances
-         WHERE asset = $1
-         ORDER BY recorded_at DESC
-         LIMIT $2;",
+         WHERE asset = $1",
         schema = schema
     );
-    let rows = client.query(&sql, &[&asset, &limit]).await?;
+
+    let mut param_values: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> =
+        Vec::with_capacity(3);
+    param_values.push(Box::new(asset.to_string()));
+
+    if let Some(after_value) = after {
+        sql.push_str(&format!(" AND recorded_at > ${}", param_values.len() + 1));
+        param_values.push(Box::new(after_value));
+    }
+
+    sql.push_str(&format!(" ORDER BY recorded_at ASC LIMIT ${}", param_values.len() + 1));
+    param_values.push(Box::new(limit));
+
+    let query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = param_values
+        .iter()
+        .map(|value| value.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+
+    let rows = client.query(&sql, &query_params).await?;
 
     let mut records = Vec::with_capacity(rows.len());
     for row in rows {

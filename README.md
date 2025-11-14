@@ -72,6 +72,9 @@ AiTrader 是一个围绕 OKX 交易所构建的量化交易系统：前端基于
 - **Agent**：`DEEPSEEK_API_KEY`、`AGENT_PORT`、`AGENT_HOST` 等；可将 `agent/.env.example` 复制为仓库根目录 `.env` 并补齐。
 - **调度**：`STRATEGY_SCHEDULE_ENABLED=true` 与 `STRATEGY_SCHEDULE_INTERVAL_SECS=60` 控制 Rust 端的策略轮询，若检测到已有任务在执行，会自动跳过。
 - **数据库**：`DATABASE_URL` 由 `.env` 提供，`backend` 启动时自动迁移/初始化。
+- **初始资金与快照压缩**：
+  - `INITIAL_EQUITY` 除了决定前端默认基线，也会在数据库缺少记录时自动写入 `initial_equities` 表（任何重复写入会覆盖旧值，表内最多一条）。
+  - `BALANCE_SNAPSHOT_MIN_ABS_CHANGE` / `BALANCE_SNAPSHOT_MIN_RELATIVE_CHANGE` 控制账户快照写入的阈值（默认 1 USDT / 0.01%）。只有当“绝对变化 < abs 阈值”且“相对变化 < rel 阈值”同时成立时才会跳过写入，否则即使满足其中一个条件也会记录，以避免遗漏较大波动。
 
 ## 快速上手
 
@@ -106,4 +109,3 @@ bash nginx/build.sh
 ```
 
 脚本会构建前端与后端、在 `agent/.venv` 安装依赖，并输出可直接用于 systemd + nginx 的产物；数据库连接信息完全来自 `.env`。
-
