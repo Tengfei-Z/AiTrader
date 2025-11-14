@@ -138,7 +138,7 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
       pagination={false}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 900 }}
+      scroll={isMobile ? undefined : { x: 820 }}
     />
   );
 

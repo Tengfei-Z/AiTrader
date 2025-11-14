@@ -126,14 +126,14 @@ const AiConsolePage = () => {
       />
 
       <Row gutter={[24, 24]} align="stretch">
-        <Col xs={24} xl={14} style={{ display: 'flex' }}>
+        <Col xs={24} xl={13} style={{ display: 'flex' }}>
           <EquityCurveCard
             data={equityCurve}
             loading={chartLoading}
             className="full-height-card"
           />
         </Col>
-        <Col xs={24} xl={10} style={{ display: 'flex' }}>
+        <Col xs={24} xl={11} style={{ display: 'flex' }}>
           <PositionsHistoryCard
             positions={positions}
             positionsLoading={positionsLoading}

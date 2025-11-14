@@ -98,12 +98,6 @@ const desktopColumns: ColumnsType<PositionHistoryItem> = [
       )
   },
   {
-    title: '平仓动作',
-    dataIndex: 'actionKind',
-    key: 'actionKind',
-    render: (value?: string) => value ?? '-'
-  },
-  {
     title: '开仓时间',
     dataIndex: 'lastTradeAt',
     key: 'lastTradeAt',
@@ -179,7 +173,7 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
       pagination={{ pageSize: 20 }}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 1000 }}
+      scroll={isMobile ? undefined : { x: 900 }}
     />
   );
 
