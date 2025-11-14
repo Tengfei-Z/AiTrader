@@ -134,10 +134,11 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
       rowKey={(record) => `${record.instId}-${record.side}-${record.updatedAt}`}
       dataSource={positions ?? []}
       columns={columns}
+      className="positions-table positions-table--compact"
       pagination={false}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 900, y: 360 }}
+      scroll={isMobile ? undefined : { x: 900 }}
     />
   );
 

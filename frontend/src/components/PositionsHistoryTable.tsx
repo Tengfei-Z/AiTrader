@@ -175,10 +175,11 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
       rowKey={(record) => `${record.instId}-${record.updatedAt}`}
       dataSource={history ?? []}
       columns={columns}
+      className="positions-table positions-table--compact"
       pagination={{ pageSize: 20 }}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 1000, y: 360 }}
+      scroll={isMobile ? undefined : { x: 1000 }}
     />
   );
 

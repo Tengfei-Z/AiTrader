@@ -401,6 +401,12 @@ body {
   color: #dc2626;
 }
 
+.positions-table--compact .ant-table-thead > tr > th,
+.positions-table--compact .ant-table-tbody > tr > td,
+.positions-table--compact .ant-table-cell {
+  padding: 6px 0 !important;
+}
+
 .full-height-card {
   flex: 1;
   display: flex;
