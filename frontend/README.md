@@ -30,7 +30,7 @@ npm run dev
 
 ```
 VITE_APP_BRAND_NAME=NovaTrade AI
-VITE_APP_BRAND_TAGLINE=智能量化驾驶舱
+VITE_APP_BRAND_TAGLINE=智能量化交易平台
 ```
 
 修改后重新启动 `npm run dev` 即可生效。如需定制图标，直接替换 `public/rocket.svg`。

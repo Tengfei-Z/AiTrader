@@ -1,5 +1,5 @@
 const DEFAULT_BRAND_NAME = 'NovaTrade AI';
-const DEFAULT_BRAND_TAGLINE = '智能量化驾驶舱';
+const DEFAULT_BRAND_TAGLINE = '智能量化交易平台';
 
 const pickValue = (value: string | undefined, fallback: string) => {
   const trimmed = value?.trim();
