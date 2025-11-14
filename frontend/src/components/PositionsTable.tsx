@@ -34,31 +34,6 @@ const readMetadataNumber = (metadata: PositionItem['metadata'], key: string) => 
   return undefined;
 };
 
-const readMetadataString = (metadata: PositionItem['metadata'], key: string) => {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    return undefined;
-  }
-  const raw = metadata[key];
-  return typeof raw === 'string' ? raw : undefined;
-};
-
-const renderExitPlan = (trigger?: number, order?: number, triggerType?: string) => {
-  if (trigger === undefined && order === undefined) {
-    return '-';
-  }
-  const parts: string[] = [];
-  if (trigger !== undefined) {
-    parts.push(`触发 ${formatNumber(trigger)}`);
-  }
-  if (order !== undefined) {
-    parts.push(`委托 ${formatNumber(order)}`);
-  }
-  if (triggerType) {
-    parts.push(triggerType.toUpperCase());
-  }
-  return parts.join(' / ');
-};
-
 const renderDirectionTag = (value: string): ReactNode => {
   const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
   const color = value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue';
@@ -108,26 +83,6 @@ const desktopColumns: ColumnsType<PositionItem> = [
     dataIndex: 'unrealizedPnl',
     key: 'unrealizedPnl',
     render: (value: number | undefined) => formatNumber(value)
-  },
-  {
-    title: '止盈',
-    key: 'take_profit',
-    render: (_: unknown, record) =>
-      renderExitPlan(
-        readMetadataNumber(record.metadata, 'tpTriggerPx'),
-        readMetadataNumber(record.metadata, 'tpOrdPx'),
-        readMetadataString(record.metadata, 'tpTriggerPxType')
-      )
-  },
-  {
-    title: '止损',
-    key: 'stop_loss',
-    render: (_: unknown, record) =>
-      renderExitPlan(
-        readMetadataNumber(record.metadata, 'slTriggerPx'),
-        readMetadataNumber(record.metadata, 'slOrdPx'),
-        readMetadataString(record.metadata, 'slTriggerPxType')
-      )
   }
 ];
 
@@ -182,7 +137,7 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
       pagination={false}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 900 }}
+      scroll={isMobile ? undefined : { x: 900, y: 360 }}
     />
   );
 

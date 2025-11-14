@@ -65,12 +65,6 @@ const desktopColumns: ColumnsType<PositionHistoryItem> = [
     render: (value: string) => renderSideTag(value)
   },
   {
-    title: '数量',
-    dataIndex: 'size',
-    key: 'size',
-    render: (value?: number) => formatNumber(value, 4)
-  },
-  {
     title: '开仓价',
     dataIndex: 'avgPrice',
     key: 'avgPrice',
@@ -147,9 +141,6 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
             <div className="table-mobile-card__header">
               <div>
                 <span className="table-mobile-card__title">{record.instId}</span>
-                <div className="table-mobile-card__subtitle">
-                  数量 {formatNumber(record.size, 4)}
-                </div>
               </div>
               {renderSideTag(record.side)}
             </div>
@@ -187,7 +178,7 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
       pagination={{ pageSize: 20 }}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 1000 }}
+      scroll={isMobile ? undefined : { x: 1000, y: 360 }}
     />
   );
 
