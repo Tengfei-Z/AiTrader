@@ -21,7 +21,7 @@ use crate::okx::{self, OkxRestClient};
 use crate::settings::CONFIG;
 use crate::types::ApiResponse;
 use crate::AppState;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 /// 默认返回的余额快照条数
 const DEFAULT_BALANCE_SNAPSHOT_LIMIT: usize = 100;
@@ -35,6 +35,8 @@ const BALANCE_SOURCE: &str = "okx";
 const BALANCE_SNAPSHOT_TOLERANCE: f64 = 1e-6;
 /// 余额快照采样间隔（秒）
 const BALANCE_SNAPSHOT_INTERVAL_SECS: u64 = 30 * 60;
+/// 初始资金同步时的容差
+const INITIAL_EQUITY_TOLERANCE: f64 = 1e-6;
 
 /// 账户余额信息（返回给前端的格式）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,7 +307,9 @@ async fn get_balance_snapshots(
                 .collect();
 
             let next_cursor = if has_more {
-                snapshots.last().map(|snapshot| snapshot.recorded_at.clone())
+                snapshots
+                    .last()
+                    .map(|snapshot| snapshot.recorded_at.clone())
             } else {
                 None
             };
@@ -357,16 +361,20 @@ async fn get_balance_latest(
 ///
 /// 从数据库读取用户设置的初始资金，用于计算收益率
 async fn get_initial_equity() -> Json<ApiResponse<Option<InitialEquityRecord>>> {
-    let initial = match fetch_initial_equity().await {
-        Ok(Some((amount, recorded_at))) => InitialEquityRecord {
-            amount: format_amount(amount),
-            recorded_at: recorded_at.to_rfc3339(),
-        },
-        Ok(None) => seed_initial_equity_from_config().await.unwrap_or_else(default_initial_equity_record),
-        Err(err) => {
-            tracing::warn!(error = ?err, "failed to fetch initial equity, using defaults");
-            default_initial_equity_record()
+    let env_override = CONFIG.initial_equity_env_override();
+    let initial = if let Some(env_amount) = env_override {
+        match ensure_initial_equity_from_env(env_amount).await {
+            Ok(record) => record,
+            Err(err) => {
+                tracing::warn!(
+                    error = ?err,
+                    "failed to sync initial equity from environment, falling back to database"
+                );
+                load_initial_equity_from_db().await
+            }
         }
+    } else {
+        load_initial_equity_from_db().await
     };
     Json(ApiResponse::ok(Some(initial)))
 }
@@ -482,6 +490,45 @@ async fn seed_initial_equity_from_config() -> Option<InitialEquityRecord> {
             None
         }
     }
+}
+
+async fn load_initial_equity_from_db() -> InitialEquityRecord {
+    match fetch_initial_equity().await {
+        Ok(Some((amount, recorded_at))) => build_initial_equity_record(amount, recorded_at),
+        Ok(None) => seed_initial_equity_from_config()
+            .await
+            .unwrap_or_else(default_initial_equity_record),
+        Err(err) => {
+            tracing::warn!(error = ?err, "failed to fetch initial equity, using defaults");
+            default_initial_equity_record()
+        }
+    }
+}
+
+async fn ensure_initial_equity_from_env(env_amount: f64) -> Result<InitialEquityRecord> {
+    let current = fetch_initial_equity().await?;
+    if let Some((amount, recorded_at)) = current {
+        if floats_close(amount, env_amount) {
+            return Ok(build_initial_equity_record(amount, recorded_at));
+        }
+    }
+
+    insert_initial_equity(env_amount).await?;
+    let (amount, recorded_at) = fetch_initial_equity()
+        .await?
+        .ok_or_else(|| anyhow!("initial_equity_missing_after_env_sync"))?;
+    Ok(build_initial_equity_record(amount, recorded_at))
+}
+
+fn build_initial_equity_record(amount: f64, recorded_at: DateTime<Utc>) -> InitialEquityRecord {
+    InitialEquityRecord {
+        amount: format_amount(amount),
+        recorded_at: recorded_at.to_rfc3339(),
+    }
+}
+
+fn floats_close(a: f64, b: f64) -> bool {
+    (a - b).abs() <= INITIAL_EQUITY_TOLERANCE
 }
 
 /// 解析可选的数字字符串为 f64（过滤非有限值）

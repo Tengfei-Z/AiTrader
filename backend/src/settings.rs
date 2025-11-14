@@ -35,6 +35,8 @@ pub struct AppConfig {
     pub okx_inst_ids: Vec<String>,
     #[serde(default = "default_initial_equity")]
     pub initial_equity: f64,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub initial_equity_override: Option<f64>,
     #[serde(default = "default_snapshot_min_abs_change")]
     pub balance_snapshot_min_abs_change: f64,
     #[serde(default = "default_snapshot_min_relative_change")]
@@ -68,10 +70,10 @@ impl AppConfig {
             Err(_) => None,
         };
 
-        let initial_equity = env::var("INITIAL_EQUITY")
+        let initial_equity_override = env::var("INITIAL_EQUITY")
             .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or_else(default_initial_equity);
+            .and_then(|v| v.parse::<f64>().ok());
+        let initial_equity = initial_equity_override.unwrap_or_else(default_initial_equity);
         let balance_snapshot_min_abs_change = env::var("BALANCE_SNAPSHOT_MIN_ABS_CHANGE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
@@ -99,6 +101,7 @@ impl AppConfig {
             okx_use_simulated,
             okx_inst_ids,
             initial_equity,
+            initial_equity_override,
             balance_snapshot_min_abs_change,
             balance_snapshot_min_relative_change,
             reset_database,
@@ -144,6 +147,10 @@ impl AppConfig {
 
     pub fn strategy_schedule_interval_secs(&self) -> u64 {
         self.strategy_schedule_interval_secs
+    }
+
+    pub fn initial_equity_env_override(&self) -> Option<f64> {
+        self.initial_equity_override
     }
 }
 

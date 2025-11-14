@@ -1311,7 +1311,10 @@ pub async fn fetch_balance_snapshots(
         param_values.push(Box::new(after_value));
     }
 
-    sql.push_str(&format!(" ORDER BY recorded_at ASC LIMIT ${}", param_values.len() + 1));
+    sql.push_str(&format!(
+        " ORDER BY recorded_at ASC LIMIT ${}",
+        param_values.len() + 1
+    ));
     param_values.push(Box::new(limit));
 
     let query_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = param_values
