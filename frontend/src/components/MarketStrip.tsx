@@ -1,4 +1,4 @@
-import { Card, Skeleton, Typography } from 'antd';
+import { Card, Skeleton, Typography, Grid } from 'antd';
 import { useMultipleTickers } from '@hooks/useMultipleTickers';
 
 type CoinConfig = {
@@ -55,6 +55,8 @@ const MarketStrip = ({
   currentAmount,
   profitPercent
 }: MarketStripProps) => {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const { data, isLoading } = useMultipleTickers(coins.map((item) => item.symbol));
   const initialAmountLabel = initialAmount !== undefined ? formatNumber(initialAmount) : '--';
   const resolvedCurrentAmount = currentAmount ?? initialAmount;
@@ -74,35 +76,64 @@ const MarketStrip = ({
   }
 
   const initialChip = (
-    <div className="market-strip-initial-chip">
-      <div className="market-strip-summary">
-        <div className="market-strip-summary-block">
-          <Typography.Text className="market-strip-summary-label">初始金额</Typography.Text>
-          <Typography.Text className="market-strip-summary-value market-strip-number">
-            {initialAmountLabel}
-          </Typography.Text>
-        </div>
-        <span className="market-strip-summary-divider" aria-hidden />
-        <div className="market-strip-summary-block">
-          <Typography.Text className="market-strip-summary-label">当前金额</Typography.Text>
-          <div className="market-strip-summary-current">
+    <div className={`market-strip-initial-chip ${isMobile ? 'is-mobile' : ''}`}>
+      {isMobile ? (
+        <div className="market-strip-metrics">
+          <div className="market-strip-metrics-item">
+            <Typography.Text className="market-strip-summary-label">初始金额</Typography.Text>
+            <Typography.Text className="market-strip-summary-value market-strip-number">
+              {initialAmountLabel}
+            </Typography.Text>
+          </div>
+          <div className="market-strip-metrics-item">
+            <Typography.Text className="market-strip-summary-label">当前金额</Typography.Text>
             <Typography.Text className="market-strip-summary-value market-strip-number">
               {currentAmountLabel}
             </Typography.Text>
           </div>
+          {profitPercent !== undefined && (
+            <div className="market-strip-metrics-item">
+              <Typography.Text className="market-strip-summary-label">涨跌幅</Typography.Text>
+              <Typography.Text
+                className={`market-strip-summary-percent market-strip-number ${profitClass}`}
+              >
+                {profitPercentLabel}
+              </Typography.Text>
+            </div>
+          )}
         </div>
-        {profitPercent !== undefined && <span className="market-strip-summary-divider" aria-hidden />}
-        {profitPercent !== undefined && (
-          <div className="market-strip-summary-block market-strip-summary-block--narrow">
-            <Typography.Text className="market-strip-summary-label">涨跌幅</Typography.Text>
-            <Typography.Text
-              className={`market-strip-summary-percent market-strip-number ${profitClass}`}
-            >
-              {profitPercentLabel}
+      ) : (
+        <div className="market-strip-summary">
+          <div className="market-strip-summary-block">
+            <Typography.Text className="market-strip-summary-label">初始金额</Typography.Text>
+            <Typography.Text className="market-strip-summary-value market-strip-number">
+              {initialAmountLabel}
             </Typography.Text>
           </div>
-        )}
-      </div>
+          <span className="market-strip-summary-divider" aria-hidden />
+          <div className="market-strip-summary-block">
+            <Typography.Text className="market-strip-summary-label">当前金额</Typography.Text>
+            <div className="market-strip-summary-current">
+              <Typography.Text className="market-strip-summary-value market-strip-number">
+                {currentAmountLabel}
+              </Typography.Text>
+            </div>
+          </div>
+          {profitPercent !== undefined && (
+            <>
+              <span className="market-strip-summary-divider" aria-hidden />
+              <div className="market-strip-summary-block market-strip-summary-block--narrow">
+                <Typography.Text className="market-strip-summary-label">涨跌幅</Typography.Text>
+                <Typography.Text
+                  className={`market-strip-summary-percent market-strip-number ${profitClass}`}
+                >
+                  {profitPercentLabel}
+                </Typography.Text>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -110,7 +141,7 @@ const MarketStrip = ({
     <Card bordered={false} className="market-strip">
       <div className="market-strip-body">
         <div className="market-strip-coins-grid">
-          {coins.map((coin) => {
+          {(isMobile ? coins.slice(0, 3) : coins).map((coin) => {
             const ticker = data?.[coin.symbol];
             const price = ticker ? Number(ticker.last) : undefined;
             const high = ticker?.high24h ? Number(ticker.high24h) : undefined;

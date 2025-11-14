@@ -143,32 +143,33 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
         const pnl = record.unrealizedPnl;
 
         return (
-          <div className="table-mobile-card">
+          <div className="table-mobile-card table-mobile-card--compact">
             <div className="table-mobile-card__header">
-              <span className="table-mobile-card__title">{record.instId}</span>
+              <div>
+                <span className="table-mobile-card__title">{record.instId}</span>
+                <div className="table-mobile-card__subtitle">
+                  数量 {formatNumber(record.size, 4)}
+                </div>
+              </div>
               {renderSideTag(record.side)}
             </div>
-            <div className="table-mobile-card__grid">
-              <span className="table-mobile-card__label">数量</span>
-              <span className="table-mobile-card__value">{formatNumber(record.size, 4)}</span>
-              <span className="table-mobile-card__label">开仓价</span>
-              <span className="table-mobile-card__value">{formatNumber(record.avgPrice)}</span>
-              <span className="table-mobile-card__label">平仓价</span>
-              <span className="table-mobile-card__value">{exitLabel}</span>
+            <div className="table-mobile-card__meta">
+              <span>开仓 {formatNumber(record.avgPrice)}</span>
+              <span>平仓 {exitLabel}</span>
+            </div>
+            <div className="table-mobile-card__footer">
               <span className="table-mobile-card__label">盈亏</span>
               <span
                 className={`table-mobile-card__value ${
                   pnl === undefined ? '' : pnl >= 0 ? 'positive' : 'negative'
                 }`}
               >
-                {pnl !== undefined ? formatNumber(pnl) : '-'}
+                {formatNumber(pnl)}
               </span>
-              <span className="table-mobile-card__label">平仓动作</span>
-              <span className="table-mobile-card__value">{record.actionKind ?? '-'}</span>
-              <span className="table-mobile-card__label">开仓时间</span>
-              <span className="table-mobile-card__value">{formatTimestamp(record.lastTradeAt)}</span>
-              <span className="table-mobile-card__label">平仓时间</span>
-              <span className="table-mobile-card__value">{formatTimestamp(record.closedAt)}</span>
+            </div>
+            <div className="table-mobile-card__timestamps">
+              <span>开 {formatTimestamp(record.lastTradeAt)}</span>
+              <span>平 {formatTimestamp(record.closedAt)}</span>
             </div>
           </div>
         );

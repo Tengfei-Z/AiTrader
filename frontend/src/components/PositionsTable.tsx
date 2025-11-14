@@ -140,40 +140,31 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
       title: '持仓详情',
       key: 'mobile',
       render: (_: unknown, record) => {
-        const leverage = readMetadataNumber(record.metadata, 'lever');
-        const leverageLabel = leverage ? `${formatNumber(leverage, 2)}x` : '-';
-        const takeProfitLabel = renderExitPlan(
-          readMetadataNumber(record.metadata, 'tpTriggerPx'),
-          readMetadataNumber(record.metadata, 'tpOrdPx'),
-          readMetadataString(record.metadata, 'tpTriggerPxType')
-        );
-        const stopLossLabel = renderExitPlan(
-          readMetadataNumber(record.metadata, 'slTriggerPx'),
-          readMetadataNumber(record.metadata, 'slOrdPx'),
-          readMetadataString(record.metadata, 'slTriggerPxType')
-        );
-
+        const pnl = record.unrealizedPnl;
         return (
-          <div className="table-mobile-card">
+          <div className="table-mobile-card table-mobile-card--compact">
             <div className="table-mobile-card__header">
-              <span className="table-mobile-card__title">{record.instId}</span>
+              <div>
+                <span className="table-mobile-card__title">{record.instId}</span>
+                <div className="table-mobile-card__subtitle">
+                  数量 {formatNumber(record.size, 4)}
+                </div>
+              </div>
               {renderDirectionTag(record.side)}
             </div>
-            <div className="table-mobile-card__grid">
-              <span className="table-mobile-card__label">数量</span>
-              <span className="table-mobile-card__value">{formatNumber(record.size, 4)}</span>
-              <span className="table-mobile-card__label">杠杆</span>
-              <span className="table-mobile-card__value">{leverageLabel}</span>
-              <span className="table-mobile-card__label">开仓价</span>
-              <span className="table-mobile-card__value">{formatNumber(record.avgPrice)}</span>
-              <span className="table-mobile-card__label">当前价</span>
-              <span className="table-mobile-card__value">{formatNumber(record.markPx)}</span>
+            <div className="table-mobile-card__meta">
+              <span>开仓 {formatNumber(record.avgPrice)}</span>
+              <span>当前 {formatNumber(record.markPx)}</span>
+            </div>
+            <div className="table-mobile-card__footer">
               <span className="table-mobile-card__label">未实现盈亏</span>
-              <span className="table-mobile-card__value">{formatNumber(record.unrealizedPnl)}</span>
-              <span className="table-mobile-card__label">止盈</span>
-              <span className="table-mobile-card__value">{takeProfitLabel}</span>
-              <span className="table-mobile-card__label">止损</span>
-              <span className="table-mobile-card__value">{stopLossLabel}</span>
+              <span
+                className={`table-mobile-card__value ${
+                  pnl === undefined ? '' : pnl >= 0 ? 'positive' : 'negative'
+                }`}
+              >
+                {formatNumber(pnl)}
+              </span>
             </div>
           </div>
         );
