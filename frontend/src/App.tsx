@@ -1,5 +1,7 @@
 import { Layout, Typography } from 'antd';
 import AiConsolePage from '@pages/Console';
+import { BRAND_NAME, BRAND_TAGLINE } from '@utils/branding';
+import RocketBadge from '@components/RocketBadge';
 
 const { Header, Content } = Layout;
 
@@ -8,7 +10,11 @@ const App = () => {
     <Layout style={{ minHeight: '100vh' }}>
       <Header className="header">
         <div className="header-brand">
-          <span className="header-logo">AiTrader</span>
+          <RocketBadge />
+          <div className="header-identity">
+            <span className="header-logo">{BRAND_NAME}</span>
+            <Typography.Text className="header-subtitle">{BRAND_TAGLINE}</Typography.Text>
+          </div>
         </div>
       </Header>
       <Content className="content">

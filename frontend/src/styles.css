@@ -24,9 +24,15 @@ body {
 
 .header-brand {
   display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.header-identity {
+  display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
 }
 
 .header-logo {
@@ -66,7 +72,6 @@ body {
   }
 
   .header-brand {
-    flex-direction: row;
     align-items: center;
     gap: 8px;
   }
@@ -74,6 +79,18 @@ body {
   .content {
     padding: 16px;
     min-height: calc(100vh - 56px);
+  }
+}
+
+.rocket-badge {
+  width: 32px;
+  height: 32px;
+}
+
+@media (max-width: 768px) {
+  .rocket-badge {
+    width: 24px;
+    height: 24px;
   }
 }
 

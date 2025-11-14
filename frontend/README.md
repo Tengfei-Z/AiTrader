@@ -24,6 +24,17 @@ npm run dev
 - Node.js >= 18
 - 配套后端 API (`/api/market`, `/api/account`)，具体协议见 `doc/API.md`。
 
+## 自定义品牌抬头
+
+前端会读取 `.env` 中的 `VITE_APP_BRAND_NAME` 与 `VITE_APP_BRAND_TAGLINE`，并在浏览器标签页以及导航栏中展示，同时使用 `public/rocket.svg` 作为 favicon 与左上角图标。可参考 `.env.example`：
+
+```
+VITE_APP_BRAND_NAME=NovaTrade AI
+VITE_APP_BRAND_TAGLINE=智能量化驾驶舱
+```
+
+修改后重新启动 `npm run dev` 即可生效。如需定制图标，直接替换 `public/rocket.svg`。
+
 ## 代码结构
 
 ```
