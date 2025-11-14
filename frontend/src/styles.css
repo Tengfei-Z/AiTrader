@@ -401,10 +401,65 @@ body {
   color: #dc2626;
 }
 
+.positions-table--compact .ant-table-thead > tr > th,
+.positions-table--compact .ant-table-tbody > tr > td,
+.positions-table--compact .ant-table-cell {
+  padding: 6px 0 !important;
+}
+
+.positions-history-card {
+  width: 100%;
+}
+
+.positions-history-card .ant-tabs,
+.positions-history-card .ant-tabs-content-holder {
+  width: 100%;
+}
+
+.positions-history-card .ant-tabs-content-holder {
+  overflow-x: hidden;
+}
+
+.positions-history-card__pane {
+  width: 100%;
+  min-width: 0;
+}
+
+.positions-history-card__pane--scrollable {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.positions-history-card__pane--scrollable::-webkit-scrollbar {
+  height: 6px;
+}
+
+.positions-history-card__pane--scrollable::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.3);
+  border-radius: 999px;
+}
+
+.positions-history-card__pane--scrollable::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .full-height-card {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 520px;
+}
+
+@media (max-width: 992px) {
+  .full-height-card {
+    min-height: 420px;
+  }
+}
+
+@media (max-width: 768px) {
+  .full-height-card {
+    min-height: 360px;
+  }
 }
 
 .full-height-card .ant-card-body {
@@ -415,12 +470,12 @@ body {
 
 .full-height-card .chart-container {
   flex: 1;
-  min-height: 420px;
+  min-height: 480px;
 }
 
 @media (max-width: 768px) {
   .full-height-card .chart-container {
-    min-height: 280px;
+    min-height: 320px;
   }
 }
 
@@ -434,13 +489,19 @@ body {
   display: flex;
 }
 
-.full-height-card .ant-tabs-tabpane {
+.full-height-card .ant-tabs-content-holder {
   flex: 1;
+  display: flex;
+}
+
+.full-height-card .ant-tabs-tabpane {
+  min-height: 0;
 }
 
 .full-height-card .ant-tabs-tabpane-active {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .full-height-card .ant-table-wrapper,
@@ -448,10 +509,12 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .full-height-card .ant-table-container {
   flex: 1;
+  min-height: 0;
 }
 
 .full-height-card .ant-table-body {

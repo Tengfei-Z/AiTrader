@@ -3,6 +3,7 @@ import type { PositionHistoryItem, PositionItem, StrategyMessage } from '@api/ty
 import PositionsTable from '@components/PositionsTable';
 import PositionsHistoryTable from '@components/PositionsHistoryTable';
 import StrategyChatCard from '@components/StrategyChatCard';
+import type { ReactNode } from 'react';
 
 interface Props {
   positions?: PositionItem[];
@@ -29,21 +30,40 @@ const PositionsHistoryCard = ({
   strategyRunning,
   className
 }: Props) => {
+  const wrapTabContent = (node: ReactNode, scrollable?: boolean) => (
+    <div
+      className={[
+        'positions-history-card__pane',
+        scrollable ? 'positions-history-card__pane--scrollable' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {node}
+    </div>
+  );
+
   const items = [
     {
       key: 'positions',
       label: '当前持仓',
-      children: <PositionsTable positions={positions} loading={positionsLoading} embedded />
+      children: wrapTabContent(
+        <PositionsTable positions={positions} loading={positionsLoading} embedded />,
+        true
+      )
     },
     {
       key: 'history',
       label: '历史持仓',
-      children: <PositionsHistoryTable history={history} loading={historyLoading} embedded />
+      children: wrapTabContent(
+        <PositionsHistoryTable history={history} loading={historyLoading} embedded />,
+        true
+      )
     },
     {
       key: 'strategy',
       label: '策略对话',
-      children: (
+      children: wrapTabContent(
         <StrategyChatCard
           messages={strategyMessages}
           loading={strategyLoading}
@@ -51,13 +71,17 @@ const PositionsHistoryCard = ({
           onStart={onStrategyStart}
           starting={strategyRunning}
           embedded
-        />
+        />,
+        false
       )
     }
   ];
 
   return (
-    <Card bordered={false} className={className}>
+    <Card
+      bordered={false}
+      className={[className, 'positions-history-card'].filter(Boolean).join(' ')}
+    >
       <Tabs items={items} defaultActiveKey="positions" />
     </Card>
   );
