@@ -36,7 +36,6 @@ static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 #[derive(Clone)]
 struct AppState {
     okx_client: Option<OkxRestClient>,
-    strategy_run_counter: Arc<tokio::sync::RwLock<u64>>,
 }
 
 #[tokio::main]
@@ -69,10 +68,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let app_state = AppState {
-        okx_client,
-        strategy_run_counter: Arc::new(tokio::sync::RwLock::new(0)),
-    };
+    let app_state = AppState { okx_client };
 
     let background_state = app_state.clone();
     tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });

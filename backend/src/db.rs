@@ -712,8 +712,8 @@ pub async fn insert_initial_equity(amount: f64) -> Result<()> {
         }
     };
 
-    let client = connect_client(&url).await?;
-    let mut tx = client.transaction().await?;
+    let mut client = connect_client(&url).await?;
+    let tx = client.transaction().await?;
     let delete_sql = format!("DELETE FROM {schema}.initial_equities;", schema = schema);
     tx.execute(&delete_sql, &[]).await?;
     let insert_sql = format!(
