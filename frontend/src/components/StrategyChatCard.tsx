@@ -33,16 +33,10 @@ const StrategyChatCard = ({
         <Typography.Title level={5} className="strategy-chat-panel__title">
           策略对话
         </Typography.Title>
-        {onStart && (
-          <Flex align="center" gap={12}>
-            {allowManualTrigger ? (
-              <Button type="primary" size="small" onClick={onStart} loading={starting}>
-                启动策略
-              </Button>
-            ) : (
-              <Typography.Text type="secondary">手动触发已关闭</Typography.Text>
-            )}
-          </Flex>
+        {onStart && allowManualTrigger && (
+          <Button type="primary" size="small" onClick={onStart} loading={starting}>
+            启动策略
+          </Button>
         )}
       </Flex>
       {orderedMessages.length === 0 ? (
