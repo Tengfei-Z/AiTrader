@@ -1,5 +1,5 @@
 import type { PositionHistoryItem } from '@api/types';
-import { Card, Table, Tag } from 'antd';
+import { Card, Table, Tag, Grid } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
@@ -42,7 +42,17 @@ const readMetadataNumber = (metadata: PositionHistoryItem['metadata'], key: stri
   return undefined;
 };
 
-const columns: ColumnsType<PositionHistoryItem> = [
+const renderSideTag = (value: string) => {
+  const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
+  const color = value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue';
+  return (
+    <Tag color={color}>
+      {label}
+    </Tag>
+  );
+};
+
+const desktopColumns: ColumnsType<PositionHistoryItem> = [
   {
     title: '合约',
     dataIndex: 'instId',
@@ -52,14 +62,7 @@ const columns: ColumnsType<PositionHistoryItem> = [
     title: '方向',
     dataIndex: 'side',
     key: 'side',
-    render: (value: string) => {
-      const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
-      return (
-        <Tag color={value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue'}>
-          {label}
-        </Tag>
-      );
-    }
+    render: (value: string) => renderSideTag(value)
   },
   {
     title: '数量',
@@ -121,6 +124,61 @@ const columns: ColumnsType<PositionHistoryItem> = [
 ];
 
 const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+
+  const mobileColumns: ColumnsType<PositionHistoryItem> = [
+    {
+      title: '历史持仓',
+      key: 'mobile',
+      render: (_: unknown, record) => {
+        const exitLabel =
+          record.closedAt && record.metadata
+            ? formatNumber(
+                readMetadataNumber(record.metadata, 'closePx') ??
+                  readMetadataNumber(record.metadata, 'last') ??
+                  record.markPx
+              )
+            : formatNumber(record.markPx);
+        const pnl = record.unrealizedPnl;
+
+        return (
+          <div className="table-mobile-card table-mobile-card--compact">
+            <div className="table-mobile-card__header">
+              <div>
+                <span className="table-mobile-card__title">{record.instId}</span>
+                <div className="table-mobile-card__subtitle">
+                  数量 {formatNumber(record.size, 4)}
+                </div>
+              </div>
+              {renderSideTag(record.side)}
+            </div>
+            <div className="table-mobile-card__meta">
+              <span>开仓 {formatNumber(record.avgPrice)}</span>
+              <span>平仓 {exitLabel}</span>
+            </div>
+            <div className="table-mobile-card__footer">
+              <span className="table-mobile-card__label">盈亏</span>
+              <span
+                className={`table-mobile-card__value ${
+                  pnl === undefined ? '' : pnl >= 0 ? 'positive' : 'negative'
+                }`}
+              >
+                {formatNumber(pnl)}
+              </span>
+            </div>
+            <div className="table-mobile-card__timestamps">
+              <span>开 {formatTimestamp(record.lastTradeAt)}</span>
+              <span>平 {formatTimestamp(record.closedAt)}</span>
+            </div>
+          </div>
+        );
+      }
+    }
+  ];
+
+  const columns = isMobile ? mobileColumns : desktopColumns;
+
   const table = (
     <Table
       rowKey={(record) => `${record.instId}-${record.updatedAt}`}
@@ -129,6 +187,7 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
       pagination={{ pageSize: 20 }}
       size="small"
       loading={loading}
+      scroll={isMobile ? undefined : { x: 1000 }}
     />
   );
 
