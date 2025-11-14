@@ -121,6 +121,28 @@ class OKXClient:
             auth=False,
         )
 
+    async def get_instruments(
+        self,
+        *,
+        inst_type: str,
+        inst_id: str | None = None,
+        underlying: str | None = None,
+    ) -> Any:
+        """Fetch instrument specifications such as lot size and tick size."""
+
+        params: dict[str, Any] = {"instType": inst_type}
+        if inst_id:
+            params["instId"] = inst_id
+        if underlying:
+            params["uly"] = underlying
+
+        return await self._request(
+            "GET",
+            "/api/v5/public/instruments",
+            params=params,
+            auth=False,
+        )
+
     async def get_account_balance(self) -> Any:
         """Fetch account balance."""
 

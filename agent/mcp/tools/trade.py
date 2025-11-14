@@ -52,17 +52,6 @@ class CancelOrderInput(BaseModel):
         return self
 
 
-class OrderHistoryQuery(BaseModel):
-    """查询历史订单的筛选条件。"""
-
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-    inst_type: str | None = Field(None, alias="instType", description="产品类型，如 SWAP/SPOT")
-    inst_id: str | None = Field(None, alias="instId", description="交易产品 ID")
-    state: str | None = Field(None, alias="state", description="订单状态过滤，例如 filled/canceled")
-    limit: int | None = Field(None, alias="limit", ge=1, le=100, description="返回条数，1-100")
-
-
 @mcp.tool(name="place_order")
 async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
     """
@@ -115,35 +104,5 @@ async def cancel_order_tool(order: CancelOrderInput) -> dict[str, Any]:
         inst_id=payload["instId"],
         order_id=payload.get("ordId"),
         client_order_id=payload.get("clOrdId"),
-    )
-    return wrap_response(response)
-
-
-@mcp.tool()
-async def get_order_history(query: OrderHistoryQuery | None = None) -> dict[str, Any]:
-    """
-    查询历史订单记录。
-
-    可选 `instType`/`instId`/`state`/`limit` 过滤：若不提供参数将返回最近的订单；
-    `state` 可以是 `filled`/`canceled` 等，`limit` 限制条数（默认 100，最大 100）。
-
-    示例：
-    ```json
-    {
-      "query": {
-        "instType": "SWAP",
-        "limit": 10
-      }
-    }
-    ```
-    """
-
-    query = query or OrderHistoryQuery()
-    payload = query.model_dump(by_alias=True, exclude_none=True)
-    response = await okx_client.get_order_history(
-        inst_type=payload.get("instType"),
-        inst_id=payload.get("instId"),
-        state=payload.get("state"),
-        limit=payload.get("limit"),
     )
     return wrap_response(response)

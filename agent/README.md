@@ -70,11 +70,11 @@ agent/
 | 名称 | 说明 |
 | --- | --- |
 | `get_ticker` | 获取指定交易对实时行情 |
+| `get_instrument_specs` | 查询合约规格（lotSz/minSz/tickSz），确保下单数量满足最小交易单位 |
 | `get_account_balance` | 获取账户余额 |
 | `get_positions` | 获取持仓信息 |
 | `place_order` | 提交交易订单 |
 | `cancel_order` | 撤销交易订单 |
-| `get_order_history` | 查询历史订单记录 |
 
 ### `place_order` 工具详细说明
 
