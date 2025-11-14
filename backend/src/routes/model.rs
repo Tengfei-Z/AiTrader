@@ -30,7 +30,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn get_strategy_chat() -> impl IntoResponse {
-    match fetch_strategy_messages(50).await {
+    match fetch_strategy_messages(15).await {
         Ok(records) => {
             let messages = records
                 .into_iter()

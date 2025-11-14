@@ -442,6 +442,33 @@ body {
   min-width: 0;
 }
 
+.positions-history-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+}
+
+.positions-history-card__block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.positions-history-card__block .ant-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.positions-history-card__block--strategy {
+  flex: 0 0 auto;
+}
+
+.positions-history-card__block--strategy .ant-card-body {
+  flex: 0 0 auto;
+}
+
 .positions-history-card__pane--scrollable {
   overflow-x: auto;
   padding-bottom: 4px;

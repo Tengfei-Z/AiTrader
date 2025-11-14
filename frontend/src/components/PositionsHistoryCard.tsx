@@ -43,7 +43,7 @@ const PositionsHistoryCard = ({
     </div>
   );
 
-  const items = [
+  const positionItems = [
     {
       key: 'positions',
       label: '当前持仓',
@@ -59,11 +59,15 @@ const PositionsHistoryCard = ({
         <PositionsHistoryTable history={history} loading={historyLoading} embedded />,
         true
       )
-    },
-    {
-      key: 'strategy',
-      label: '策略对话',
-      children: wrapTabContent(
+    }
+  ];
+
+  return (
+    <div className={[className, 'positions-history-card'].filter(Boolean).join(' ')}>
+      <Card bordered={false} className="positions-history-card__block">
+        <Tabs items={positionItems} defaultActiveKey="positions" />
+      </Card>
+      <Card bordered={false} className="positions-history-card__block positions-history-card__block--strategy">
         <StrategyChatCard
           messages={strategyMessages}
           loading={strategyLoading}
@@ -71,19 +75,9 @@ const PositionsHistoryCard = ({
           onStart={onStrategyStart}
           starting={strategyRunning}
           embedded
-        />,
-        false
-      )
-    }
-  ];
-
-  return (
-    <Card
-      bordered={false}
-      className={[className, 'positions-history-card'].filter(Boolean).join(' ')}
-    >
-      <Tabs items={items} defaultActiveKey="positions" />
-    </Card>
+        />
+      </Card>
+    </div>
   );
 };
 
