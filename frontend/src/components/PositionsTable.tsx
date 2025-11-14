@@ -1,6 +1,7 @@
 import type { PositionItem } from '@api/types';
-import { Card, Table, Tag } from 'antd';
+import { Card, Table, Tag, Grid } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { ReactNode } from 'react';
 
 interface Props {
   positions?: PositionItem[];
@@ -58,7 +59,13 @@ const renderExitPlan = (trigger?: number, order?: number, triggerType?: string) 
   return parts.join(' / ');
 };
 
-const columns: ColumnsType<PositionItem> = [
+const renderDirectionTag = (value: string): ReactNode => {
+  const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
+  const color = value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue';
+  return <Tag color={color}>{label}</Tag>;
+};
+
+const desktopColumns: ColumnsType<PositionItem> = [
   {
     title: '合约',
     dataIndex: 'instId',
@@ -68,10 +75,7 @@ const columns: ColumnsType<PositionItem> = [
     title: '方向',
     dataIndex: 'side',
     key: 'side',
-    render: (value: string) => {
-      const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
-      return <Tag color={value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue'}>{label}</Tag>;
-    }
+    render: (value: string) => renderDirectionTag(value)
   },
   {
     title: '数量',
@@ -128,6 +132,57 @@ const columns: ColumnsType<PositionItem> = [
 ];
 
 const PositionsTable = ({ positions, loading, embedded }: Props) => {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+
+  const mobileColumns: ColumnsType<PositionItem> = [
+    {
+      title: '持仓详情',
+      key: 'mobile',
+      render: (_: unknown, record) => {
+        const leverage = readMetadataNumber(record.metadata, 'lever');
+        const leverageLabel = leverage ? `${formatNumber(leverage, 2)}x` : '-';
+        const takeProfitLabel = renderExitPlan(
+          readMetadataNumber(record.metadata, 'tpTriggerPx'),
+          readMetadataNumber(record.metadata, 'tpOrdPx'),
+          readMetadataString(record.metadata, 'tpTriggerPxType')
+        );
+        const stopLossLabel = renderExitPlan(
+          readMetadataNumber(record.metadata, 'slTriggerPx'),
+          readMetadataNumber(record.metadata, 'slOrdPx'),
+          readMetadataString(record.metadata, 'slTriggerPxType')
+        );
+
+        return (
+          <div className="table-mobile-card">
+            <div className="table-mobile-card__header">
+              <span className="table-mobile-card__title">{record.instId}</span>
+              {renderDirectionTag(record.side)}
+            </div>
+            <div className="table-mobile-card__grid">
+              <span className="table-mobile-card__label">数量</span>
+              <span className="table-mobile-card__value">{formatNumber(record.size, 4)}</span>
+              <span className="table-mobile-card__label">杠杆</span>
+              <span className="table-mobile-card__value">{leverageLabel}</span>
+              <span className="table-mobile-card__label">开仓价</span>
+              <span className="table-mobile-card__value">{formatNumber(record.avgPrice)}</span>
+              <span className="table-mobile-card__label">当前价</span>
+              <span className="table-mobile-card__value">{formatNumber(record.markPx)}</span>
+              <span className="table-mobile-card__label">未实现盈亏</span>
+              <span className="table-mobile-card__value">{formatNumber(record.unrealizedPnl)}</span>
+              <span className="table-mobile-card__label">止盈</span>
+              <span className="table-mobile-card__value">{takeProfitLabel}</span>
+              <span className="table-mobile-card__label">止损</span>
+              <span className="table-mobile-card__value">{stopLossLabel}</span>
+            </div>
+          </div>
+        );
+      }
+    }
+  ];
+
+  const columns = isMobile ? mobileColumns : desktopColumns;
+
   const table = (
     <Table
       rowKey={(record) => `${record.instId}-${record.side}-${record.updatedAt}`}
@@ -136,6 +191,7 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
       pagination={false}
       size="small"
       loading={loading}
+      scroll={isMobile ? undefined : { x: 900 }}
     />
   );
 
