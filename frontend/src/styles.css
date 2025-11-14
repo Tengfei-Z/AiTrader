@@ -495,10 +495,13 @@ body {
 }
 
 .full-height-card .ant-tabs-tabpane {
-  flex: 1;
+  min-height: 0;
+}
+
+.full-height-card .ant-tabs-tabpane-active {
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  flex: 1;
 }
 
 .full-height-card .ant-table-wrapper,
