@@ -35,6 +35,14 @@ async def call_tool(name: str, arguments: Mapping[str, Any]) -> Any:
         tool_result = await mcp._tool_manager.call_tool(name, dict(arguments))
     except NotFoundError as exc:  # pragma: no cover - defensive guard
         raise KeyError(f"Unknown tool: {name}") from exc
+    except Exception:
+        # FastMCP 默认把堆栈写到 stderr，落不到我们的日志中，这里补一份方便排障。
+        logger.exception(
+            "mcp_tool_call_failed",
+            name=name,
+            arguments=arguments,
+        )
+        raise
 
     return _serialize_tool_result(tool_result)
 
