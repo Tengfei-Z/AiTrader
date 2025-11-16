@@ -1,5 +1,6 @@
 import type { PositionHistoryItem } from '@api/types';
-import { Card, Table, Tag, Grid } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Card, Table, Tag, Grid } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 
@@ -111,9 +112,17 @@ const desktopColumns: ColumnsType<PositionHistoryItem> = [
   }
 ];
 
+const PAGE_SIZE = 20;
+const TABLE_SCROLL_Y = 420;
+
 const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [history?.length]);
 
   const mobileColumns: ColumnsType<PositionHistoryItem> = [
     {
@@ -163,27 +172,51 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
   ];
 
   const columns = isMobile ? mobileColumns : desktopColumns;
+  const displayedHistory = useMemo(
+    () => (history ?? []).slice(0, visibleCount),
+    [history, visibleCount]
+  );
+  const hasMore = (history?.length ?? 0) > visibleCount;
+
+  const handleLoadMore = () => {
+    setVisibleCount((prev) => prev + PAGE_SIZE);
+  };
+
+  const tableScroll = isMobile ? { y: TABLE_SCROLL_Y } : { x: 900, y: TABLE_SCROLL_Y };
 
   const table = (
     <Table
       rowKey={(record) => `${record.instId}-${record.updatedAt}`}
-      dataSource={history ?? []}
+      dataSource={displayedHistory}
       columns={columns}
       className="positions-table positions-table--compact"
-      pagination={{ pageSize: 20 }}
+      pagination={false}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 900 }}
+      scroll={tableScroll}
     />
   );
 
+  const content = (
+    <>
+      {table}
+      {hasMore ? (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
+          <Button type="link" onClick={handleLoadMore}>
+            加载更多
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+
   if (embedded) {
-    return table;
+    return content;
   }
 
   return (
     <Card title="历史持仓" bordered={false} loading={loading}>
-      {table}
+      {content}
     </Card>
   );
 };
