@@ -60,7 +60,7 @@ pub async fn run_agent_events_listener() {
     let base_url = match CONFIG.agent_base_url() {
         Some(url) => url,
         None => {
-            info!("agent websocket subscriber disabled: AGENT_BASE_URL not configured");
+            warn!("agent websocket subscriber disabled: AGENT_BASE_URL not configured");
             return;
         }
     };
@@ -88,7 +88,7 @@ pub async fn run_agent_events_listener() {
         warn!("pending analysis queue already initialized");
     }
 
-    warn!("starting agent websocket subscriber for {ws_url}");
+    info!("starting agent websocket subscriber for {ws_url}");
 
     loop {
         match connect_async(ws_url.clone()).await {

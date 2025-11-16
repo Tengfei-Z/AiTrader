@@ -1,5 +1,6 @@
 """Async OKX REST client."""
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -12,6 +13,7 @@ import httpx
 from .config import get_settings
 from .exceptions import ExternalServiceError, RateLimitExceeded
 from .http_client import async_http_client
+from .logging_config import get_logger
 
 
 class OKXClient:
@@ -66,16 +68,46 @@ class OKXClient:
                 }
             )
 
-        async with async_http_client(
-            base_url=str(self._settings.okx_base_url), timeout=15.0
-        ) as client:
-            response = await client.request(
-                method=method.upper(),
-                url=path,
-                params=request_params,
-                content=request_body if request_body else None,
-                headers=headers,
-            )
+        max_retries = max(0, int(self._settings.okx_http_max_retries))
+        base_delay = max(0.0, float(self._settings.okx_http_retry_backoff))
+        total_attempts = max_retries + 1
+        last_error: Exception | None = None
+
+        for attempt in range(1, total_attempts + 1):
+            try:
+                async with async_http_client(
+                    base_url=str(self._settings.okx_base_url), timeout=15.0
+                ) as client:
+                    response = await client.request(
+                        method=method.upper(),
+                        url=path,
+                        params=request_params,
+                        content=request_body if request_body else None,
+                        headers=headers,
+                    )
+                break
+            except RETRYABLE_EXCEPTIONS as exc:
+                last_error = exc
+                if attempt >= total_attempts:
+                    raise ExternalServiceError(
+                        f"OKX request failed after {max_retries} retries: {exc}"
+                    ) from exc
+                delay = base_delay * (2 ** (attempt - 1)) if base_delay else 0.0
+                logger.warning(
+                    "okx_http_retry",
+                    method=method.upper(),
+                    path=path,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    delay=delay,
+                    error=str(exc),
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+        else:
+            raise ExternalServiceError(
+                f"OKX request failed without response: {last_error}"
+            ) from last_error
 
         if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
             raise RateLimitExceeded(response.text)
@@ -210,4 +242,14 @@ class OKXClient:
         return await self._request("POST", "/api/v5/trade/cancel-order", body=payload)
 
 
+logger = get_logger(__name__)
 okx_client = OKXClient()
+
+RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.RemoteProtocolError,
+    httpx.TimeoutException,
+    httpx.TransportError,
+)

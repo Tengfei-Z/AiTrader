@@ -43,6 +43,16 @@ class AgentSettings(BaseSettings):
         True,
         description="Whether to include the OKX simulated trading header",
     )
+    okx_http_max_retries: int = Field(
+        3,
+        ge=0,
+        description="Number of retry attempts for transient OKX HTTP errors",
+    )
+    okx_http_retry_backoff: float = Field(
+        0.5,
+        ge=0.0,
+        description="Base seconds for exponential backoff between OKX HTTP retries",
+    )
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE_CANDIDATES,

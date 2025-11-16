@@ -7,7 +7,7 @@ use serde_json;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use tokio::time::sleep;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::db::{self, PositionSnapshot, TradeRecord};
 use crate::okx::{self, OkxRestClient};
@@ -31,10 +31,13 @@ fn okx_client() -> Option<OkxRestClient> {
 }
 
 /// 处理 agent 推送的 ordId 事件，把数据写入 `orders`/`trades`/`positions`。
+const ORDER_HISTORY_PAGE_LIMIT: i64 = 100;
+
 pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
     let client = okx_client().ok_or_else(|| anyhow!("order sync okx client unavailable"))?;
 
     let mut order = None;
+    let mut fills_cache: Option<Vec<okx::models::FillDetail>> = None;
     for inst_id in CONFIG.okx_inst_ids().iter() {
         let historical_orders = client
             .get_order_history(
@@ -42,9 +45,15 @@ pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
                 Some(inst_id.as_str()),
                 None,
                 Some(ord_id),
-                Some(1),
+                Some(ORDER_HISTORY_PAGE_LIMIT),
             )
             .await?;
+        debug!(
+            inst_id = %inst_id,
+            ord_id = %ord_id,
+            fetched = historical_orders.len(),
+            "scanned order history page"
+        );
 
         if let Some(entry) = historical_orders
             .into_iter()
@@ -55,6 +64,45 @@ pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
         }
     }
 
+    if order.is_none() {
+        warn!(
+            ord_id = %ord_id,
+            "order not found in initial history scan, attempting fill-based lookup"
+        );
+        match client.get_fills(None, Some(ord_id), Some(50)).await {
+            Ok(fallback_fills) => {
+                if let Some(first_fill) = fallback_fills.first() {
+                    debug!(
+                        ord_id = %ord_id,
+                        inst_id = %first_fill.inst_id,
+                        "using fill inst_id for history lookup"
+                    );
+                    let historical_orders = client
+                        .get_order_history(
+                            Some(DEFAULT_INST_TYPE),
+                            Some(first_fill.inst_id.as_str()),
+                            None,
+                            Some(ord_id),
+                            Some(ORDER_HISTORY_PAGE_LIMIT),
+                        )
+                        .await?;
+                    if let Some(entry) = historical_orders
+                        .into_iter()
+                        .find(|entry| entry.ord_id == ord_id)
+                    {
+                        order = Some(entry);
+                        fills_cache = Some(fallback_fills);
+                    }
+                }
+            }
+            Err(err) => warn!(
+                error = ?err,
+                ord_id = %ord_id,
+                "failed to fetch fallback fills for lookup"
+            ),
+        }
+    }
+
     let order = order.ok_or_else(|| anyhow!("order history missing {ord_id}"))?;
 
     info!(?order, "fetched order history entry");
@@ -62,9 +110,13 @@ pub async fn process_agent_order_event(ord_id: &str) -> Result<()> {
     let event = event_from_order_detail(&order)?;
     db::upsert_agent_order(event).await?;
 
-    let fills = client
-        .get_fills(Some(order.inst_id.as_str()), Some(ord_id), Some(50))
-        .await?;
+    let fills = if let Some(cached) = fills_cache {
+        cached
+    } else {
+        client
+            .get_fills(Some(order.inst_id.as_str()), Some(ord_id), Some(50))
+            .await?
+    };
 
     for fill in fills {
         let record = trade_record_from_fill(ord_id, &order, &fill)?;
