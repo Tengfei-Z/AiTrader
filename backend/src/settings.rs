@@ -27,6 +27,8 @@ pub struct AgentConfig {
 pub struct AppConfig {
     #[serde(default = "default_okx_base_url")]
     pub okx_base_url: String,
+    #[serde(default = "default_okx_ticker_bar")]
+    pub okx_ticker_bar: String,
     pub okx_credentials: Option<OkxCredentials>,
     pub agent: Option<AgentConfig>,
     #[serde(default = "default_okx_use_simulated")]
@@ -60,6 +62,8 @@ impl AppConfig {
             load_okx_credentials("OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE");
 
         let okx_base_url = env::var("OKX_BASE_URL").unwrap_or_else(|_| default_okx_base_url());
+        let okx_ticker_bar =
+            env::var("OKX_TICKER_BAR").unwrap_or_else(|_| default_okx_ticker_bar());
         let okx_use_simulated = env_bool("OKX_USE_SIMULATED", true);
         let okx_inst_ids = env::var("OKX_INST_IDS")
             .ok()
@@ -103,6 +107,7 @@ impl AppConfig {
             agent,
             okx_use_simulated,
             okx_inst_ids,
+            okx_ticker_bar,
             initial_equity,
             initial_equity_override,
             balance_snapshot_min_abs_change,
@@ -135,6 +140,10 @@ impl AppConfig {
 
     pub fn okx_use_simulated(&self) -> bool {
         self.okx_use_simulated
+    }
+
+    pub fn okx_ticker_bar(&self) -> &str {
+        self.okx_ticker_bar.as_str()
     }
 
     pub fn okx_inst_ids(&self) -> &[String] {
@@ -176,6 +185,10 @@ fn default_okx_base_url() -> String {
 
 fn default_okx_use_simulated() -> bool {
     true
+}
+
+fn default_okx_ticker_bar() -> String {
+    "3m".to_string()
 }
 
 fn default_okx_inst_ids() -> Vec<String> {

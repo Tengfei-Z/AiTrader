@@ -18,12 +18,13 @@
 
 ## 1. 行情相关
 
-### 1.1 获取单个交易对最新行情
+### 1.1 获取单个交易对最新行情（基于 K 线窗口）
 
 - **Method**: `GET`
 - **Path**: `/api/market/ticker`
 - **Query 参数**:
   - `symbol` (string, required): 交易对标识，如 `BTC-USDT`
+- **说明**：返回的数据来自最新一根 OKX K 线（周期由 `OKX_TICKER_BAR` 控制，默认为 `3m`，支持 OKX 文档中的 `bar` 取值如 `1m`、`5m`、`1H` 等）。`high24h` / `low24h` / `vol24h` 等字段表示该窗口内的统计值。
 
 **响应示例**
 
@@ -32,12 +33,15 @@
   "success": true,
   "data": {
     "symbol": "BTC-USDT",
+    "bar": "3m",
     "last": "112391.1",
+    "open24h": "112300.5",
     "bidPx": "112391.1",
     "askPx": "112391.2",
     "high24h": "115590",
     "low24h": "112084.7",
     "vol24h": "8637.6433954",
+    "volCcy24h": "969220342.1",
     "timestamp": "1761750515009"
   },
   "error": null

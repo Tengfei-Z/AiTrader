@@ -123,15 +123,83 @@ class OKXClient:
 
         return payload
 
-    async def get_ticker(self, inst_id: str) -> Any:
-        """Fetch market ticker information for an instrument."""
+    async def get_ticker(self, inst_id: str, *, bar: str | None = None) -> Any:
+        """Fetch the latest candle snapshot and project it as a ticker."""
 
-        return await self._request(
+        resolved_bar = bar or self._settings.okx_ticker_bar
+        payload = await self._request(
             "GET",
-            "/api/v5/market/ticker",
-            params={"instId": inst_id},
+            "/api/v5/market/candles",
+            params={"instId": inst_id, "bar": resolved_bar, "limit": 1},
             auth=False,
         )
+
+        raw_data: list[Any] = []
+        if isinstance(payload, dict):
+            raw_data = payload.get("data") or []
+        elif isinstance(payload, list):
+            raw_data = payload
+
+        if not raw_data:
+            raise ExternalServiceError(
+                f"OKX candles returned empty data for {inst_id} ({resolved_bar})"
+            )
+
+        candle = raw_data[0]
+        if not isinstance(candle, (list, tuple)) or len(candle) < 5:
+            raise ExternalServiceError(f"Unexpected candle payload: {candle!r}")
+
+        def get_value(index: int) -> str | None:
+            try:
+                value = candle[index]
+            except IndexError:
+                return None
+            return str(value) if value is not None else None
+
+        ts = get_value(0) or datetime.now(tz=timezone.utc).isoformat()
+        open_px = get_value(1)
+        high_px = get_value(2)
+        low_px = get_value(3)
+        close_px = get_value(4)
+        volume = get_value(5)
+        volume_ccy = get_value(6)
+        volume_ccy_quote = get_value(7)
+        confirm = get_value(8)
+
+        inst_type = inst_id.split("-")[-1] if "-" in inst_id else "SWAP"
+        ticker_snapshot = {
+            "instType": inst_type,
+            "instId": inst_id,
+            "bar": resolved_bar,
+            "source": "candles",
+            "ts": ts,
+            "last": close_px,
+            "lastSz": None,
+            "open24h": open_px,
+            "open": open_px,
+            "high24h": high_px,
+            "high": high_px,
+            "low24h": low_px,
+            "low": low_px,
+            "vol24h": volume,
+            "vol": volume,
+            "volCcy24h": volume_ccy,
+            "volCcy": volume_ccy,
+            "volCcyQuote": volume_ccy_quote,
+            "confirm": confirm,
+            "bidPx": None,
+            "askPx": None,
+            "bidSz": None,
+            "askSz": None,
+        }
+
+        if isinstance(payload, dict):
+            return {
+                "code": payload.get("code", "0"),
+                "msg": payload.get("msg", ""),
+                "data": [ticker_snapshot],
+            }
+        return {"code": "0", "msg": "", "data": [ticker_snapshot]}
 
     async def get_order_book(self, inst_id: str, depth: int = 5) -> Any:
         """Fetch order book depth."""

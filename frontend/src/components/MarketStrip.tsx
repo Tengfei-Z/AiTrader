@@ -146,6 +146,7 @@ const MarketStrip = ({
             const price = ticker ? Number(ticker.last) : undefined;
             const high = ticker?.high24h ? Number(ticker.high24h) : undefined;
             const low = ticker?.low24h ? Number(ticker.low24h) : undefined;
+            const windowLabel = ticker?.bar ? ticker.bar.toUpperCase() : undefined;
             const mid = high && low ? (high + low) / 2 : undefined;
             const change = price && mid ? ((price - mid) / mid) * 100 : undefined;
             return (
@@ -166,7 +167,7 @@ const MarketStrip = ({
                   className={`market-strip-coin-change ${
                     change === undefined ? '' : change >= 0 ? 'positive' : 'negative'
                   }`}
-                  aria-label="24小时变化"
+                  aria-label={windowLabel ? `${windowLabel} 变动` : '区间变动'}
                 >
                   {change !== undefined ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '--'}
                 </Typography.Text>

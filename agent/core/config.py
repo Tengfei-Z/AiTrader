@@ -53,6 +53,10 @@ class AgentSettings(BaseSettings):
         ge=0.0,
         description="Base seconds for exponential backoff between OKX HTTP retries",
     )
+    okx_ticker_bar: str = Field(
+        "3m",
+        description="Default bar interval used for ticker snapshots derived from candles",
+    )
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE_CANDIDATES,

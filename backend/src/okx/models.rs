@@ -11,12 +11,17 @@ type HmacSha256 = Hmac<Sha256>;
 #[serde(rename_all = "camelCase")]
 pub struct Ticker {
     pub inst_id: String,
+    pub bar: String,
     pub last: String,
+    #[serde(default)]
+    pub open_24h: Option<String>,
     pub bid_px: Option<String>,
     pub ask_px: Option<String>,
     pub high_24h: Option<String>,
     pub low_24h: Option<String>,
     pub vol_24h: Option<String>,
+    #[serde(default)]
+    pub vol_ccy_24h: Option<String>,
     pub ts: String,
 }
 

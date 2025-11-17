@@ -25,6 +25,8 @@ pub struct OkxRestClient {
     credentials: OkxCredentials,
     /// 是否使用模拟盘交易 (如果为 true，请求头会包含 x-simulated-trading: 1)
     simulated_trading: bool,
+    /// 默认使用的 K 线周期（用于 ticker 快照）
+    ticker_bar: String,
 }
 
 /// 代理配置选项
@@ -50,6 +52,7 @@ impl OkxRestClient {
             credentials,
             proxy,
             config.okx_use_simulated(),
+            config.okx_ticker_bar.clone(),
         )
     }
 
@@ -61,6 +64,7 @@ impl OkxRestClient {
         credentials: OkxCredentials,
         proxy: ProxyOptions,
         simulated_trading: bool,
+        ticker_bar: impl Into<String>,
     ) -> Result<Self> {
         let mut builder = Client::builder()
             .user_agent("ai-trader-backend/0.1")
@@ -85,6 +89,7 @@ impl OkxRestClient {
             base_url: base_url.into(),
             credentials,
             simulated_trading,
+            ticker_bar: ticker_bar.into(),
         })
     }
 
@@ -97,24 +102,44 @@ impl OkxRestClient {
     #[instrument(skip(self), fields(inst_id = %inst_id))]
     pub async fn get_ticker(&self, inst_id: &str) -> Result<super::models::Ticker> {
         #[derive(serde::Deserialize)]
-        struct TickerResponse {
-            data: Vec<super::models::Ticker>,
+        struct CandleResponse {
+            data: Vec<Vec<String>>,
         }
 
-        let path = format!("{API_PREFIX}/market/ticker?instId={}", inst_id);
-        let response: TickerResponse = self.get(&path, None).await?;
-
-        if response.data.is_empty() {
-            tracing::warn!("获取 ticker 数据为空: {}", inst_id);
-        } else {
-            tracing::trace!("成功获取 {} 的 ticker 数据", inst_id);
-        }
-
-        response
-            .data
-            .into_iter()
+        let path = format!(
+            "{API_PREFIX}/market/candles?instId={}&bar={}&limit=1",
+            inst_id, self.ticker_bar
+        );
+        let response: CandleResponse = self.get(&path, None).await?;
+        let mut data_iter = response.data.into_iter();
+        let candle = data_iter
             .next()
-            .ok_or_else(|| OkxError::EmptyResponse("market/ticker".into()).into())
+            .ok_or_else(|| OkxError::EmptyResponse("market/candles".into()))?;
+
+        let mut value_at = |idx: usize| -> Option<String> { candle.get(idx).cloned() };
+
+        let last = value_at(4).unwrap_or_else(|| "0".to_string());
+        let ts = value_at(0).unwrap_or_else(|| "0".to_string());
+        tracing::trace!(
+            "成功获取 {} 的 {} candle 快照 (ts: {})",
+            inst_id,
+            self.ticker_bar,
+            ts
+        );
+
+        Ok(super::models::Ticker {
+            inst_id: inst_id.to_string(),
+            bar: self.ticker_bar.clone(),
+            last,
+            open_24h: value_at(1),
+            bid_px: None,
+            ask_px: None,
+            high_24h: value_at(2),
+            low_24h: value_at(3),
+            vol_24h: value_at(5),
+            vol_ccy_24h: value_at(6),
+            ts,
+        })
     }
 
     /// 获取账户余额信息

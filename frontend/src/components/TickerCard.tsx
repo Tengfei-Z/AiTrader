@@ -17,6 +17,7 @@ const TickerCard = ({ ticker, loading }: Props) => {
   const high = ticker?.high24h ? Number(ticker.high24h) : undefined;
   const low = ticker?.low24h ? Number(ticker.low24h) : undefined;
   const vol = ticker?.vol24h ? Number(ticker.vol24h) : undefined;
+  const windowLabel = ticker?.bar ? ticker.bar.toUpperCase() : '窗口';
 
   const bid = ticker?.bidPx ? Number(ticker.bidPx) : undefined;
   const isBull = bid !== undefined && last !== undefined ? last >= bid : false;
@@ -37,9 +38,9 @@ const TickerCard = ({ ticker, loading }: Props) => {
           </Typography.Text>
         </div>
         <Flex gap={24}>
-          <Statistic title="24h 最高" value={formatNumber(ticker?.high24h)} suffix="USD" />
-          <Statistic title="24h 最低" value={formatNumber(ticker?.low24h)} suffix="USD" />
-          <Statistic title="24h 成交量" value={formatNumber(ticker?.vol24h)} suffix="BTC" />
+          <Statistic title={`${windowLabel} 最高`} value={formatNumber(ticker?.high24h)} suffix="USD" />
+          <Statistic title={`${windowLabel} 最低`} value={formatNumber(ticker?.low24h)} suffix="USD" />
+          <Statistic title={`${windowLabel} 成交量`} value={formatNumber(ticker?.vol24h)} suffix="BTC" />
         </Flex>
       </Flex>
     </Card>
