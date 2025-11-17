@@ -287,6 +287,30 @@ class OKXClient:
 
         return await self._request("POST", "/api/v5/trade/order", body=order)
 
+    async def set_leverage(
+        self,
+        *,
+        lever: str,
+        mgn_mode: str,
+        inst_id: str | None = None,
+        ccy: str | None = None,
+        pos_side: str | None = None,
+    ) -> Any:
+        """Configure leverage for a contract or margin currency."""
+
+        payload: dict[str, Any] = {
+            "lever": lever,
+            "mgnMode": mgn_mode,
+        }
+        if inst_id:
+            payload["instId"] = inst_id
+        if ccy:
+            payload["ccy"] = ccy
+        if pos_side:
+            payload["posSide"] = pos_side
+
+        return await self._request("POST", "/api/v5/account/set-leverage", body=payload)
+
     async def cancel_order(
         self,
         *,
