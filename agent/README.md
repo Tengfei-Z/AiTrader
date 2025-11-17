@@ -88,6 +88,7 @@ agent/
 | `posSide` | 持仓方向（`long` 或 `short`），`SWAP` 合约必填 | `long` |
 | `ordType` | 订单类型，如 `market`、`limit` | `market` |
 | `sz` | 下单张数/数量（字符串） | `0.1` |
+| `lever` | 杠杆倍数，默认使用账户当前设置，传入如 `10` 表示 10x | `5` |
 | `px` | 限价单价格，仅限价单需填写 | `106000` |
 | `attachAlgoOrds` | 可选一组算法单（如止盈/止损），每个元素需包含 `algoSide`/`algoOrdType`/`triggerPx`/`px`/`ordType` 等字段 | `[{"algoSide":"tp","algoOrdType":"conditional","triggerPx":"108000","px":"108000","ordType":"limit"}]` |
 | `reduceOnly` | 是否纯减仓（`true`/`false`） | `false` |

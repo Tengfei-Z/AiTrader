@@ -27,6 +27,7 @@ class PlaceOrderInput(BaseModel):
     ord_type: str = Field(..., alias="ordType", description="订单类型，limit/market 等")
     size: str = Field(..., alias="sz", description="下单数量")
     px: str | None = Field(None, alias="px", description="限价单价格，仅限价单填写")
+    lever: str | None = Field(None, alias="lever", description="杠杆倍数（例如 5 表示 5x）")
     client_order_id: str | None = Field(None, alias="clOrdId", description="自定义订单 ID")
     attach_algo_orders: list[dict[str, Any]] | None = Field(
         None,
