@@ -60,6 +60,7 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
 
     LLM 调用时只需明确基础字段（`instId`/`tdMode`/`side`/`posSide`/`sz`），止盈止损目前非必需；
     若需附加算法单，可自行传入 `attachAlgoOrds`，每个条目需自备 `algoSide`/`algoOrdType`/`triggerPx`/`px` 等字段。
+    自定义杠杆倍数时，额外提供 `lever`（例如 `10` 代表 10x），否则默认沿用 OKX 账户当前设置。
 
     示例：
     ```json
@@ -70,7 +71,8 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
         "side": "buy",
         "posSide": "long",
         "ordType": "market",
-        "sz": "0.1"
+        "sz": "0.1",
+        "lever": "5"
       }
     }
     ```
