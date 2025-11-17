@@ -60,7 +60,7 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
 
     LLM 调用时只需明确基础字段（`instId`/`tdMode`/`side`/`posSide`/`sz`），止盈止损目前非必需；
     若需附加算法单，可自行传入 `attachAlgoOrds`，每个条目需自备 `algoSide`/`algoOrdType`/`triggerPx`/`px` 等字段。
-    自定义杠杆倍数时，额外提供 `lever`（例如 `10` 代表 10x），否则默认沿用 OKX 账户当前设置。
+    自定义杠杆倍数时，额外提供 `lever`（例如 `10` 代表 10x），工具会在下单前调用 `/account/set-leverage` 保证目标倍数生效；不提供则沿用 OKX 账户当前设置。
 
     示例：
     ```json
@@ -79,6 +79,17 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
     """
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
+
+    if order.lever:
+        td_mode_normalized = order.td_mode.lower()
+        if td_mode_normalized in {"cross", "isolated"}:
+            await okx_client.set_leverage(
+                inst_id=order.inst_id,
+                lever=order.lever,
+                mgn_mode=td_mode_normalized,
+                pos_side=order.pos_side if td_mode_normalized == "isolated" else None,
+            )
+
     response = await okx_client.place_order(payload)
     return wrap_response(response)
 
