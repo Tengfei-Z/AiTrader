@@ -424,6 +424,10 @@ body {
   padding: 6px 0 !important;
 }
 
+.positions-table--compact .ant-table-row {
+  height: 56px;
+}
+
 .positions-history-card {
   width: 100%;
 }

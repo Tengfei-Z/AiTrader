@@ -1,8 +1,8 @@
 import type { PositionHistoryItem } from '@api/types';
-import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Table, Tag, Grid } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
+import { useEffect, useMemo, useState } from 'react';
 
 interface Props {
   history?: PositionHistoryItem[];
@@ -113,7 +113,11 @@ const desktopColumns: ColumnsType<PositionHistoryItem> = [
 ];
 
 const PAGE_SIZE = 20;
-const TABLE_SCROLL_Y = 420;
+const MAX_VISIBLE_ROWS = 4;
+const TABLE_ROW_HEIGHT = 56;
+const MOBILE_CARD_HEIGHT = 160;
+const TABLE_SCROLL_Y = MAX_VISIBLE_ROWS * TABLE_ROW_HEIGHT;
+const TABLE_SCROLL_Y_MOBILE = MAX_VISIBLE_ROWS * MOBILE_CARD_HEIGHT;
 
 const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
   const screens = Grid.useBreakpoint();
@@ -182,7 +186,9 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
     setVisibleCount((prev) => prev + PAGE_SIZE);
   };
 
-  const tableScroll = isMobile ? { y: TABLE_SCROLL_Y } : { x: 900, y: TABLE_SCROLL_Y };
+  const tableScroll = isMobile
+    ? { y: TABLE_SCROLL_Y_MOBILE }
+    : { x: 900, y: TABLE_SCROLL_Y };
 
   const table = (
     <Table
