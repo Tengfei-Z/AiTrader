@@ -44,12 +44,15 @@ const desktopColumns: ColumnsType<PositionItem> = [
   {
     title: '合约',
     dataIndex: 'instId',
-    key: 'instId'
+    key: 'instId',
+    width: 160,
+    ellipsis: true
   },
   {
     title: '方向',
     dataIndex: 'side',
     key: 'side',
+    width: 120,
     render: (value: string) => renderDirectionTag(value)
   },
   {
