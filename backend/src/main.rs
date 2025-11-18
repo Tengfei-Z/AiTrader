@@ -220,21 +220,14 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
                 .as_ref()
                 .and_then(|state| strategy_trigger::compute_price_delta(state));
             log_trigger_outcome(&symbol, source, &result, price_delta);
-
+            if matches!(result, AnalysisRunResult::Busy) {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
             let last_price = state_snapshot
                 .as_ref()
                 .and_then(|state| state.last_tick_price);
-            match result {
-                AnalysisRunResult::Busy => {
-                    tokio::time::sleep(interval).await;
-                }
-                _ => {
-                    strategy_trigger::mark_trigger_completion(
-                        &symbol, interval, source, last_price,
-                    )
-                    .await;
-                }
-            }
+            strategy_trigger::mark_trigger_completion(&symbol, interval, source, last_price).await;
         }
     }
 }
