@@ -88,6 +88,11 @@ async fn run_strategy_job() {
             .as_ref()
             .and_then(|state| strategy_trigger::compute_price_delta(state));
         log_manual_trigger_outcome(&symbol, &outcome, price_delta);
+
+        if matches!(outcome, ManualTriggerOutcome::Busy) {
+            continue;
+        }
+
         let last_price = state_snapshot
             .as_ref()
             .and_then(|state| state.last_tick_price);
