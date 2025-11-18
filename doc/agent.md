@@ -80,13 +80,13 @@
 - **功能**：拉取一个或多个合约的行情快照，生成价格序列、EMA、MACD、RSI、盘口、资金费率、持仓量等。
 - **请求体**（`MarketDataRequest`）：
   - `coins: string[]`：如 `["BTC", "ETH"]`。未写 `-USDT-SWAP` 的会自动补全。
-  - `timeframe: string`（默认 `3m`）：OKX `bar` 周期。
+  - `timeframe: string`（固定 `3m`）：参数仅为兼容而保留，任何其他取值都会报错。
   - `quote: string`（默认 `USDT`）。
-  - `indicators: string[]`：`price`、`ema20`、`ema50`、`macd`、`rsi7`、`rsi14` 或短写 `ema`、`rsi`。
+  - `indicators: string[]`：`price`、`ema20`、`macd`、`rsi7`。
   - `include_orderbook` / `include_funding` / `include_open_interest`: bool。
   - `simulated_trading: bool`：控制使用实盘/模拟盘凭证。
 - **响应体**（`MarketDataResponse`）：以币种为 key，包含最新指标 (`current_price`, `current_ema20`, …)、序列数据、可选 `orderbook`、`funding_rate`、`open_interest`。
-- **实现要点**：最多抓取 200 根 OKX K 线，按时间升序计算指标。缺失指标默认为 `null` 并在自然语言中解释。
+- **实现要点**：最多抓取 60 根 OKX K 线（约 3 小时的 3m 数据），按时间升序计算指标。缺失指标默认为 `null` 并在自然语言中解释。
 
 ### 2.3 `get_account_state`
 - **功能**：读取 OKX 账户的权益与仓位概况。

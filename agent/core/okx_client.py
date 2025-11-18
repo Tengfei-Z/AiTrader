@@ -20,6 +20,7 @@ class OKXClient:
     """Minimal async client for OKX REST API."""
 
     DEFAULT_TICKER_BAR = "3m"
+    INDICATOR_CANDLE_LIMIT = 60
 
     def __init__(self) -> None:
         self._settings = get_settings()
@@ -128,11 +129,15 @@ class OKXClient:
     async def get_ticker(self, inst_id: str, *, bar: str | None = None) -> Any:
         """Fetch the latest candle snapshot and project it as a ticker."""
 
-        resolved_bar = bar or self.DEFAULT_TICKER_BAR
+        resolved_bar = self.DEFAULT_TICKER_BAR
         payload = await self._request(
             "GET",
             "/api/v5/market/candles",
-            params={"instId": inst_id, "bar": resolved_bar, "limit": 1},
+            params={
+                "instId": inst_id,
+                "bar": resolved_bar,
+                "limit": self.INDICATOR_CANDLE_LIMIT,
+            },
             auth=False,
         )
 
@@ -194,6 +199,10 @@ class OKXClient:
             "bidSz": None,
             "askSz": None,
         }
+
+        indicators = build_indicator_payload(raw_data)
+        if indicators:
+            ticker_snapshot.update(indicators)
 
         if isinstance(payload, dict):
             return {
@@ -334,6 +343,181 @@ class OKXClient:
             payload["clOrdId"] = client_order_id
 
         return await self._request("POST", "/api/v5/trade/cancel-order", body=payload)
+
+
+def build_indicator_payload(raw_candles: list[Any]) -> dict[str, Any]:
+    """Compute EMA/MACD/RSI series from OKX candles."""
+
+    if not raw_candles:
+        return {}
+
+    ordered_timestamps, close_series = _extract_ordered_series(raw_candles)
+    if not close_series:
+        return {}
+
+    ema20_series = calculate_ema_series(close_series, 20)
+    macd_dif_series, macd_signal_series, macd_hist_series = calculate_macd_series(close_series)
+    rsi7_series = calculate_rsi_series(close_series, 7)
+
+    def format_value(value: float | None) -> str | None:
+        if value is None:
+            return None
+        return f"{value:.8f}".rstrip("0").rstrip(".")
+
+    payload: dict[str, Any] = {
+        "timestamp_series": ordered_timestamps,
+        "close_series": close_series,
+        "ema20_series": ema20_series,
+        "macd_series": macd_hist_series,
+        "macd_dif_series": macd_dif_series,
+        "macd_signal_series": macd_signal_series,
+        "rsi7_series": rsi7_series,
+        "ema20": format_value(_last_non_none(ema20_series)),
+        "macd": format_value(_last_non_none(macd_hist_series)),
+        "macd_signal": format_value(_last_non_none(macd_signal_series)),
+        "macd_dif": format_value(_last_non_none(macd_dif_series)),
+        "rsi7": format_value(_last_non_none(rsi7_series)),
+    }
+    return payload
+
+
+def _extract_ordered_series(raw_candles: list[Any]) -> tuple[list[str], list[float]]:
+    """Return timestamp+close series sorted from oldest to newest."""
+
+    timestamps: list[str] = []
+    closes: list[float] = []
+    for candle in reversed(raw_candles):
+        if not isinstance(candle, (list, tuple)) or len(candle) < 5:
+            continue
+        close_value = _safe_float(candle[4])
+        if close_value is None:
+            continue
+        ts_value = str(candle[0])
+        timestamps.append(ts_value)
+        closes.append(close_value)
+    return timestamps, closes
+
+
+def calculate_ema_series(values: list[float], period: int) -> list[float | None]:
+    """Calculate EMA over the provided closing prices."""
+
+    if not values:
+        return []
+
+    ema_values: list[float | None] = []
+    ema: float | None = None
+    alpha = 2 / (period + 1)
+    for idx, price in enumerate(values):
+        if ema is None:
+            ema = price
+        else:
+            ema = (price - ema) * alpha + ema
+        if idx + 1 < period:
+            ema_values.append(None)
+        else:
+            ema_values.append(ema)
+    return ema_values
+
+
+def calculate_macd_series(
+    values: list[float],
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """Return DIF/DEA/MACD histogram series."""
+
+    if not values:
+        return [], [], []
+
+    ema12: float | None = None
+    ema26: float | None = None
+    dea: float | None = None
+    dif_series: list[float | None] = []
+    dea_series: list[float | None] = []
+    macd_series: list[float | None] = []
+
+    alpha12 = 2 / (12 + 1)
+    alpha26 = 2 / (26 + 1)
+    alpha9 = 2 / (9 + 1)
+
+    for idx, price in enumerate(values):
+        ema12 = price if ema12 is None else (price - ema12) * alpha12 + ema12
+        ema26 = price if ema26 is None else (price - ema26) * alpha26 + ema26
+
+        if idx + 1 < 26:
+            dif_series.append(None)
+            dea_series.append(None)
+            macd_series.append(None)
+            continue
+
+        dif = ema12 - ema26 if ema12 is not None and ema26 is not None else None
+        dif_series.append(dif)
+        if dif is None:
+            dea_series.append(None)
+            macd_series.append(None)
+            continue
+
+        dea = dif if dea is None else (dif - dea) * alpha9 + dea
+        dea_series.append(dea)
+        macd_series.append(2 * (dif - dea))
+
+    return dif_series, dea_series, macd_series
+
+
+def calculate_rsi_series(values: list[float], period: int) -> list[float | None]:
+    """Calculate RSI with Wilder's smoothing."""
+
+    if not values:
+        return []
+
+    rsi_values: list[float | None] = [None] * len(values)
+    avg_gain: float | None = None
+    avg_loss: float | None = None
+
+    for idx in range(1, len(values)):
+        delta = values[idx] - values[idx - 1]
+        gain = max(delta, 0.0)
+        loss = max(-delta, 0.0)
+
+        if idx < period:
+            avg_gain = (avg_gain or 0.0) + gain
+            avg_loss = (avg_loss or 0.0) + loss
+            continue
+
+        if idx == period:
+            avg_gain = ((avg_gain or 0.0) + gain) / period
+            avg_loss = ((avg_loss or 0.0) + loss) / period
+        else:
+            avg_gain = ((avg_gain or 0.0) * (period - 1) + gain) / period
+            avg_loss = ((avg_loss or 0.0) * (period - 1) + loss) / period
+
+        if avg_loss == 0:
+            rsi = 100.0
+        elif avg_gain == 0:
+            rsi = 0.0
+        else:
+            rs = (avg_gain or 0.0) / (avg_loss or 1e-12)
+            rsi = 100 - (100 / (1 + rs))
+
+        rsi_values[idx] = rsi
+
+    return rsi_values
+
+
+def _last_non_none(values: list[float | None]) -> float | None:
+    """Return the last non-None entry in a series."""
+
+    for value in reversed(values):
+        if value is not None:
+            return value
+    return None
+
+
+def _safe_float(value: Any) -> float | None:
+    """Convert a value to float if possible."""
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 logger = get_logger(__name__)
