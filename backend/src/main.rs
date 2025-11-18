@@ -152,9 +152,10 @@ const VOLATILITY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxRestClient>) {
     let schedule_enabled = CONFIG.strategy_schedule_enabled();
+    let volatility_enabled = CONFIG.strategy_vol_trigger_enabled();
     info!(
         seconds = interval.as_secs(),
-        vol_trigger_enabled = CONFIG.strategy_vol_trigger_enabled(),
+        vol_trigger_enabled = volatility_enabled,
         schedule_enabled,
         "strategy scheduler loop enabled"
     );
@@ -162,13 +163,17 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
     strategy_trigger::sync_symbol_states(CONFIG.okx_inst_ids()).await;
     let wake_signal = Arc::new(Notify::new());
 
-    if CONFIG.strategy_vol_trigger_enabled() {
+    if volatility_enabled {
         match okx_client {
             Some(client) => {
                 let notify = wake_signal.clone();
                 tokio::spawn(async move { run_volatility_trigger_loop(client, notify).await });
             }
             None => warn!("volatility trigger enabled but OKX client is unavailable"),
+        }
+
+        if !schedule_enabled {
+            run_startup_analyses(interval).await;
         }
     }
 
@@ -326,6 +331,45 @@ async fn run_volatility_trigger_loop(client: OkxRestClient, notify: Arc<Notify>)
                 Err(err) => {
                     warn!(error = ?err, %symbol, "failed to fetch ticker for volatility trigger");
                 }
+            }
+        }
+    }
+}
+
+async fn run_startup_analyses(interval: Duration) {
+    let symbols = CONFIG.okx_inst_ids().to_vec();
+    if symbols.is_empty() {
+        return;
+    }
+    info!("running initial strategy analyses for volatility mode");
+    for symbol in symbols {
+        let result = run_strategy_analysis_for_symbol(
+            &symbol,
+            TriggerSource::Volatility,
+            WS_RETRY_DELAY,
+            WS_RETRY_MAX_ATTEMPTS,
+        )
+        .await;
+
+        let state_snapshot = strategy_trigger::get_symbol_state(&symbol).await;
+        let price_delta = state_snapshot
+            .as_ref()
+            .and_then(|state| strategy_trigger::compute_price_delta(state));
+        log_trigger_outcome(&symbol, TriggerSource::Volatility, &result, price_delta);
+
+        match result {
+            AnalysisRunResult::Busy => tokio::time::sleep(interval).await,
+            _ => {
+                let last_price = state_snapshot
+                    .as_ref()
+                    .and_then(|state| state.last_tick_price);
+                strategy_trigger::mark_trigger_completion(
+                    &symbol,
+                    interval,
+                    TriggerSource::Volatility,
+                    last_price,
+                )
+                .await;
             }
         }
     }
