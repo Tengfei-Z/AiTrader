@@ -23,7 +23,7 @@
 - **Path**: `/api/market/ticker`
 - **Query**:
   - `symbol` (string, required)：交易对 ID，如 `BTC-USDT`
-- **说明**：直接透传 OKX `Ticker` 数据，K 线周期由配置 `OKX_TICKER_BAR` 控制（默认 `3m`）。
+- **说明**：直接透传 OKX `Ticker` 数据，K 线周期固定为 `3m`。
 
 `data` 字段说明：
 

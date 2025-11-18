@@ -12,6 +12,9 @@ use url::form_urlencoded;
 /// OKX API v5 的路径前缀
 const API_PREFIX: &str = "/api/v5";
 
+/// K 线周期固定为 3 分钟
+const DEFAULT_TICKER_BAR: &str = "3m";
+
 /// OKX REST API 客户端
 ///
 /// 用于与 OKX 交易所进行 HTTP 通信，支持获取行情、账户信息、持仓、成交记录等。
@@ -25,8 +28,6 @@ pub struct OkxRestClient {
     credentials: OkxCredentials,
     /// 是否使用模拟盘交易 (如果为 true，请求头会包含 x-simulated-trading: 1)
     simulated_trading: bool,
-    /// 默认使用的 K 线周期（用于 ticker 快照）
-    ticker_bar: String,
 }
 
 /// 代理配置选项
@@ -52,7 +53,6 @@ impl OkxRestClient {
             credentials,
             proxy,
             config.okx_use_simulated(),
-            config.okx_ticker_bar.clone(),
         )
     }
 
@@ -64,7 +64,6 @@ impl OkxRestClient {
         credentials: OkxCredentials,
         proxy: ProxyOptions,
         simulated_trading: bool,
-        ticker_bar: impl Into<String>,
     ) -> Result<Self> {
         let mut builder = Client::builder()
             .user_agent("ai-trader-backend/0.1")
@@ -89,7 +88,6 @@ impl OkxRestClient {
             base_url: base_url.into(),
             credentials,
             simulated_trading,
-            ticker_bar: ticker_bar.into(),
         })
     }
 
@@ -108,7 +106,7 @@ impl OkxRestClient {
 
         let path = format!(
             "{API_PREFIX}/market/candles?instId={}&bar={}&limit=1",
-            inst_id, self.ticker_bar
+            inst_id, DEFAULT_TICKER_BAR
         );
         let response: CandleResponse = self.get(&path, None).await?;
         let mut data_iter = response.data.into_iter();
@@ -123,13 +121,13 @@ impl OkxRestClient {
         tracing::trace!(
             "成功获取 {} 的 {} candle 快照 (ts: {})",
             inst_id,
-            self.ticker_bar,
+            DEFAULT_TICKER_BAR,
             ts
         );
 
         Ok(super::models::Ticker {
             inst_id: inst_id.to_string(),
-            bar: self.ticker_bar.clone(),
+            bar: DEFAULT_TICKER_BAR.to_string(),
             last,
             open_24h: value_at(1),
             bid_px: None,
