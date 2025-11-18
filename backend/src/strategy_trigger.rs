@@ -158,7 +158,10 @@ pub async fn record_tick_price(
 
     let base_price = match state.last_trigger_price {
         Some(value) if value > 0.0 => value,
-        _ => return None,
+        _ => {
+            state.last_trigger_price = Some(price);
+            return None;
+        }
     };
 
     if matches!(state.pending_trigger, Some(TriggerSource::Volatility)) {
