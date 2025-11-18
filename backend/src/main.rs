@@ -216,6 +216,10 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
                 .and_then(|state| strategy_trigger::compute_price_delta(state));
             log_trigger_outcome(&symbol, source, &result, price_delta);
 
+            if matches!(result, AnalysisRunResult::Busy) {
+                continue;
+            }
+
             let last_price = state_snapshot
                 .as_ref()
                 .and_then(|state| state.last_tick_price);
