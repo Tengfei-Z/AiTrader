@@ -289,8 +289,13 @@ async fn run_volatility_trigger_loop(client: OkxRestClient, notify: Arc<Notify>)
                         warn!(value = %ticker.last, %symbol, "failed to parse ticker price");
                         continue;
                     };
-                    if let Some(info) =
-                        strategy_trigger::record_tick_price(symbol, price, threshold_bps).await
+                    if let Some(info) = strategy_trigger::record_tick_price(
+                        symbol,
+                        price,
+                        threshold_bps,
+                        CONFIG.strategy_vol_window_secs(),
+                    )
+                    .await
                     {
                         info!(
                             %symbol,

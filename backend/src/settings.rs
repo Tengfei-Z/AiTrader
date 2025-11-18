@@ -55,6 +55,8 @@ pub struct AppConfig {
     pub strategy_vol_trigger_enabled: bool,
     #[serde(default = "default_strategy_vol_threshold_bps")]
     pub strategy_vol_threshold_bps: u64,
+    #[serde(default = "default_strategy_vol_window_secs")]
+    pub strategy_vol_window_secs: u64,
 }
 
 impl AppConfig {
@@ -110,6 +112,11 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or_else(default_strategy_vol_threshold_bps);
+        let strategy_vol_window_secs = env::var("STRATEGY_VOL_WINDOW_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or_else(default_strategy_vol_window_secs);
 
         Ok(Self {
             okx_base_url,
@@ -128,6 +135,7 @@ impl AppConfig {
             strategy_manual_trigger_enabled,
             strategy_vol_trigger_enabled,
             strategy_vol_threshold_bps,
+            strategy_vol_window_secs,
         })
     }
 
@@ -180,6 +188,10 @@ impl AppConfig {
 
     pub fn strategy_vol_threshold_bps(&self) -> u64 {
         self.strategy_vol_threshold_bps
+    }
+
+    pub fn strategy_vol_window_secs(&self) -> u64 {
+        self.strategy_vol_window_secs
     }
 
     pub fn initial_equity_env_override(&self) -> Option<f64> {
@@ -245,6 +257,10 @@ fn default_strategy_vol_trigger_enabled() -> bool {
 
 fn default_strategy_vol_threshold_bps() -> u64 {
     80
+}
+
+fn default_strategy_vol_window_secs() -> u64 {
+    60
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

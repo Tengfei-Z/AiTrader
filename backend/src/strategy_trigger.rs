@@ -131,6 +131,7 @@ pub async fn record_tick_price(
     symbol: &str,
     price: f64,
     threshold_bps: u64,
+    window_secs: u64,
 ) -> Option<PriceDeltaSnapshot> {
     let mut states = SYMBOL_STATES.write().await;
     let state = match states.get_mut(symbol) {
@@ -142,6 +143,15 @@ pub async fn record_tick_price(
     };
 
     state.last_tick_price = Some(price);
+
+    if let (Some(last_at), Some(TriggerSource::Volatility)) =
+        (state.last_trigger_at, state.last_trigger_source)
+    {
+        let window = Duration::from_secs(window_secs);
+        if Instant::now().duration_since(last_at) < window {
+            return None;
+        }
+    }
 
     let base_price = match state.last_trigger_price {
         Some(value) if value > 0.0 => value,
