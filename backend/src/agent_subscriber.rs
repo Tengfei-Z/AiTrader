@@ -36,7 +36,7 @@ static NEXT_PENDING_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug)]
 struct PendingAnalysis {
     id: u64,
-    sender: oneshot::Sender<AnalysisResult>,
+    sender: oneshot::Sender<Result<AnalysisResult, String>>,
 }
 
 /// 待处理的分析请求队列（用于关联请求和响应）
@@ -194,7 +194,8 @@ async fn trigger_analysis_inner(symbol: Option<String>) -> Result<AnalysisResult
 
     // 等待响应（带超时）
     match tokio::time::timeout(Duration::from_secs(120), response_rx).await {
-        Ok(Ok(result)) => Ok(result),
+        Ok(Ok(Ok(result))) => Ok(result),
+        Ok(Ok(Err(err))) => Err(err),
         Ok(Err(_)) => {
             remove_pending_by_id(pending.clone(), request_id).await;
             Err("response channel closed".to_string())
@@ -229,6 +230,7 @@ async fn handle_agent_message(
     let message: AgentMessage = serde_json::from_str(payload)?;
     match message {
         AgentMessage::AnalysisResult(result) => process_analysis_result(result, pending).await,
+        AgentMessage::AnalysisError(error) => process_analysis_error(error, pending).await,
         AgentMessage::OrderUpdate(event) => process_order_update(event).await,
     }
 }
@@ -258,7 +260,7 @@ async fn process_analysis_result(
 
     let mut queue = pending.lock().await;
     if let Some(entry) = queue.pop_front() {
-        if let Err(err) = entry.sender.send(response) {
+        if let Err(err) = entry.sender.send(Ok(response)) {
             warn!(
                 error = ?err,
                 request_id = entry.id,
@@ -267,6 +269,28 @@ async fn process_analysis_result(
         }
     } else {
         warn!("received analysis result but no caller is waiting");
+    }
+
+    Ok(())
+}
+
+async fn process_analysis_error(
+    payload: AnalysisErrorPayload,
+    pending: PendingAnalyses,
+) -> Result<(), serde_json::Error> {
+    warn!(error = %payload.error, "received analysis error from agent");
+
+    let mut queue = pending.lock().await;
+    if let Some(entry) = queue.pop_front() {
+        if let Err(err) = entry.sender.send(Err(payload.error.clone())) {
+            warn!(
+                error = ?err,
+                request_id = entry.id,
+                "failed to deliver analysis error to caller"
+            );
+        }
+    } else {
+        warn!("received analysis error but no caller is waiting");
     }
 
     Ok(())
@@ -324,6 +348,7 @@ async fn fail_all_pending(pending: PendingAnalyses, reason: &str) {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AgentMessage {
     AnalysisResult(AnalysisResultPayload),
+    AnalysisError(AnalysisErrorPayload),
     OrderUpdate(OrderUpdatePayload),
 }
 
@@ -336,6 +361,11 @@ struct AnalysisResultPayload {
 struct AnalysisData {
     summary: String,
     symbol: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnalysisErrorPayload {
+    error: String,
 }
 
 #[derive(Debug, Deserialize)]

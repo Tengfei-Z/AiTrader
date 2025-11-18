@@ -211,7 +211,7 @@ class StrategyAnalyzer:
 
         result = await _dispatch_chat()
 
-        max_iterations = 10
+        max_iterations = 15
         for iteration in range(1, max_iterations + 1):
             choice = result.get("choices", [{}])[0].get("message", {})
             assistant_message = ChatMessage(

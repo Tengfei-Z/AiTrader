@@ -51,6 +51,12 @@ pub struct AppConfig {
     pub strategy_schedule_interval_secs: u64,
     #[serde(default = "default_strategy_manual_trigger_enabled")]
     pub strategy_manual_trigger_enabled: bool,
+    #[serde(default = "default_strategy_vol_trigger_enabled")]
+    pub strategy_vol_trigger_enabled: bool,
+    #[serde(default = "default_strategy_vol_threshold_bps")]
+    pub strategy_vol_threshold_bps: u64,
+    #[serde(default = "default_strategy_vol_window_secs")]
+    pub strategy_vol_window_secs: u64,
 }
 
 impl AppConfig {
@@ -100,6 +106,17 @@ impl AppConfig {
             .filter(|secs| *secs > 0)
             .unwrap_or_else(default_strategy_schedule_interval_secs);
         let strategy_manual_trigger_enabled = env_bool("STRATEGY_MANUAL_TRIGGER_ENABLED", false);
+        let strategy_vol_trigger_enabled = env_bool("STRATEGY_VOL_TRIGGER_ENABLED", false);
+        let strategy_vol_threshold_bps = env::var("STRATEGY_VOL_THRESHOLD_BPS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or_else(default_strategy_vol_threshold_bps);
+        let strategy_vol_window_secs = env::var("STRATEGY_VOL_WINDOW_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or_else(default_strategy_vol_window_secs);
 
         Ok(Self {
             okx_base_url,
@@ -116,6 +133,9 @@ impl AppConfig {
             strategy_schedule_enabled,
             strategy_schedule_interval_secs,
             strategy_manual_trigger_enabled,
+            strategy_vol_trigger_enabled,
+            strategy_vol_threshold_bps,
+            strategy_vol_window_secs,
         })
     }
 
@@ -142,10 +162,6 @@ impl AppConfig {
         self.okx_use_simulated
     }
 
-    pub fn okx_ticker_bar(&self) -> &str {
-        self.okx_ticker_bar.as_str()
-    }
-
     pub fn okx_inst_ids(&self) -> &[String] {
         &self.okx_inst_ids
     }
@@ -164,6 +180,18 @@ impl AppConfig {
 
     pub fn strategy_manual_trigger_enabled(&self) -> bool {
         self.strategy_manual_trigger_enabled
+    }
+
+    pub fn strategy_vol_trigger_enabled(&self) -> bool {
+        self.strategy_vol_trigger_enabled
+    }
+
+    pub fn strategy_vol_threshold_bps(&self) -> u64 {
+        self.strategy_vol_threshold_bps
+    }
+
+    pub fn strategy_vol_window_secs(&self) -> u64 {
+        self.strategy_vol_window_secs
     }
 
     pub fn initial_equity_env_override(&self) -> Option<f64> {
@@ -221,6 +249,18 @@ fn default_strategy_schedule_interval_secs() -> u64 {
 
 fn default_strategy_manual_trigger_enabled() -> bool {
     false
+}
+
+fn default_strategy_vol_trigger_enabled() -> bool {
+    false
+}
+
+fn default_strategy_vol_threshold_bps() -> u64 {
+    80
+}
+
+fn default_strategy_vol_window_secs() -> u64 {
+    60
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

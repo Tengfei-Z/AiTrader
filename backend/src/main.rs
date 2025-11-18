@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
+use tokio::sync::Notify;
+use tokio::time::Instant;
 
 mod agent_subscriber;
 mod db;
@@ -11,6 +13,7 @@ mod order_sync;
 mod routes;
 mod server_config;
 mod settings;
+mod strategy_trigger;
 mod types;
 
 use crate::agent_subscriber::{
@@ -22,6 +25,7 @@ use crate::okx::OkxRestClient;
 use crate::routes::{api_routes, run_balance_snapshot_loop};
 use crate::server_config::load_app_config;
 use crate::settings::CONFIG;
+use crate::strategy_trigger::{PriceDeltaSnapshot, TriggerSource};
 use anyhow::Result;
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -68,7 +72,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    let app_state = AppState { okx_client };
+    let app_state = AppState {
+        okx_client: okx_client.clone(),
+    };
 
     let background_state = app_state.clone();
     tokio::spawn(async move { run_balance_snapshot_loop(background_state).await });
@@ -78,10 +84,11 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         order_sync::run_periodic_position_sync().await;
     });
-    if CONFIG.strategy_schedule_enabled() {
+    if CONFIG.strategy_schedule_enabled() || CONFIG.strategy_vol_trigger_enabled() {
         let interval = Duration::from_secs(CONFIG.strategy_schedule_interval_secs());
+        let scheduler_client = app_state.okx_client.clone();
         tokio::spawn(async move {
-            run_strategy_scheduler_loop(interval).await;
+            run_strategy_scheduler_loop(interval, scheduler_client).await;
         });
     }
 
@@ -139,59 +146,281 @@ fn init_tracing() {
     }
 }
 
-async fn run_strategy_scheduler_loop(interval: Duration) {
+const WS_RETRY_DELAY: Duration = Duration::from_secs(5);
+const WS_RETRY_MAX_ATTEMPTS: usize = 3;
+const VOLATILITY_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxRestClient>) {
+    let schedule_enabled = CONFIG.strategy_schedule_enabled();
+    let volatility_enabled = CONFIG.strategy_vol_trigger_enabled();
     info!(
         seconds = interval.as_secs(),
+        vol_trigger_enabled = volatility_enabled,
+        schedule_enabled,
         "strategy scheduler loop enabled"
     );
 
-    const WS_RETRY_DELAY: Duration = Duration::from_secs(5);
-    const WS_RETRY_MAX_ATTEMPTS: usize = 3;
+    strategy_trigger::sync_symbol_states(CONFIG.okx_inst_ids()).await;
+    let wake_signal = Arc::new(Notify::new());
+
+    if volatility_enabled {
+        match okx_client {
+            Some(client) => {
+                let notify = wake_signal.clone();
+                tokio::spawn(async move { run_volatility_trigger_loop(client, notify).await });
+            }
+            None => warn!("volatility trigger enabled but OKX client is unavailable"),
+        }
+
+        if !schedule_enabled {
+            run_startup_analyses(interval).await;
+        }
+    }
 
     loop {
-        let inst_ids: Vec<String> = CONFIG.okx_inst_ids().to_vec();
-        for symbol in inst_ids {
-            let mut attempts = 0;
-            loop {
-                match trigger_analysis(Some(symbol.as_str())).await {
-                    Ok(result) => {
-                        info!(
-                            summary_len = result.summary.len(),
-                            symbol = result.symbol.as_deref().unwrap_or(&symbol),
-                            "scheduled strategy analysis completed"
-                        );
-                        break;
-                    }
-                    Err(err) if is_analysis_busy_error(&err) => {
-                        info!(%symbol, "scheduled strategy analysis skipped: previous run active");
-                        break;
-                    }
-                    Err(err) if is_websocket_uninitialized_error(&err) => {
-                        if attempts >= WS_RETRY_MAX_ATTEMPTS {
-                            warn!(
-                                %symbol,
-                                attempts,
-                                "scheduled strategy analysis aborted after websocket retries"
-                            );
-                            break;
+        let now = Instant::now();
+        let due_symbols = strategy_trigger::due_symbols(now, schedule_enabled).await;
+
+        if due_symbols.is_empty() {
+            if schedule_enabled {
+                match strategy_trigger::next_due_instant().await {
+                    Some(next_instant) if next_instant > Instant::now() => {
+                        let notified = wake_signal.notified();
+                        tokio::select! {
+                            _ = notified => {},
+                            _ = tokio::time::sleep_until(next_instant) => {},
                         }
-                        attempts += 1;
-                        warn!(
-                            %symbol,
-                            attempts,
-                            "scheduled strategy analysis deferred: websocket not ready, retrying soon"
-                        );
-                        tokio::time::sleep(WS_RETRY_DELAY).await;
+                    }
+                    Some(_) => continue,
+                    None => {
+                        let notified = wake_signal.notified();
+                        tokio::select! {
+                            _ = notified => {},
+                            _ = tokio::time::sleep(interval) => {},
+                        }
+                    }
+                }
+            } else {
+                wake_signal.notified().await;
+            }
+            continue;
+        }
+
+        for (symbol, source) in due_symbols {
+            let result = run_strategy_analysis_for_symbol(
+                &symbol,
+                source,
+                WS_RETRY_DELAY,
+                WS_RETRY_MAX_ATTEMPTS,
+            )
+            .await;
+
+            let state_snapshot = strategy_trigger::get_symbol_state(&symbol).await;
+            let price_delta = state_snapshot
+                .as_ref()
+                .and_then(|state| strategy_trigger::compute_price_delta(state));
+            log_trigger_outcome(&symbol, source, &result, price_delta);
+            if matches!(result, AnalysisRunResult::Busy) {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            let last_price = state_snapshot
+                .as_ref()
+                .and_then(|state| state.last_tick_price);
+            strategy_trigger::mark_trigger_completion(&symbol, interval, source, last_price).await;
+        }
+    }
+}
+
+async fn run_strategy_analysis_for_symbol(
+    symbol: &str,
+    source: TriggerSource,
+    ws_retry_delay: Duration,
+    ws_retry_max_attempts: usize,
+) -> AnalysisRunResult {
+    let mut attempts = 0;
+    loop {
+        match trigger_analysis(Some(symbol)).await {
+            Ok(result) => {
+                return AnalysisRunResult::Success {
+                    response_symbol: result.symbol,
+                    summary_len: result.summary.len(),
+                };
+            }
+            Err(err) if is_analysis_busy_error(&err) => {
+                info!(
+                    %symbol,
+                    ?source,
+                    "strategy analysis skipped because previous run is active"
+                );
+                return AnalysisRunResult::Busy;
+            }
+            Err(err) if is_websocket_uninitialized_error(&err) => {
+                if attempts >= ws_retry_max_attempts {
+                    warn!(
+                        %symbol,
+                        attempts,
+                        ?source,
+                        "strategy analysis aborted after websocket retries"
+                    );
+                    return AnalysisRunResult::Failed { error: err };
+                }
+                attempts += 1;
+                warn!(
+                    %symbol,
+                    attempts,
+                    ?source,
+                    "strategy analysis deferred: websocket not ready, retrying soon"
+                );
+                tokio::time::sleep(ws_retry_delay).await;
+                continue;
+            }
+            Err(err) => {
+                return AnalysisRunResult::Failed { error: err };
+            }
+        }
+    }
+}
+
+async fn run_volatility_trigger_loop(client: OkxRestClient, notify: Arc<Notify>) {
+    let symbols = CONFIG.okx_inst_ids().to_vec();
+    if symbols.is_empty() {
+        warn!("volatility trigger loop started with empty symbol list");
+        return;
+    }
+    info!(
+        poll_secs = VOLATILITY_POLL_INTERVAL.as_secs(),
+        "volatility trigger loop enabled"
+    );
+    let threshold_bps = CONFIG.strategy_vol_threshold_bps();
+    let mut interval = tokio::time::interval(VOLATILITY_POLL_INTERVAL);
+    loop {
+        interval.tick().await;
+        for symbol in &symbols {
+            match client.get_ticker(symbol).await {
+                Ok(ticker) => {
+                    let Ok(price) = ticker.last.parse::<f64>() else {
+                        warn!(value = %ticker.last, %symbol, "failed to parse ticker price");
                         continue;
+                    };
+                    if let Some(info) = strategy_trigger::record_tick_price(
+                        symbol,
+                        price,
+                        threshold_bps,
+                        CONFIG.strategy_vol_window_secs(),
+                    )
+                    .await
+                    {
+                        info!(
+                            %symbol,
+                            price_now = info.price_now,
+                            base_price = info.base_price,
+                            delta_bps = info.delta_bps,
+                            "volatility threshold exceeded; scheduling analysis"
+                        );
+                        notify.notify_waiters();
                     }
-                    Err(err) => {
-                        warn!(%err, %symbol, "scheduled strategy analysis failed");
-                        break;
-                    }
+                }
+                Err(err) => {
+                    warn!(error = ?err, %symbol, "failed to fetch ticker for volatility trigger");
                 }
             }
         }
-
-        tokio::time::sleep(interval).await;
     }
+}
+
+async fn run_startup_analyses(interval: Duration) {
+    let symbols = CONFIG.okx_inst_ids().to_vec();
+    if symbols.is_empty() {
+        return;
+    }
+    info!("running initial strategy analyses for volatility mode");
+    for symbol in symbols {
+        let result = run_strategy_analysis_for_symbol(
+            &symbol,
+            TriggerSource::Volatility,
+            WS_RETRY_DELAY,
+            WS_RETRY_MAX_ATTEMPTS,
+        )
+        .await;
+
+        let state_snapshot = strategy_trigger::get_symbol_state(&symbol).await;
+        let price_delta = state_snapshot
+            .as_ref()
+            .and_then(|state| strategy_trigger::compute_price_delta(state));
+        log_trigger_outcome(&symbol, TriggerSource::Volatility, &result, price_delta);
+
+        match result {
+            AnalysisRunResult::Busy => tokio::time::sleep(interval).await,
+            _ => {
+                let last_price = state_snapshot
+                    .as_ref()
+                    .and_then(|state| state.last_tick_price);
+                strategy_trigger::mark_trigger_completion(
+                    &symbol,
+                    interval,
+                    TriggerSource::Volatility,
+                    last_price,
+                )
+                .await;
+            }
+        }
+    }
+}
+
+fn log_trigger_outcome(
+    symbol: &str,
+    source: TriggerSource,
+    result: &AnalysisRunResult,
+    price_snapshot: Option<PriceDeltaSnapshot>,
+) {
+    match result {
+        AnalysisRunResult::Success {
+            response_symbol,
+            summary_len,
+        } => {
+            info!(
+                %symbol,
+                source = ?source,
+                summary_len,
+                response_symbol = response_symbol.as_deref().unwrap_or(symbol),
+                price_now = price_snapshot.as_ref().map(|p| p.price_now),
+                base_price = price_snapshot.as_ref().map(|p| p.base_price),
+                delta_bps = price_snapshot.as_ref().map(|p| p.delta_bps),
+                "strategy analysis completed"
+            );
+        }
+        AnalysisRunResult::Busy => {
+            info!(
+                %symbol,
+                source = ?source,
+                price_now = price_snapshot.as_ref().map(|p| p.price_now),
+                base_price = price_snapshot.as_ref().map(|p| p.base_price),
+                delta_bps = price_snapshot.as_ref().map(|p| p.delta_bps),
+                "strategy analysis skipped because previous run is active"
+            );
+        }
+        AnalysisRunResult::Failed { error } => {
+            warn!(
+                %symbol,
+                source = ?source,
+                error = %error,
+                price_now = price_snapshot.as_ref().map(|p| p.price_now),
+                base_price = price_snapshot.as_ref().map(|p| p.base_price),
+                delta_bps = price_snapshot.as_ref().map(|p| p.delta_bps),
+                "strategy analysis failed"
+            );
+        }
+    }
+}
+
+enum AnalysisRunResult {
+    Success {
+        response_symbol: Option<String>,
+        summary_len: usize,
+    },
+    Busy,
+    Failed {
+        error: String,
+    },
 }

@@ -1,112 +1,123 @@
-
 # AiTrader
 
-AiTrader 是一个围绕 OKX 交易所构建的量化交易系统：前端基于 **React + TypeScript** 提供交易与 AI 对话界面，后端使用 **Rust (Axum)** 统一接入 OKX 与自研业务 API，独立的 **Python Agent** 则承载 DeepSeek 模型对话、策略分析与工具调用。整体强调“交易业务（Rust）”与“AI 能力（Python）”的清晰分层。
+AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交易执行」与「AI 策略」解耦：Rust API 服务负责与 OKX、数据库及前端交互，Python Agent 则承载 DeepSeek 模型推理与策略脚本，React 前端提供可视化与人工干预入口。
 
-## 技术栈速览
+## 核心组成
 
-| 模块 | 技术 | 角色 |
+| 模块 | 主要技术 | 职责 |
 | --- | --- | --- |
-| 前端 | React, TypeScript, Vite, pnpm | 行情与账户展示、策略与 AI 对话 |
-| API 服务 | Rust, Axum, sqlx, PostgreSQL | OKX REST 代理、账户/行情/策略 API、任务调度 |
-| Agent | Python, FastAPI, FastMCP, DeepSeek | 大模型推理、OKX 工具调用、策略分析 |
-| 部署 | systemd, nginx, bash scripts | 一键构建与服务编排 |
+| Frontend | React · TypeScript · Vite | 行情/账户看板、策略对话、人工触发入口 |
+| Backend | Rust · Axum · sqlx | OKX REST 代理、账户/持仓/成交 API、策略调度、数据库管理 |
+| Agent | Python · FastAPI · DeepSeek | LLM 推理、策略分析、下单/行情工具调用 |
 
-## 架构
+三者通过 HTTP/WebSocket 协同：前端调用 Rust API，API 服务在需要策略分析时通过 WebSocket 通知 Agent，Agent 完成分析后写回数据库与 API。所有模块均由 `.env` 驱动，可在模拟盘或实盘之间快速切换。
 
 ```
-┌──────────────────────────────┐
-│   前端 (React + TypeScript)   │
-│ - 行情与账户展示              │
-│ - 策略/AI 对话界面            │
-└───────────────▲──────────────┘
-                │ HTTP
-┌───────────────┴──────────────┐
-│     Rust API Server (Axum)    │
-│ - OKX REST 代理               │
-│ - 账户/持仓/成交查询          │
-│ - 策略消息记录                │
-│ - AI 请求转发                 │
-└───────────────▲──────────────┘
-                │ HTTP (8001)
-┌───────────────┴──────────────┐
-│     Python Agent (FastAPI)    │
-│ - DeepSeek Chat 接入          │
-│ - FastMCP 工具集 (OKX 操作)   │
-│ - 策略分析与对话管理          │
-└──────────────────────────────┘
-                │
-         ┌──────┴──────┐
-         │   DeepSeek   │
-         └──────────────┘
+┌─────────────────────────────┐
+│        React Frontend        │
+│ - 行情/账户/策略对话         │
+│ - 手动触发与观测             │
+└──────────────▲──────────────┘
+               │ HTTPS/WS
+┌──────────────┴──────────────┐
+│      Rust API (Axum)         │
+│ - OKX REST 代理 + DB          │
+│ - 策略调度：手动/定时/波动     │
+│ - WebSocket → Python Agent   │
+└──────────────▲──────────────┘
+               │ WS
+┌──────────────┴──────────────┐
+│     Python Agent (FastAPI)   │
+│ - DeepSeek Chat / MCP 工具   │
+│ - 策略分析回写数据库/日志     │
+└──────────────┬──────────────┘
+               │ HTTP/SDK
+        ┌──────┴──────┐
+        │    OKX/LLM   │
+        └──────────────┘
 ```
 
-## 仓库结构
+## 策略触发概览
 
-- `frontend/`：React 单页应用，覆盖行情看板、账户/持仓视图与 Agent 对话窗口。
-- `backend/`：Rust crate，内含 Axum 入口、配置加载、PostgreSQL 初始化、OKX 客户端与任务调度。
-- `agent/`：Python Agent，包含 FastAPI 服务、DeepSeek 接入、FastMCP 工具、策略脚本与测试。
-- `config/`、`nginx/`、`doc/`：配置模板、部署脚本与设计文档。
+后台支持三种触发方式，它们共享同一个执行许可，保证策略分析串行运行：
 
-## 核心服务
+- **手动触发**：前端或 CLI 直接调用 `/model/strategy-run`。
+- **定时触发**：设置 `STRATEGY_SCHEDULE_ENABLED=true` 与 `STRATEGY_SCHEDULE_INTERVAL_SECS`，按「最晚执行时间」模式兜底巡检。
+- **波动触发**：开启 `STRATEGY_VOL_TRIGGER_ENABLED` 后，后台会轮询 OKX 行情（REST），维护每个 instId 的 `last_trigger_price` 与 `last_tick_price`。当 `Δ=|price_now-last_trigger_price|/last_trigger_price` 超过 `STRATEGY_VOL_THRESHOLD_BPS`（默认 80bps）且超过 `STRATEGY_VOL_WINDOW_SECS` 冷却窗口时，立即触发策略分析，并延后定时兜底的下一次执行。
 
-### Rust API Server
-- 提供行情、订单簿、成交、账户余额、持仓等 REST 接口（默认对接 OKX 模拟盘）。
-- 维护策略运行/对话记录，并通过 `/model/strategy-run` 等端点转发请求给 Python Agent。
-- 统一加载 `.env`，管理 OKX 凭证、Agent 地址、数据库 URL、定时任务等配置。
+运行机制要点：
 
-### Python Agent
-- FastAPI 暴露 `/analysis` 等端点，驱动 DeepSeek Chat 进行策略分析与自然语言交互。
-- 借助 FastMCP 定义下单、行情、账户等 OKX 工具，让模型可在推理中自动调用。
-- 提供会话记忆、SSE 扩展点，`tests/` 中覆盖配置、会话管理与 API 路由单测。
+1. **统一调度**：调度 loop 使用 `Notify` 同步波动事件与定时任务，只要有任意触发源准备就绪即可抢占 `ANALYSIS_PERMIT`。
+2. **日志透明**：每次触发都会记录来源、现价、基准价、偏移及结果（成功/失败/忙），便于排查节奏。
+3. **启动即基线**：在仅启用波动模式时，后端会在启动时为每个 symbol 跑一次分析并记录初始 `last_trigger_price`；若行情先到，则首个 ticker 会直接填充基线，确保波动触发能尽快生效。
 
-### 前端
-- 使用 React + TypeScript + Vite，配合 pnpm 管理依赖。
-- 与 Rust API 拉取行情/账户数据，并通过 SSE/HTTP 与 Agent 交互。
-- UI 重点在策略监控与人工干预入口。
-
-## 配置与环境变量
-
-- **OKX 凭证**：`OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`。`OKX_USE_SIMULATED` 控制是否启用模拟盘（默认 true）。
-- **行情窗口**：`OKX_TICKER_BAR` 控制以哪种 K 线周期生成“Ticker”快照（默认 `3m`，支持 OKX 文档中的 `1m`/`5m`/`1H`/`1D` 等），适用于 Agent MCP 与 REST `/market/ticker`。
-- **合约列表**：`OKX_INST_IDS=BTC-USDT-SWAP,ETH-USDT-SWAP` 等，用于指定需要同步的合约；默认仅跟踪 `BTC-USDT-SWAP`。
-- **Agent**：`DEEPSEEK_API_KEY`、`AGENT_PORT`、`AGENT_HOST` 等；可将 `agent/.env.example` 复制为仓库根目录 `.env` 并补齐。
-- **调度**：`STRATEGY_SCHEDULE_ENABLED=true` 与 `STRATEGY_SCHEDULE_INTERVAL_SECS=60` 控制 Rust 端的策略轮询，若检测到已有任务在执行，会自动跳过。
-- **数据库**：`DATABASE_URL` 由 `.env` 提供，`backend` 启动时自动迁移/初始化。
-- **初始资金与快照压缩**：
-  - `INITIAL_EQUITY` 除了决定前端默认基线，也会在数据库缺少记录时自动写入 `initial_equities` 表（任何重复写入会覆盖旧值，表内最多一条）。
-  - `BALANCE_SNAPSHOT_MIN_ABS_CHANGE` / `BALANCE_SNAPSHOT_MIN_RELATIVE_CHANGE` 控制账户快照写入的阈值（默认 1 USDT / 0.01%）。只有当“绝对变化 < abs 阈值”且“相对变化 < rel 阈值”同时成立时才会跳过写入，否则即使满足其中一个条件也会记录，以避免遗漏较大波动。
+> 推荐配置：将 `STRATEGY_SCHEDULE_INTERVAL_SECS` 设为 10~15 分钟，只保留兜底；波动触发阈值根据策略灵敏度自行在 40~120bps 间调节。
 
 ## 快速上手
 
 1. **安装依赖**
-   - Rust stable toolchain、cargo、PostgreSQL。
-   - Python 3.11+，推荐使用 `uv` 或 `pip` 创建虚拟环境。
+   - Rust stable、cargo、PostgreSQL。
+   - Python 3.11+（建议使用 `uv` 或 `pip` 创建虚拟环境）。
    - Node.js 18+ 与 pnpm。
-2. **准备 `.env`**
-   - 复制 `agent/.env.example` 到仓库根目录 `.env`，补齐 OKX、DeepSeek、数据库、Agent 端口等变量。
-3. **启动 Python Agent**
+2. **准备环境变量**
+   - 复制 `.env.example` 为 `.env`，补齐 `OKX_API_KEY/SECRET/PASSPHRASE`、`AGENT_BASE_URL`、`DATABASE_URL`、`DEEPSEEK_API_KEY` 等。
+   - 按需调整 `STRATEGY_*` 参数（定时/波动/窗口）与 `OKX_INST_IDS`。
+3. **启动服务**
    ```bash
+   # Python Agent
    cd agent
-   uv pip install -r requirements.txt -r requirements-dev.txt
+   uv pip install -r requirements.txt
    uvicorn llm.main:app --host 0.0.0.0 --port 8001
-   ```
-4. **启动 Rust API Server**
-   ```bash
+
+   # Rust API
    cd backend
    cargo run
-   ```
-5. **启动前端**
-   ```bash
+
+   # React 前端
    cd frontend
    pnpm install
    pnpm dev
    ```
+4. **验证**
+   - 打开前端查看账户/行情，并在“策略对话”中触发一次手动运行。
+   - 观察 `backend/log/api-server.log` 中的触发日志，确认三种触发模式行为符合预期。
 
-## 构建与部署
+## 配置速览
 
-```bash
-bash nginx/build.sh
-```
+- `OKX_INST_IDS`：需要跟踪/下单的合约列表（逗号分隔，默认 `BTC-USDT-SWAP`）。
+- `STRATEGY_SCHEDULE_ENABLED` / `STRATEGY_SCHEDULE_INTERVAL_SECS`：定时触发开关与兜底周期（秒）。
+- `STRATEGY_VOL_TRIGGER_ENABLED` / `STRATEGY_VOL_THRESHOLD_BPS` / `STRATEGY_VOL_WINDOW_SECS`：波动触发开关、阈值（bps）与冷却/观察窗口（秒）。
+- `STRATEGY_MANUAL_TRIGGER_ENABLED`：前端是否显示手动触发按钮。
+- `INITIAL_EQUITY` 与 `BALANCE_SNAPSHOT_*`：前端基线与账户快照写入阈值。
+- `DATABASE_URL`、`RESET_DATABASE`：PostgreSQL 连接与重置策略。
 
-脚本会构建前端与后端、在 `agent/.venv` 安装依赖，并输出可直接用于 systemd + nginx 的产物；数据库连接信息完全来自 `.env`。
+更多变量可参考 `.env.example`。
+
+## 部署
+
+仓库提供 `nginx/build.sh` 用于一键打包：构建前端、后端并在 `agent/.venv` 安装依赖，产物可直接配合 systemd 与 nginx 部署。线上模式下建议：
+
+- 为 Agent 与 API 设置独立 systemd service，确保重启顺序。
+- 通过 `pm2`/`supervisord` 等守护 Python Agent，避免长时间推理导致进程退出。
+- 配置 Grafana/Prometheus 或至少 tail `log/api-server.log`，关注策略触发日志与数据库同步状态。
+
+### 构建 & 部署脚本
+
+1. **构建产物**
+   ```bash
+   bash nginx/build.sh
+   ```
+   - 前提：已安装 `cargo`、`npm`、`python3`。
+   - 行为：`cargo build --release`、`npm install && npm run build`、在 `agent/.venv` 安装依赖。
+   - 产出：`backend/target/release/api-server`、`frontend/dist/`、`agent/.venv`。
+
+2. **部署/运维**
+   ```bash
+   sudo bash nginx/deploy.sh deploy     # 首次部署（默认操作）
+   sudo bash nginx/deploy.sh status     # 查看 systemd 状态
+   sudo bash nginx/deploy.sh start|stop # 控制后台服务
+   sudo bash nginx/deploy.sh uninstall  # 移除 nginx + systemd 配置
+   ```
+   - 依赖 `config/config.yaml`（可通过 `DEPLOY_CONFIG_FILE` 覆盖）描述域名、SSL、systemd 与静态文件路径。
+   - 自动动作：校验二进制/前端产物 → 同步静态资源 → 写入 nginx 配置 → 创建/更新 backend & agent systemd unit → reload nginx。
+   - 需要 root 权限运行；执行前请确保 SSL 证书、`config/config.yaml` 与 `OKX` 凭证已就绪。

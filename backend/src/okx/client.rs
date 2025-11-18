@@ -116,7 +116,7 @@ impl OkxRestClient {
             .next()
             .ok_or_else(|| OkxError::EmptyResponse("market/candles".into()))?;
 
-        let mut value_at = |idx: usize| -> Option<String> { candle.get(idx).cloned() };
+        let value_at = |idx: usize| -> Option<String> { candle.get(idx).cloned() };
 
         let last = value_at(4).unwrap_or_else(|| "0".to_string());
         let ts = value_at(0).unwrap_or_else(|| "0".to_string());
