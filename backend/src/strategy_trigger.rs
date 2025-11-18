@@ -63,18 +63,21 @@ pub async fn sync_symbol_states(symbols: &[String]) {
     }
 }
 
-/// 返回当前需要执行定时任务的交易对列表。
-pub async fn due_symbols(now: Instant) -> Vec<(String, TriggerSource)> {
+/// 返回当前需要执行的交易对及其触发来源。
+pub async fn due_symbols(now: Instant, schedule_enabled: bool) -> Vec<(String, TriggerSource)> {
     let states = SYMBOL_STATES.read().await;
     states
         .iter()
         .filter_map(|(symbol, state)| {
-            if state.next_scheduled_at <= now {
-                let source = state.pending_trigger.unwrap_or(TriggerSource::Scheduled);
-                Some((symbol.clone(), source))
-            } else {
-                None
+            if let Some(source) = state.pending_trigger {
+                return Some((symbol.clone(), source));
             }
+
+            if schedule_enabled && state.next_scheduled_at <= now {
+                return Some((symbol.clone(), TriggerSource::Scheduled));
+            }
+
+            None
         })
         .collect()
 }

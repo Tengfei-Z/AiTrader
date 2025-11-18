@@ -151,9 +151,11 @@ const WS_RETRY_MAX_ATTEMPTS: usize = 3;
 const VOLATILITY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxRestClient>) {
+    let schedule_enabled = CONFIG.strategy_schedule_enabled();
     info!(
         seconds = interval.as_secs(),
         vol_trigger_enabled = CONFIG.strategy_vol_trigger_enabled(),
+        schedule_enabled,
         "strategy scheduler loop enabled"
     );
 
@@ -172,25 +174,29 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
 
     loop {
         let now = Instant::now();
-        let due_symbols = strategy_trigger::due_symbols(now).await;
+        let due_symbols = strategy_trigger::due_symbols(now, schedule_enabled).await;
 
         if due_symbols.is_empty() {
-            match strategy_trigger::next_due_instant().await {
-                Some(next_instant) if next_instant > Instant::now() => {
-                    let notified = wake_signal.notified();
-                    tokio::select! {
-                        _ = notified => {},
-                        _ = tokio::time::sleep_until(next_instant) => {},
+            if schedule_enabled {
+                match strategy_trigger::next_due_instant().await {
+                    Some(next_instant) if next_instant > Instant::now() => {
+                        let notified = wake_signal.notified();
+                        tokio::select! {
+                            _ = notified => {},
+                            _ = tokio::time::sleep_until(next_instant) => {},
+                        }
+                    }
+                    Some(_) => continue,
+                    None => {
+                        let notified = wake_signal.notified();
+                        tokio::select! {
+                            _ = notified => {},
+                            _ = tokio::time::sleep(interval) => {},
+                        }
                     }
                 }
-                Some(_) => continue,
-                None => {
-                    let notified = wake_signal.notified();
-                    tokio::select! {
-                        _ = notified => {},
-                        _ = tokio::time::sleep(interval) => {},
-                    }
-                }
+            } else {
+                wake_signal.notified().await;
             }
             continue;
         }
