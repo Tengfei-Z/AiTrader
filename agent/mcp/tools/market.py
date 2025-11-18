@@ -10,23 +10,7 @@ from ..registry import mcp
 from .utils import wrap_response
 
 DEFAULT_TICKER_BAR = "3m"
-SUPPORTED_TICKER_BARS: dict[str, str] = {
-    "1m": "1m",
-    "3m": "3m",
-    "5m": "5m",
-    "15m": "15m",
-    "30m": "30m",
-    "1h": "1H",
-    "2h": "2H",
-    "4h": "4H",
-    "6h": "6H",
-    "12h": "12H",
-    "1d": "1D",
-    "2d": "2D",
-    "3d": "3D",
-    "1w": "1W",
-    "1mth": "1M",
-}
+SUPPORTED_TICKER_BARS: dict[str, str] = {"3m": "3m"}
 
 
 def normalize_bar(value: str) -> str:
@@ -53,13 +37,12 @@ async def get_ticker(inst_id: str, bar: str | None = None) -> dict[str, Any]:
 
     Parameters:
     - `inst_id`: 交易产品 ID（如 `BTC-USDT-SWAP`），必填，视图获取对应订单簿/价格。
-    - `bar`: 可选的 K 线周期（如 `1m`、`5m`、`1H`、`1D`），未提供时默认使用 `3m`。
+    - `bar`: 兼容保留，但会被忽略并强制使用 `3m`（传入其他值将报错）。
 
     Example:
     ```json
     {
-      "inst_id": "BTC-USDT-SWAP",
-      "bar": "5m"
+      "inst_id": "BTC-USDT-SWAP"
     }
     ```
     """
@@ -113,7 +96,7 @@ class MultiTickerItem(BaseModel):
     inst_id: str = Field(..., description="交易产品 ID，例如 BTC-USDT-SWAP")
     bars: list[str] = Field(
         default_factory=lambda: [DEFAULT_TICKER_BAR],
-        description="需要返回的 bar 周期，默认 ['3m']",
+        description="需要返回的 bar 周期，固定为 ['3m']",
         min_length=1,
     )
 
@@ -134,15 +117,14 @@ async def get_multi_ticker(payload: MultiTickerPayload) -> dict[str, Any]:
     批量获取多个合约/周期的最新行情。
 
     Parameters:
-    - `requests`: 数组，每个元素包含 `inst_id` 以及可选的 `bars`（数组）。如果未提供 `bars` 列表，
-      会自动使用 `['3m']`。
+    - `requests`: 数组，每个元素包含 `inst_id` 以及可选的 `bars`（数组）。`bars` 仅允许 `['3m']`；
+      如提供其他周期将报错。
 
     Response:
     ```json
     {
       "results": [
-        {"instId": "BTC-USDT-SWAP", "bar": "1m", "ticker": {...}},
-        {"instId": "BTC-USDT-SWAP", "bar": "5m", "error": "..." }
+        {"instId": "BTC-USDT-SWAP", "bar": "3m", "ticker": {...}}
       ]
     }
     ```
