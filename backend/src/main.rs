@@ -15,14 +15,13 @@ mod server_config;
 mod settings;
 mod strategy_trigger;
 mod types;
+mod volatility_trigger;
 
 use crate::agent_subscriber::{
     is_analysis_busy_error, is_websocket_uninitialized_error, run_agent_events_listener,
     trigger_analysis,
 };
 use crate::db::init_database;
-use crate::okx::error::OkxError;
-use crate::okx::models::Ticker;
 use crate::okx::OkxRestClient;
 use crate::routes::{api_routes, run_balance_snapshot_loop};
 use crate::server_config::load_app_config;
@@ -30,7 +29,6 @@ use crate::settings::CONFIG;
 use crate::strategy_trigger::{PriceDeltaSnapshot, TriggerSource};
 use anyhow::Result;
 use axum::Router;
-use reqwest::StatusCode;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -170,7 +168,15 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
         match okx_client {
             Some(client) => {
                 let notify = wake_signal.clone();
-                tokio::spawn(async move { run_volatility_trigger_loop(client, notify).await });
+                let vol_config = volatility_trigger::VolatilityTriggerConfig {
+                    symbols: CONFIG.okx_inst_ids().to_vec(),
+                    poll_interval: VOLATILITY_POLL_INTERVAL,
+                    threshold_bps: CONFIG.strategy_vol_threshold_bps(),
+                    window_secs: CONFIG.strategy_vol_window_secs(),
+                    max_attempts: CONFIG.okx_http_max_retries().max(1),
+                    retry_backoff: duration_from_secs(CONFIG.okx_http_retry_backoff_secs()),
+                };
+                volatility_trigger::spawn_volatility_trigger(client, notify, vol_config);
             }
             None => warn!("volatility trigger enabled but OKX client is unavailable"),
         }
@@ -282,98 +288,6 @@ async fn run_strategy_analysis_for_symbol(
                 return AnalysisRunResult::Failed { error: err };
             }
         }
-    }
-}
-
-async fn run_volatility_trigger_loop(client: OkxRestClient, notify: Arc<Notify>) {
-    let symbols = CONFIG.okx_inst_ids().to_vec();
-    if symbols.is_empty() {
-        warn!("volatility trigger loop started with empty symbol list");
-        return;
-    }
-    info!(
-        poll_secs = VOLATILITY_POLL_INTERVAL.as_secs(),
-        "volatility trigger loop enabled"
-    );
-    let threshold_bps = CONFIG.strategy_vol_threshold_bps();
-    let mut interval = tokio::time::interval(VOLATILITY_POLL_INTERVAL);
-    let ticker_retry_delay = duration_from_secs(CONFIG.okx_http_retry_backoff_secs());
-    let ticker_max_attempts = CONFIG.okx_http_max_retries().max(1);
-    loop {
-        interval.tick().await;
-        for symbol in &symbols {
-            match fetch_ticker_with_retry(&client, symbol, ticker_max_attempts, ticker_retry_delay)
-                .await
-            {
-                Ok(ticker) => {
-                    let Ok(price) = ticker.last.parse::<f64>() else {
-                        warn!(value = %ticker.last, %symbol, "failed to parse ticker price");
-                        continue;
-                    };
-                    if let Some(info) = strategy_trigger::record_tick_price(
-                        symbol,
-                        price,
-                        threshold_bps,
-                        CONFIG.strategy_vol_window_secs(),
-                    )
-                    .await
-                    {
-                        info!(
-                            %symbol,
-                            price_now = info.price_now,
-                            base_price = info.base_price,
-                            delta_bps = info.delta_bps,
-                            "volatility threshold exceeded; scheduling analysis"
-                        );
-                        notify.notify_waiters();
-                    }
-                }
-                Err(err) => {
-                    warn!(error = ?err, %symbol, "failed to fetch ticker for volatility trigger");
-                }
-            }
-        }
-    }
-}
-
-async fn fetch_ticker_with_retry(
-    client: &OkxRestClient,
-    symbol: &str,
-    max_attempts: usize,
-    retry_delay: Duration,
-) -> Result<Ticker> {
-    let mut attempts = 0;
-    loop {
-        attempts += 1;
-        match client.get_ticker(symbol).await {
-            Ok(ticker) => return Ok(ticker),
-            Err(err) if attempts < max_attempts && should_retry_ticker_error(&err) => {
-                tracing::debug!(
-                    error = ?err,
-                    %symbol,
-                    attempt = attempts,
-                    "transient ticker fetch failure; retrying"
-                );
-                if !retry_delay.is_zero() {
-                    tokio::time::sleep(retry_delay).await;
-                }
-            }
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-fn should_retry_ticker_error(err: &anyhow::Error) -> bool {
-    let Some(okx_err) = err.downcast_ref::<OkxError>() else {
-        return false;
-    };
-
-    match okx_err {
-        OkxError::HttpClient(inner) => inner.is_connect() || inner.is_timeout(),
-        OkxError::HttpStatusWithBody { status, .. } => {
-            status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
-        }
-        _ => false,
     }
 }
 
