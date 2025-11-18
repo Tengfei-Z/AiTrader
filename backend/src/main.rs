@@ -21,6 +21,8 @@ use crate::agent_subscriber::{
     trigger_analysis,
 };
 use crate::db::init_database;
+use crate::okx::error::OkxError;
+use crate::okx::models::Ticker;
 use crate::okx::OkxRestClient;
 use crate::routes::{api_routes, run_balance_snapshot_loop};
 use crate::server_config::load_app_config;
@@ -28,6 +30,7 @@ use crate::settings::CONFIG;
 use crate::strategy_trigger::{PriceDeltaSnapshot, TriggerSource};
 use anyhow::Result;
 use axum::Router;
+use reqwest::StatusCode;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -294,10 +297,14 @@ async fn run_volatility_trigger_loop(client: OkxRestClient, notify: Arc<Notify>)
     );
     let threshold_bps = CONFIG.strategy_vol_threshold_bps();
     let mut interval = tokio::time::interval(VOLATILITY_POLL_INTERVAL);
+    let ticker_retry_delay = duration_from_secs(CONFIG.okx_http_retry_backoff_secs());
+    let ticker_max_attempts = CONFIG.okx_http_max_retries().max(1);
     loop {
         interval.tick().await;
         for symbol in &symbols {
-            match client.get_ticker(symbol).await {
+            match fetch_ticker_with_retry(&client, symbol, ticker_max_attempts, ticker_retry_delay)
+                .await
+            {
                 Ok(ticker) => {
                     let Ok(price) = ticker.last.parse::<f64>() else {
                         warn!(value = %ticker.last, %symbol, "failed to parse ticker price");
@@ -326,6 +333,55 @@ async fn run_volatility_trigger_loop(client: OkxRestClient, notify: Arc<Notify>)
                 }
             }
         }
+    }
+}
+
+async fn fetch_ticker_with_retry(
+    client: &OkxRestClient,
+    symbol: &str,
+    max_attempts: usize,
+    retry_delay: Duration,
+) -> Result<Ticker> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match client.get_ticker(symbol).await {
+            Ok(ticker) => return Ok(ticker),
+            Err(err) if attempts < max_attempts && should_retry_ticker_error(&err) => {
+                tracing::debug!(
+                    error = ?err,
+                    %symbol,
+                    attempt = attempts,
+                    "transient ticker fetch failure; retrying"
+                );
+                if !retry_delay.is_zero() {
+                    tokio::time::sleep(retry_delay).await;
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn should_retry_ticker_error(err: &anyhow::Error) -> bool {
+    let Some(okx_err) = err.downcast_ref::<OkxError>() else {
+        return false;
+    };
+
+    match okx_err {
+        OkxError::HttpClient(inner) => inner.is_connect() || inner.is_timeout(),
+        OkxError::HttpStatusWithBody { status, .. } => {
+            status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
+        }
+        _ => false,
+    }
+}
+
+fn duration_from_secs(secs: f64) -> Duration {
+    if secs <= 0.0 {
+        Duration::from_secs(0)
+    } else {
+        Duration::from_secs_f64(secs)
     }
 }
 

@@ -25,6 +25,10 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default = "default_okx_http_max_retries")]
+    pub okx_http_max_retries: usize,
+    #[serde(default = "default_okx_http_retry_backoff_secs")]
+    pub okx_http_retry_backoff_secs: f64,
     #[serde(default = "default_okx_base_url")]
     pub okx_base_url: String,
     pub okx_credentials: Option<OkxCredentials>,
@@ -65,6 +69,16 @@ impl AppConfig {
         let okx_credentials =
             load_okx_credentials("OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE");
 
+        let okx_http_max_retries = env::var("OKX_HTTP_MAX_RETRIES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or_else(default_okx_http_max_retries);
+        let okx_http_retry_backoff_secs = env::var("OKX_HTTP_RETRY_BACKOFF")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| *value >= 0.0)
+            .unwrap_or_else(default_okx_http_retry_backoff_secs);
         let okx_base_url = env::var("OKX_BASE_URL").unwrap_or_else(|_| default_okx_base_url());
         let okx_use_simulated = env_bool("OKX_USE_SIMULATED", true);
         let okx_inst_ids = env::var("OKX_INST_IDS")
@@ -115,6 +129,8 @@ impl AppConfig {
             .unwrap_or_else(default_strategy_vol_window_secs);
 
         Ok(Self {
+            okx_http_max_retries,
+            okx_http_retry_backoff_secs,
             okx_base_url,
             okx_credentials,
             agent,
@@ -155,6 +171,14 @@ impl AppConfig {
 
     pub fn okx_use_simulated(&self) -> bool {
         self.okx_use_simulated
+    }
+
+    pub fn okx_http_max_retries(&self) -> usize {
+        self.okx_http_max_retries
+    }
+
+    pub fn okx_http_retry_backoff_secs(&self) -> f64 {
+        self.okx_http_retry_backoff_secs
     }
 
     pub fn okx_inst_ids(&self) -> &[String] {
@@ -204,6 +228,14 @@ fn env_var_non_empty(key: &str) -> Result<String, env::VarError> {
 
 fn default_okx_base_url() -> String {
     "https://www.okx.com".to_string()
+}
+
+fn default_okx_http_max_retries() -> usize {
+    3
+}
+
+fn default_okx_http_retry_backoff_secs() -> f64 {
+    0.5
 }
 
 fn default_okx_use_simulated() -> bool {
