@@ -70,11 +70,6 @@ const StrategyChatCard = ({
           />
         </div>
       )}
-      <div className="strategy-chat-actions">
-        <Typography.Text type="secondary">
-          对话由大模型生成，建议在执行前再次确认关键指令。
-        </Typography.Text>
-      </div>
     </Flex>
   );
 
