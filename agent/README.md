@@ -69,12 +69,43 @@ agent/
 
 | 名称 | 说明 |
 | --- | --- |
-| `get_ticker` | 获取指定交易对实时行情 |
+| `get_ticker` | 获取指定交易对实时行情，可按需指定 `bar` 周期 |
+| `get_multi_ticker` | 批量获取多个合约/周期的行情快照 |
 | `get_instrument_specs` | 查询合约规格（lotSz/minSz/tickSz），确保下单数量满足最小交易单位 |
 | `get_account_balance` | 获取账户余额 |
 | `get_positions` | 获取持仓信息 |
 | `place_order` | 提交交易订单 |
 | `cancel_order` | 撤销交易订单 |
+
+`get_ticker(inst_id, bar=None)` 支持将 `bar` 设为 `1m`、`3m`、`5m`、`15m`、`30m`、`1H`、`2H`、`4H`、`6H`、`12H`、`1D`、`2D`、`3D`、`1W` 或 `1M`。若省略该参数则默认使用 `3m`。
+
+`get_multi_ticker({ "requests": [...] })` 接受一个数组，每个元素包含 `inst_id` 以及可选的 `bars` 列表（默认 `["3m"]`）。例如：
+
+```json
+{
+  "requests": [
+    {"inst_id": "BTC-USDT-SWAP", "bars": ["1m", "5m", "1H"]},
+    {"inst_id": "ETH-USDT-SWAP"}  // 只需默认 3m 时可省略 bars
+  ]
+}
+```
+
+响应会并发拉取所有组合，返回：
+
+```json
+{
+  "success": true,
+  "data": {
+    "results": [
+      {"instId": "BTC-USDT-SWAP", "bar": "1m", "ticker": {...}},
+      {"instId": "BTC-USDT-SWAP", "bar": "5m", "ticker": {...}},
+      {"instId": "ETH-USDT-SWAP", "bar": "3m", "ticker": {...}}
+    ]
+  }
+}
+```
+
+若某个子请求失败（例如合约不存在或 `bar` 非法），该项目会被跳过，仅在全部失败时整体抛出错误。
 
 ### `place_order` 工具详细说明
 
@@ -183,7 +214,6 @@ FastMCP 工具内部直接调用 OKX REST：
 - `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE`：OKX 凭证（支持模拟盘）  
 - `OKX_BASE_URL`：OKX API 基地址  
 - `OKX_USE_SIMULATED`：是否对请求附带 `X-SIMULATED-TRADING: 1`（默认开启，设为 `false` 走实盘）  
-- `OKX_TICKER_BAR`：MCP `get_ticker` 使用的 K 线周期（默认 `3m`，可改为 `1m`/`5m`/`1H`/`1D` 等）  
 - `AGENT_HOST` / `AGENT_PORT`：FastAPI 监听地址  
 - `AGENT_BASE_URL`：提供给 Rust 的 Agent 地址（后端读取），必须是完整的 WebSocket URL（例如 `ws://localhost:8001/agent/events/ws`），Rust 会按原样用它与 `/agent/events/ws` 建立连接以接收策略执行后的 `task_result` 事件  
 - `LOG_FILE`：日志文件路径，默认 `log/agent.log`

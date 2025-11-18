@@ -19,6 +19,8 @@ from .logging_config import get_logger
 class OKXClient:
     """Minimal async client for OKX REST API."""
 
+    DEFAULT_TICKER_BAR = "3m"
+
     def __init__(self) -> None:
         self._settings = get_settings()
 
@@ -126,7 +128,7 @@ class OKXClient:
     async def get_ticker(self, inst_id: str, *, bar: str | None = None) -> Any:
         """Fetch the latest candle snapshot and project it as a ticker."""
 
-        resolved_bar = bar or self._settings.okx_ticker_bar
+        resolved_bar = bar or self.DEFAULT_TICKER_BAR
         payload = await self._request(
             "GET",
             "/api/v5/market/candles",
