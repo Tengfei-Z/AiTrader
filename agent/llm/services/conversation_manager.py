@@ -51,4 +51,4 @@ class ConversationManager:
             self._sessions.pop(session_id, None)
 
 
-conversation_manager = ConversationManager()
+conversation_manager = ConversationManager(max_history=2)

@@ -122,10 +122,12 @@ _SYSTEM_PROMPT = """你是一个专业的加密货币交易 AI，负责独立分
 
 class StrategyAnalyzer:
     async def analyze(self, request: AnalysisRequest) -> AnalysisResponse:
-        history = await conversation_manager.get_history("", limit=5)
+        session_id = request.symbol or "__default__"
+        history = await conversation_manager.get_history(session_id, limit=2)
         logger.info(
             "analysis_history_loaded",
             history_messages=len(history),
+            session_id=session_id,
             symbol=request.symbol,
         )
 
@@ -265,7 +267,7 @@ class StrategyAnalyzer:
         )
 
         await conversation_manager.add_message(
-            "",
+            session_id,
             ChatMessage(role="assistant", content=summary),
         )
 
