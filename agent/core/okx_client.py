@@ -126,10 +126,21 @@ class OKXClient:
 
         return await self._request("GET", "/api/v5/account/balance")
 
-    async def get_positions(self, inst_type: str | None = None) -> Any:
+    async def get_positions(
+        self,
+        inst_type: str | None = None,
+        inst_id: str | None = None,
+    ) -> Any:
         """Fetch current positions."""
 
-        params = {"instType": inst_type} if inst_type else None
+        params: dict[str, Any] = {}
+        if inst_type:
+            params["instType"] = inst_type
+        if inst_id:
+            params["instId"] = inst_id
+
+        if not params:
+            params = None
         return await self._request("GET", "/api/v5/account/positions", params=params)
 
     async def get_open_orders(self, inst_type: str | None = None) -> Any:

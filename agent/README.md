@@ -76,6 +76,17 @@ agent/
 | `cancel_order` | 撤销交易订单 |
 | `get_order_history` | 查询历史订单记录 |
 
+### `get_positions` 调用说明
+
+`get_positions` 与 OKX `/api/v5/account/positions` 对齐，支持以下可选参数：
+
+| 字段 | 描述 |
+| --- | --- |
+| `inst_type` | 产品类型（如 `SWAP`/`SPOT`），为空则返回所有类型 |
+| `inst_id` | 精确的合约 ID（如 `BNB-USDT-SWAP`），用于只拉取某一支仓位 |
+
+LLM 若在特定合约上下文中工作，应显式传入 `inst_id`，以免拉取其它合约的仓位影响推理。
+
 ### `place_order` 工具详细说明
 
 `place_order` 对应 OKX `/api/v5/trade/order`，参数完全可选地对齐 OKX REST 规范，FastMCP 通过 Pydantic `PlaceOrderInput` 提供字段说明与 schema：
