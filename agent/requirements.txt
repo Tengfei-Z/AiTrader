@@ -2,7 +2,7 @@ fastapi==0.111.0
 uvicorn[standard]==0.34.0
 httpx==0.28.1
 structlog==24.1.0
-pydantic[email]==2.12.1
+pydantic[email]==2.12.2
 python-dotenv==1.1.0
 fastmcp==2.13.0.2
 tenacity==8.2.3
