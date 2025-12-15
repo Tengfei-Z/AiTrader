@@ -64,15 +64,18 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
    - 按需调整 `STRATEGY_*` 参数（定时/波动/窗口）与 `OKX_INST_IDS`。
 3. **启动服务**
    ```bash
+   cd /home/ubuntu/AiTrader/agent && source venv/bin/activate
+   
    # Python Agent
    cd agent
    uv pip install -r requirements.txt
-   uvicorn llm.main:app --host 0.0.0.0 --port 8001
+   cd ..
+   uvicorn agent.llm.main:app --host 0.0.0.0 --port 8001
+   # uvicorn llm.main:app --host 0.0.0.0 --port 8001
    
    cd ~/AiTrader/
    export PATH="$HOME/.local/bin:$PATH"
    export PYTHONPATH=$PWD:$PYTHONPATH
-   source venv/bin/activate
    uvicorn agent.llm.main:app --host 0.0.0.0 --port 8001
 
    # Rust API
@@ -83,6 +86,22 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
    cd frontend
    pnpm install
    pnpm dev
+   ```
+
+   ```bash
+   VPN
+   # 1. 打开clash代理
+   clashon
+   clashui
+   进入web，选择美国节点
+   
+   # 2. 确保在当前窗口设置了代理
+   export https_proxy=http://127.0.0.1:7890
+   export http_proxy=http://127.0.0.1:7890
+   export all_proxy=socks5://127.0.0.1:7890
+
+   # 3. 再次验证（必须看到 OKX 的 HTML 输出才算通过）
+   curl -I https://www.okx.com
    ```
 4. **验证**
    - 打开前端查看账户/行情，并在“策略对话”中触发一次手动运行。
