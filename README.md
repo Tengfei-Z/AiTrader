@@ -94,6 +94,12 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
    clashon
    clashui
    进入web，选择美国节点
+
+   Tumx
+   tmux attach -t myagent
+   tmux attach -t myagent1
+   tmux attach -t myagent2
+
    
    # 2. 确保在当前窗口设置了代理
    export https_proxy=http://127.0.0.1:7890
