@@ -58,7 +58,9 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
 1. **安装依赖**
    sudo apt install python3.12-venv
    sudo python3 -m venv venv && source venv/bin/activate
+
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh  && source $HOME/.cargo/env
+
    sudo apt install -y postgresql postgresql-client
       sudo su - postgres
       psql
@@ -69,11 +71,20 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
       ALTER ROLE aitrader_user SET search_path TO aitrader, public;
       \q
       exit
+
    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
    source $HOME/.bashrc  # 如果是zsh则用source $HOME/.zshrc
+
    nvm install 20
    nvm alias default 20
 
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source /root/.cargo/env
+   nano /root/.bashrc
+   在文件末尾添加以下内容（复制粘贴）
+   export PATH="/root/.cargo/bin:$PATH"
+
+   
    - Rust stable、cargo、PostgreSQL。
    - Python 3.11+（建议使用 `uv` 或 `pip` 创建虚拟环境）。
    - Node.js 18+ 与 pnpm。
