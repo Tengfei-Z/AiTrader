@@ -56,6 +56,24 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
 ## 快速上手
 
 1. **安装依赖**
+   sudo apt install python3.12-venv
+   sudo python3 -m venv venv && source venv/bin/activate
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh  && source $HOME/.cargo/env
+   sudo apt install -y postgresql postgresql-client
+      sudo su - postgres
+      psql
+      ALTER USER aitrader_user WITH PASSWORD '123456';
+      CREATE DATABASE aitrader OWNER aitrader_user;
+      \c aitrader
+      CREATE SCHEMA aitrader AUTHORIZATION aitrader_user;
+      ALTER ROLE aitrader_user SET search_path TO aitrader, public;
+      \q
+      exit
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+   source $HOME/.bashrc  # 如果是zsh则用source $HOME/.zshrc
+   nvm install 20
+   nvm alias default 20
+
    - Rust stable、cargo、PostgreSQL。
    - Python 3.11+（建议使用 `uv` 或 `pip` 创建虚拟环境）。
    - Node.js 18+ 与 pnpm。
@@ -64,7 +82,7 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
    - 按需调整 `STRATEGY_*` 参数（定时/波动/窗口）与 `OKX_INST_IDS`。
 3. **启动服务**
    ```bash
-   cd /home/ubuntu/AiTrader/agent && source venv/bin/activate
+   cd /home/ubuntu/Workspcace/AiTrader && source venv/bin/activate
    
    # Python Agent
    cd agent
