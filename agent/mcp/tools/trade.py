@@ -19,10 +19,10 @@ class PlaceOrderInput(BaseModel):
     inst_id: str = Field(..., alias="instId", description="交易产品 ID，例如 BTC-USDT-SWAP")
     td_mode: str = Field(..., alias="tdMode", description="交易模式，cross/isolated/cash")
     side: Literal["buy", "sell"] = Field(..., description="买卖方向，buy/sell")
-    pos_side: Literal["long", "short"] | None = Field(
+    pos_side: Literal["long", "short", "net"] | None = Field(
         None,
         alias="posSide",
-        description="持仓方向（long/short），SWAP 合约必填",
+        description="持仓方向（long/short/net），SWAP 合约必填",
     )
     ord_type: str = Field(..., alias="ordType", description="订单类型，limit/market 等")
     size: str = Field(..., alias="sz", description="下单数量")
@@ -35,6 +35,7 @@ class PlaceOrderInput(BaseModel):
         description="附加算法单数组（例如止盈/止损），可选，需手动提供完整字段。",
     )
     reduce_only: bool | None = Field(None, alias="reduceOnly", description="是否只减仓")
+
 
 class CancelOrderInput(BaseModel):
     """撤单参数，至少提供 OKX 订单 ID 或客户端订单 ID。"""
@@ -69,7 +70,7 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
         "instId": "BTC-USDT-SWAP",
         "tdMode": "cross",
         "side": "buy",
-        "posSide": "long",
+        "posSide": "net",
         "ordType": "market",
         "sz": "0.1",
         "lever": "5"
@@ -80,6 +81,13 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
 
+    # 根据交易模式自动调整posSide参数
+    # 对于全仓模式(cross)，posSide必须为"net"
+    # 对于逐仓模式(isolated)，posSide可以是"long"或"short"
+    td_mode = payload.get("tdMode", "").lower()
+    if td_mode == "cross" and "posSide" in payload:
+        payload["posSide"] = "net"
+    
     if order.lever:
         td_mode_normalized = order.td_mode.lower()
         if td_mode_normalized in {"cross", "isolated"}:
