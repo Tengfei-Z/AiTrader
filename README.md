@@ -94,23 +94,32 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
 3. **启动服务**
    ```bash
    cd /home/ubuntu/Workspcace/AiTrader && source venv/bin/activate
-   
+   ```bash
+
+   ```bash
    # Python Agent
    cd agent
    uv pip install -r requirements.txt
    cd ..
    uvicorn agent.llm.main:app --host 0.0.0.0 --port 8001
    # uvicorn llm.main:app --host 0.0.0.0 --port 8001
-   
+   ```bash
+
+   ```bash
    cd ~/AiTrader/
    export PATH="$HOME/.local/bin:$PATH"
    export PYTHONPATH=$PWD:$PYTHONPATH
    uvicorn agent.llm.main:app --host 0.0.0.0 --port 8001
+   ```bash
 
+   ```bash
    # Rust API
-   cd backend
+   cd /home/ubuntu/Workspcace/AiTrader/backend
+   export $(grep -v '^#' .env | xargs)
    cargo run
-
+   ```bash 
+   
+   ```bash
    # React 前端
    cd frontend
    pnpm install
