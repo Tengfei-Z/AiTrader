@@ -51,3 +51,5 @@ __pycache__/
 agent/.mypy_cache/
 agent/.pytest_cache/
 agent/.ruff_cache/
+venv/
+venv/
