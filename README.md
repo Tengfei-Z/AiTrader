@@ -131,6 +131,8 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
    # 1. 打开clash代理
    clashon
    clashui
+   http://101.35.245.230:9090/ui
+   😼 当前密钥：NiqjpK
    进入web，选择美国节点
 
    Tumx
