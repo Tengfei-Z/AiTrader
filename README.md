@@ -123,7 +123,7 @@ AiTrader 是一个围绕 OKX 生态打造的量化交易平台。系统将「交
    # React 前端
    cd frontend
    pnpm install
-   pnpm dev
+   pnpm dev --host
    ```
 
    ```bash
