@@ -13,6 +13,7 @@ mod order_sync;
 mod routes;
 mod server_config;
 mod settings;
+mod smart_money_trigger;
 mod strategy_trigger;
 mod types;
 mod volatility_trigger;
@@ -165,7 +166,7 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
     let wake_signal = Arc::new(Notify::new());
 
     if volatility_enabled {
-        match okx_client {
+        match okx_client.clone() {
             Some(client) => {
                 let notify = wake_signal.clone();
                 let vol_config = volatility_trigger::VolatilityTriggerConfig {
@@ -184,6 +185,21 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
         if !schedule_enabled {
             run_startup_analyses(interval).await;
         }
+    }
+
+    // Always start smart money trigger if OKX client is available
+    if let Some(client) = okx_client.clone() {
+        let notify = wake_signal.clone();
+        let sm_config = smart_money_trigger::SmartMoneyTriggerConfig {
+            symbols: CONFIG.okx_inst_ids().to_vec(),
+            poll_interval: Duration::from_secs(60), // 检查一次 K 线的时间间隔 (1分钟)
+            signal_cooldown: Duration::from_secs(15 * 60),
+            max_attempts: CONFIG.okx_http_max_retries().max(1) as u32,
+            retry_backoff: duration_from_secs(CONFIG.okx_http_retry_backoff_secs()),
+            bar: "15m".to_string(),
+            limit: 100,
+        };
+        smart_money_trigger::spawn_smart_money_trigger(client, notify, sm_config);
     }
 
     loop {
@@ -215,10 +231,11 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
             continue;
         }
 
-        for (symbol, source) in due_symbols {
+        for (symbol, source, trigger_context) in due_symbols {
             let result = run_strategy_analysis_for_symbol(
                 &symbol,
                 source,
+                trigger_context.as_deref(),
                 WS_RETRY_DELAY,
                 WS_RETRY_MAX_ATTEMPTS,
             )
@@ -244,12 +261,13 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
 async fn run_strategy_analysis_for_symbol(
     symbol: &str,
     source: TriggerSource,
+    trigger_context: Option<&str>,
     ws_retry_delay: Duration,
     ws_retry_max_attempts: usize,
 ) -> AnalysisRunResult {
     let mut attempts = 0;
     loop {
-        match trigger_analysis(Some(symbol)).await {
+        match trigger_analysis(Some(symbol), trigger_context).await {
             Ok(result) => {
                 return AnalysisRunResult::Success {
                     response_symbol: result.symbol,
@@ -309,6 +327,7 @@ async fn run_startup_analyses(interval: Duration) {
         let result = run_strategy_analysis_for_symbol(
             &symbol,
             TriggerSource::Volatility,
+            Some("startup volatility-mode analysis"),
             WS_RETRY_DELAY,
             WS_RETRY_MAX_ATTEMPTS,
         )

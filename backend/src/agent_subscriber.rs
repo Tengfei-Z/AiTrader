@@ -46,7 +46,10 @@ type PendingAnalyses = Arc<Mutex<VecDeque<PendingAnalysis>>>;
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum OutgoingMessage {
-    TriggerAnalysis { symbol: Option<String> },
+    TriggerAnalysis {
+        symbol: Option<String>,
+        trigger_context: Option<String>,
+    },
 }
 
 /// 从 Agent 接收的分析结果
@@ -151,7 +154,10 @@ pub async fn run_agent_events_listener() {
 }
 
 /// 触发策略分析（供其他模块调用）
-pub async fn trigger_analysis(symbol: Option<&str>) -> Result<AnalysisResult, String> {
+pub async fn trigger_analysis(
+    symbol: Option<&str>,
+    trigger_context: Option<&str>,
+) -> Result<AnalysisResult, String> {
     let semaphore = Lazy::force(&ANALYSIS_PERMIT).clone();
     let permit = match semaphore.try_acquire_owned() {
         Ok(permit) => permit,
@@ -161,13 +167,20 @@ pub async fn trigger_analysis(symbol: Option<&str>) -> Result<AnalysisResult, St
         }
     };
 
-    let result = trigger_analysis_inner(symbol.map(|s| s.to_string())).await;
+    let result = trigger_analysis_inner(
+        symbol.map(|s| s.to_string()),
+        trigger_context.map(|value| value.to_string()),
+    )
+    .await;
     drop(permit);
 
     result
 }
 
-async fn trigger_analysis_inner(symbol: Option<String>) -> Result<AnalysisResult, String> {
+async fn trigger_analysis_inner(
+    symbol: Option<String>,
+    trigger_context: Option<String>,
+) -> Result<AnalysisResult, String> {
     let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
     let pending = PENDING_ANALYSES
         .get()
@@ -185,7 +198,10 @@ async fn trigger_analysis_inner(symbol: Option<String>) -> Result<AnalysisResult
     }
 
     // 发送触发消息
-    if let Err(_) = sender.send(OutgoingMessage::TriggerAnalysis { symbol }) {
+    if let Err(_) = sender.send(OutgoingMessage::TriggerAnalysis {
+        symbol,
+        trigger_context,
+    }) {
         remove_pending_by_id(pending.clone(), request_id).await;
         return Err("failed to send trigger message".to_string());
     }

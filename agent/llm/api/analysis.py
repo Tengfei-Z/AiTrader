@@ -15,6 +15,7 @@ async def analyze_market(request: AnalysisRequest) -> AnalysisResponse:
     logger.info(
         "analysis_request_received",
         symbol=request.symbol,
+        trigger_context=bool(request.trigger_context),
     )
     try:
         response = await strategy_analyzer.analyze(request)

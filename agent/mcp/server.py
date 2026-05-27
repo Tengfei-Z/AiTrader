@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from fastmcp.exceptions import NotFoundError
 from fastmcp.tools.tool import ToolResult
 
+from ..core.exceptions import ExternalServiceError, is_retryable_external_error
 from ..core.logging_config import get_logger
 from .registry import mcp
 
@@ -35,14 +36,35 @@ async def call_tool(name: str, arguments: Mapping[str, Any]) -> Any:
         tool_result = await mcp._tool_manager.call_tool(name, dict(arguments))
     except NotFoundError as exc:  # pragma: no cover - defensive guard
         raise KeyError(f"Unknown tool: {name}") from exc
-    except Exception:
-        # FastMCP 默认把堆栈写到 stderr，落不到我们的日志中，这里补一份方便排障。
-        logger.exception(
+    except Exception as exc:
+        external_error = _find_cause(exc, ExternalServiceError)
+        reported_error = external_error or _root_cause(exc)
+        if external_error is not None:
+            logger.warning(
+                "mcp_tool_call_external_failed",
+                name=name,
+                arguments=arguments,
+                error_type=type(reported_error).__name__,
+                error=str(reported_error),
+            )
+        else:
+            logger.exception(
+                "mcp_tool_call_failed",
+                name=name,
+                arguments=arguments,
+            )
+
+        return _serialize_tool_error(
             "mcp_tool_call_failed",
             name=name,
-            arguments=arguments,
+            exc=exc,
+            reported_error=reported_error,
+            retryable=(
+                is_retryable_external_error(external_error)
+                if external_error is not None
+                else False
+            ),
         )
-        raise
 
     return _serialize_tool_result(tool_result)
 
@@ -97,3 +119,58 @@ def _serialize_tool_result(tool_result: ToolResult) -> Any:
     if len(serialised_blocks) == 1:
         return serialised_blocks[0]
     return serialised_blocks
+
+
+def _root_cause(exc: BaseException) -> BaseException:
+    """Return the deepest chained exception for concise tool error reporting."""
+
+    return _exception_chain(exc)[-1]
+
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """Return the exception chain from wrapper to root cause."""
+
+    current = exc
+    seen: set[int] = set()
+    chain = [current]
+    while True:
+        next_exc = current.__cause__ or current.__context__
+        if next_exc is None or id(next_exc) in seen:
+            return chain
+        seen.add(id(current))
+        current = next_exc
+        chain.append(current)
+
+
+def _find_cause[T: BaseException](
+    exc: BaseException,
+    exc_type: type[T],
+) -> T | None:
+    """Return the first exception in the chain matching ``exc_type``."""
+
+    for current in _exception_chain(exc):
+        if isinstance(current, exc_type):
+            return current
+    return None
+
+
+def _serialize_tool_error(
+    code: str,
+    *,
+    name: str | None,
+    exc: BaseException,
+    reported_error: BaseException,
+    retryable: bool,
+) -> dict[str, Any]:
+    """Return a tool-compatible error payload instead of aborting analysis."""
+
+    return {
+        "ok": False,
+        "error": {
+            "code": code,
+            "tool": name,
+            "type": type(reported_error).__name__,
+            "message": str(reported_error) or str(exc),
+            "retryable": retryable,
+        },
+    }

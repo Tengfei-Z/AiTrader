@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 class AnalysisRequest(BaseModel):
     symbol: str | None = None
+    trigger_context: str | None = None
 
 
 class AnalysisResponse(BaseModel):

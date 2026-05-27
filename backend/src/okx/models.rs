@@ -25,6 +25,17 @@ pub struct Ticker {
     pub ts: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Kline {
+    pub timestamp: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+    pub volume_ccy: f64,
+}
+
 /// Create OKX-compliant signature for signed requests.
 pub fn sign_request(
     timestamp: &str,

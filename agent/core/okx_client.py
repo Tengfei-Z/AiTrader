@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,6 +25,42 @@ class OKXClient:
 
     def __init__(self) -> None:
         self._settings = get_settings()
+
+    def _proxy_url(self) -> str | None:
+        """Return the proxy URL to use for OKX HTTPS requests."""
+
+        return (
+            self._settings.https_proxy
+            or self._settings.all_proxy
+            or self._settings.http_proxy
+            or os.getenv("HTTPS_PROXY")
+            or os.getenv("https_proxy")
+            or os.getenv("ALL_PROXY")
+            or os.getenv("all_proxy")
+            or os.getenv("HTTP_PROXY")
+            or os.getenv("http_proxy")
+        )
+
+    def _format_transport_error(
+        self,
+        exc: Exception,
+        *,
+        method: str,
+        path: str,
+        params: httpx.QueryParams | None,
+    ) -> str:
+        """Build a useful transport error message; some httpx exceptions stringify empty."""
+
+        query = f"?{params}" if params else ""
+        detail = str(exc) or repr(exc)
+        proxy = self._proxy_url()
+        proxy_state = "configured" if proxy else "direct"
+        base_url = str(self._settings.okx_base_url).rstrip("/")
+        return (
+            f"{type(exc).__name__}: {detail}; "
+            f"request={method.upper()} {base_url}{path}{query}; "
+            f"proxy={proxy_state}"
+        )
 
     async def _request(
         self,
@@ -79,7 +116,9 @@ class OKXClient:
         for attempt in range(1, total_attempts + 1):
             try:
                 async with async_http_client(
-                    base_url=str(self._settings.okx_base_url), timeout=15.0
+                    base_url=str(self._settings.okx_base_url),
+                    timeout=15.0,
+                    proxy=self._proxy_url(),
                 ) as client:
                     response = await client.request(
                         method=method.upper(),
@@ -91,9 +130,15 @@ class OKXClient:
                 break
             except RETRYABLE_EXCEPTIONS as exc:
                 last_error = exc
+                error_message = self._format_transport_error(
+                    exc,
+                    method=method,
+                    path=path,
+                    params=request_params,
+                )
                 if attempt >= total_attempts:
                     raise ExternalServiceError(
-                        f"OKX request failed after {max_retries} retries: {exc}"
+                        f"OKX request failed after {max_retries} retries: {error_message}"
                     ) from exc
                 delay = base_delay * (2 ** (attempt - 1)) if base_delay else 0.0
                 logger.warning(
@@ -103,7 +148,7 @@ class OKXClient:
                     attempt=attempt,
                     max_retries=max_retries,
                     delay=delay,
-                    error=str(exc),
+                    error=error_message,
                 )
                 if delay > 0:
                     await asyncio.sleep(delay)

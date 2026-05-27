@@ -10,6 +10,7 @@ pub enum TriggerSource {
     Scheduled,
     Manual,
     Volatility,
+    SmartMoney,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct SymbolTriggerState {
     pub last_trigger_price: Option<f64>,
     pub last_tick_price: Option<f64>,
     pub pending_trigger: Option<TriggerSource>,
+    pub pending_trigger_context: Option<String>,
 }
 
 impl SymbolTriggerState {
@@ -38,6 +40,7 @@ impl SymbolTriggerState {
             last_trigger_price: None,
             last_tick_price: None,
             pending_trigger: None,
+            pending_trigger_context: None,
         }
     }
 }
@@ -64,17 +67,24 @@ pub async fn sync_symbol_states(symbols: &[String]) {
 }
 
 /// 返回当前需要执行的交易对及其触发来源。
-pub async fn due_symbols(now: Instant, schedule_enabled: bool) -> Vec<(String, TriggerSource)> {
+pub async fn due_symbols(
+    now: Instant,
+    schedule_enabled: bool,
+) -> Vec<(String, TriggerSource, Option<String>)> {
     let states = SYMBOL_STATES.read().await;
     states
         .iter()
         .filter_map(|(symbol, state)| {
             if let Some(source) = state.pending_trigger {
-                return Some((symbol.clone(), source));
+                return Some((
+                    symbol.clone(),
+                    source,
+                    state.pending_trigger_context.clone(),
+                ));
             }
 
             if schedule_enabled && state.next_scheduled_at <= now {
-                return Some((symbol.clone(), TriggerSource::Scheduled));
+                return Some((symbol.clone(), TriggerSource::Scheduled, None));
             }
 
             None
@@ -105,6 +115,7 @@ pub async fn mark_trigger_completion(
             state.last_trigger_source = Some(source);
             state.next_scheduled_at = next;
             state.pending_trigger = None;
+            state.pending_trigger_context = None;
             if let Some(price) = last_price {
                 state.last_trigger_price = Some(price);
             }
@@ -127,6 +138,27 @@ pub async fn mark_trigger_completion(
 pub async fn get_symbol_state(symbol: &str) -> Option<SymbolTriggerState> {
     let states = SYMBOL_STATES.read().await;
     states.get(symbol).cloned()
+}
+
+pub async fn trigger_symbol(
+    symbol: &str,
+    source: TriggerSource,
+    trigger_price: Option<f64>,
+    context: Option<String>,
+) -> anyhow::Result<()> {
+    let mut states = SYMBOL_STATES.write().await;
+    let state = match states.get_mut(symbol) {
+        Some(state) => state,
+        None => {
+            return Err(anyhow::anyhow!("unknown symbol {}", symbol));
+        }
+    };
+    state.pending_trigger = Some(source);
+    state.pending_trigger_context = context;
+    if let Some(price) = trigger_price {
+        state.last_tick_price = Some(price);
+    }
+    Ok(())
 }
 
 /// 记录最新行情价，并在满足阈值时返回触发信息。
@@ -175,6 +207,9 @@ pub async fn record_tick_price(
     }
 
     state.pending_trigger = Some(TriggerSource::Volatility);
+    state.pending_trigger_context = Some(format!(
+        "volatility_trigger: price moved {delta_bps:.2} bps from {base_price:.4} to {price:.4}"
+    ));
     state.next_scheduled_at = Instant::now();
 
     Some(PriceDeltaSnapshot {

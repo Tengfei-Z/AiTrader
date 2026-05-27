@@ -2,9 +2,10 @@
 
 from typing import Any
 
+from ...core.exceptions import ExternalServiceError
 from ...core.okx_client import okx_client
 from ..registry import mcp
-from .utils import wrap_response
+from .utils import wrap_external_error, wrap_response
 
 
 @mcp.tool(name="get_account_balance")
@@ -15,7 +16,10 @@ async def get_account_balance() -> dict[str, Any]:
     无需参数，返回全部币种的可用余额和冻结资金，可用于判断可用保证金与风险承受能力。
     """
 
-    response = await okx_client.get_account_balance()
+    try:
+        response = await okx_client.get_account_balance()
+    except ExternalServiceError as exc:
+        return wrap_external_error("get_account_balance", exc)
     return wrap_response(response)
 
 
@@ -34,5 +38,8 @@ async def get_positions(
     建议先调用此接口，明确当前方向（long/short）、数量与成本，用于决策是否加仓/减仓。
     """
 
-    response = await okx_client.get_positions(inst_type=inst_type, inst_id=inst_id)
+    try:
+        response = await okx_client.get_positions(inst_type=inst_type, inst_id=inst_id)
+    except ExternalServiceError as exc:
+        return wrap_external_error("get_positions", exc)
     return wrap_response(response)

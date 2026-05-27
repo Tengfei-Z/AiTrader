@@ -6,9 +6,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ...core.exceptions import ExternalServiceError
 from ...core.okx_client import okx_client
 from ..registry import mcp
-from .utils import wrap_response
+from .utils import wrap_external_error, wrap_response
 
 
 class PlaceOrderInput(BaseModel):
@@ -17,12 +18,12 @@ class PlaceOrderInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     inst_id: str = Field(..., alias="instId", description="交易产品 ID，例如 BTC-USDT-SWAP")
-    td_mode: str = Field(..., alias="tdMode", description="交易模式，cross/isolated/cash")
+    td_mode: str = Field("cross", alias="tdMode", description="交易模式，固定使用全仓 cross")
     side: Literal["buy", "sell"] = Field(..., description="买卖方向，buy/sell")
     pos_side: Literal["long", "short", "net"] | None = Field(
         None,
         alias="posSide",
-        description="持仓方向（long/short/net），SWAP 合约必填",
+        description="持仓方向，当前策略固定使用全仓 net",
     )
     ord_type: str = Field(..., alias="ordType", description="订单类型，limit/market 等")
     size: str = Field(..., alias="sz", description="下单数量")
@@ -59,7 +60,8 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
     """
     提交交易订单。
 
-    LLM 调用时只需明确基础字段（`instId`/`tdMode`/`side`/`posSide`/`sz`），止盈止损目前非必需；
+    LLM 调用时只需明确基础字段（`instId`/`side`/`sz`），工具会强制使用全仓 `tdMode=cross` 与 `posSide=net`；
+    `sz` 应按当前本金 all-in 规则由账户可用 USDT、杠杆、价格和合约规格计算，平仓/减仓单除外。
     若需附加算法单，可自行传入 `attachAlgoOrds`，每个条目需自备 `algoSide`/`algoOrdType`/`triggerPx`/`px` 等字段。
     自定义杠杆倍数时，额外提供 `lever`（例如 `10` 代表 10x），工具会在下单前调用 `/account/set-leverage` 保证目标倍数生效；不提供则沿用 OKX 账户当前设置。
 
@@ -81,24 +83,25 @@ async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
 
-    # 根据交易模式自动调整posSide参数
-    # 对于全仓模式(cross)，posSide必须为"net"
-    # 对于逐仓模式(isolated)，posSide可以是"long"或"short"
-    td_mode = payload.get("tdMode", "").lower()
-    if td_mode == "cross" and "posSide" in payload:
-        payload["posSide"] = "net"
+    # 策略测试固定使用 OKX 全仓模式；忽略模型传入的 isolated/cash。
+    payload["tdMode"] = "cross"
+    payload["posSide"] = "net"
     
     if order.lever:
-        td_mode_normalized = order.td_mode.lower()
-        if td_mode_normalized in {"cross", "isolated"}:
+        try:
             await okx_client.set_leverage(
                 inst_id=order.inst_id,
                 lever=order.lever,
-                mgn_mode=td_mode_normalized,
-                pos_side=order.pos_side if td_mode_normalized == "isolated" else None,
+                mgn_mode="cross",
+                pos_side=None,
             )
+        except ExternalServiceError as exc:
+            return wrap_external_error("place_order", exc)
 
-    response = await okx_client.place_order(payload)
+    try:
+        response = await okx_client.place_order(payload)
+    except ExternalServiceError as exc:
+        return wrap_external_error("place_order", exc)
     return wrap_response(response)
 
 
@@ -122,9 +125,12 @@ async def cancel_order_tool(order: CancelOrderInput) -> dict[str, Any]:
     """
 
     payload = order.model_dump(by_alias=True, exclude_none=True)
-    response = await okx_client.cancel_order(
-        inst_id=payload["instId"],
-        order_id=payload.get("ordId"),
-        client_order_id=payload.get("clOrdId"),
-    )
+    try:
+        response = await okx_client.cancel_order(
+            inst_id=payload["instId"],
+            order_id=payload.get("ordId"),
+            client_order_id=payload.get("clOrdId"),
+        )
+    except ExternalServiceError as exc:
+        return wrap_external_error("cancel_order", exc)
     return wrap_response(response)

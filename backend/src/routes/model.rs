@@ -128,7 +128,9 @@ enum ManualTriggerOutcome {
 async fn run_manual_analysis(symbol: &str) -> ManualTriggerOutcome {
     let mut attempts = 0;
     loop {
-        match agent_subscriber::trigger_analysis(Some(symbol)).await {
+        match agent_subscriber::trigger_analysis(Some(symbol), Some("manual model route request"))
+            .await
+        {
             Ok(response) => {
                 return ManualTriggerOutcome::Success {
                     response_symbol: response.symbol,

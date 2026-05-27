@@ -53,6 +53,21 @@ class AgentSettings(BaseSettings):
         ge=0.0,
         description="Base seconds for exponential backoff between OKX HTTP retries",
     )
+    http_proxy: str | None = Field(
+        None,
+        validation_alias=AliasChoices("HTTP_PROXY", "http_proxy"),
+        description="Optional HTTP proxy URL for outbound requests",
+    )
+    https_proxy: str | None = Field(
+        None,
+        validation_alias=AliasChoices("HTTPS_PROXY", "https_proxy"),
+        description="Optional HTTPS proxy URL for outbound requests",
+    )
+    all_proxy: str | None = Field(
+        None,
+        validation_alias=AliasChoices("ALL_PROXY", "all_proxy"),
+        description="Optional fallback proxy URL for outbound requests",
+    )
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE_CANDIDATES,

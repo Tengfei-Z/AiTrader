@@ -29,10 +29,16 @@ async def agent_event_socket(websocket: WebSocket) -> None:
                 if message_type == "trigger_analysis":
                     logger.info("收到策略分析请求")
                     symbol = data.get("symbol")
+                    trigger_context = data.get("trigger_context") or data.get("triggerContext")
                     
                     # 执行分析
                     try:
-                        result = await analyzer.analyze(AnalysisRequest(symbol=symbol))
+                        result = await analyzer.analyze(
+                            AnalysisRequest(
+                                symbol=symbol,
+                                trigger_context=trigger_context,
+                            )
+                        )
                         
                         # 发送分析结果
                         response = {

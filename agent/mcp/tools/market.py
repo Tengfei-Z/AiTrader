@@ -5,9 +5,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ...core.exceptions import ExternalServiceError
 from ...core.okx_client import okx_client
 from ..registry import mcp
-from .utils import wrap_response
+from .utils import wrap_external_error, wrap_response
 
 DEFAULT_TICKER_BAR = "3m"
 SUPPORTED_TICKER_BARS: dict[str, str] = {"3m": "3m"}
@@ -48,7 +49,10 @@ async def get_ticker(inst_id: str, bar: str | None = None) -> dict[str, Any]:
     """
 
     resolved_bar = normalize_bar(bar) if bar else None
-    response = await okx_client.get_ticker(inst_id, bar=resolved_bar)
+    try:
+        response = await okx_client.get_ticker(inst_id, bar=resolved_bar)
+    except ExternalServiceError as exc:
+        return wrap_external_error("get_ticker", exc)
     return wrap_response(response)
 
 
@@ -83,10 +87,13 @@ async def get_instrument_specs(query: InstrumentSpecRequest) -> dict[str, Any]:
     """
 
     inst_type = query.resolve_inst_type()
-    response = await okx_client.get_instruments(
-        inst_type=inst_type,
-        inst_id=query.inst_id,
-    )
+    try:
+        response = await okx_client.get_instruments(
+            inst_type=inst_type,
+            inst_id=query.inst_id,
+        )
+    except ExternalServiceError as exc:
+        return wrap_external_error("get_instrument_specs", exc)
     return wrap_response(response)
 
 
@@ -154,4 +161,13 @@ async def get_multi_ticker(payload: MultiTickerPayload) -> dict[str, Any]:
         return wrap_response(payload)
 
     reason = failures[0] if failures else "no requests submitted"
-    raise ValueError(f"批量行情请求全部失败：{reason}")
+    return {
+        "ok": False,
+        "error": {
+            "code": "external_service_error",
+            "tool": "get_multi_ticker",
+            "type": "ExternalServiceError",
+            "message": f"批量行情请求全部失败：{reason}",
+            "retryable": True,
+        },
+    }

@@ -140,6 +140,64 @@ impl OkxRestClient {
         })
     }
 
+    /// 获取历史 K 线数据
+    /// # 参数
+    /// - `inst_id`: 产品ID
+    /// - `bar`: 时间粒度，如 "1m", "5m", "15m", "1H"
+    /// - `limit`: 数据条数，默认 100，最大 300
+    #[instrument(skip(self), fields(inst_id = %inst_id, bar = %bar, limit = limit.unwrap_or(100)))]
+    pub async fn get_klines(
+        &self,
+        inst_id: &str,
+        bar: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<super::models::Kline>> {
+        #[derive(serde::Deserialize)]
+        struct CandleResponse {
+            data: Vec<Vec<String>>,
+        }
+
+        let limit = limit.unwrap_or(100).clamp(1, 300);
+        let path = format!(
+            "{API_PREFIX}/market/candles?instId={}&bar={}&limit={}",
+            inst_id, bar, limit
+        );
+
+        let response: CandleResponse = self.get(&path, None).await?;
+
+        let mut klines = Vec::new();
+        for candle in response.data {
+            if candle.len() < 7 {
+                continue;
+            }
+
+            // 解析字符串为 f64 和 i64
+            let ts: i64 = candle[0].parse().unwrap_or(0);
+            let open: f64 = candle[1].parse().unwrap_or(0.0);
+            let high: f64 = candle[2].parse().unwrap_or(0.0);
+            let low: f64 = candle[3].parse().unwrap_or(0.0);
+            let close: f64 = candle[4].parse().unwrap_or(0.0);
+            let volume: f64 = candle[5].parse().unwrap_or(0.0);
+            let volume_ccy: f64 = candle[6].parse().unwrap_or(0.0);
+
+            klines.push(super::models::Kline {
+                timestamp: ts,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                volume_ccy,
+            });
+        }
+
+        // OKX 返回的数据是按时间倒序排列的（最新的在前面）
+        // 我们通常需要正序排列（最旧的在前面，最新的在后面）以便计算和分析
+        klines.reverse();
+
+        Ok(klines)
+    }
+
     /// 获取账户余额信息
     ///
     /// 返回账户的资产余额、可用余额、冻结金额、权益等信息
