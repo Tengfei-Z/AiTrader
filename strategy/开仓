@@ -1,0 +1,41 @@
+当前项目开仓策略总结
+
+1. 策略形态
+- 项目当前没有在 strategy 目录中实现固定公式化开仓脚本。
+- 实际开仓决策由 Agent 的 LLM 策略分析器完成，后端只负责按调度、波动或 Smart Money 信号触发分析。
+- 触发上下文只是线索，不是强制开仓指令；LLM 必须重新查询行情、账户和持仓后再决定是否开仓。
+
+2. 开仓前置条件
+- 只能交易白名单合约，默认合约来自 OKX_INST_IDS，未配置时默认为 BTC-USDT-SWAP。
+- 分析前必须调用 get_positions 获取当前持仓。
+- 下单前必须调用 get_account_balance、get_ticker、get_instrument_specs。
+- 必须确认合约规格，包括 lotSz、minSz、tickSz，保证 sz 符合最小单位和步进。
+- 若账户、行情、持仓或交易工具返回 ok:false，禁止继续下单。
+
+3. 方向选择
+- 多空均可考虑，方向由趋势、波动、赔率和风险收益比决定。
+- 信号不足、低波动、指标冲突、数据不完整或赔率不足时优先观望。
+- 禁止为了满足形式而下单。
+
+4. 开仓触发来源
+- 定时触发：STRATEGY_SCHEDULE_ENABLED 开启后，按 STRATEGY_SCHEDULE_INTERVAL_SECS 周期运行分析，默认间隔 300 秒。
+- 波动触发：STRATEGY_VOL_TRIGGER_ENABLED 开启后，每 5 秒轮询价格；价格相对基准变动超过 STRATEGY_VOL_THRESHOLD_BPS 时触发分析，默认阈值 80 bps，窗口 60 秒。
+- Smart Money 触发：后端每 60 秒获取 15m K 线，最近 100 根，寻找流动性区和 K 线反转形态；同类信号冷却 15 分钟。
+- 手动触发：前端可提交策略运行请求，是否允许由 STRATEGY_MANUAL_TRIGGER_ENABLED 控制。
+
+5. Smart Money 开仓线索
+- 先识别局部 Swing High / Swing Low，形成价格兴趣区，缓冲区约为收盘价的 0.2%。
+- 价格触及 Swing Low 支撑区，并出现看涨吞没或看涨 Pinbar，产生 PotentialLong 线索。
+- 价格触及 Swing High 压力区，并出现看跌吞没或看跌 Pinbar，产生 PotentialShort 线索。
+- 这些线索会唤醒主策略循环，但最终仍由 LLM 结合实时账户、持仓和行情决定是否开仓。
+
+6. 仓位与杠杆
+- 新开仓或反手建仓采用本金 all-in：以账户可用 USDT 权益的 100% 作为保证金预算。
+- 需要结合可用保证金、杠杆、当前价格、合约面值和最小下单单位计算合法 sz。
+- 默认杠杆为 5x；允许 5x 到 25x，但使用更高杠杆必须说明理由。
+- 下单工具会强制使用 OKX 全仓模式 tdMode=cross、posSide=net。
+
+7. 反手限制
+- 严禁同一合约多空同持。
+- 当前为全仓 net 模式；若需要反手，必须先用 reduceOnly=true 平掉原净仓位。
+- 平仓后必须再次调用 get_positions 确认仓位清零，才能建立新方向仓位。
