@@ -34,6 +34,22 @@ const readMetadataNumber = (metadata: PositionItem['metadata'], key: string) => 
   return undefined;
 };
 
+const inferDirection = (record: PositionItem) => {
+  const metadataSize = readMetadataNumber(record.metadata, 'pos');
+  const effectiveSize = Math.abs(record.size) > 1e-9 ? record.size : metadataSize;
+
+  if (effectiveSize !== undefined) {
+    if (effectiveSize > 0) {
+      return 'long';
+    }
+    if (effectiveSize < 0) {
+      return 'short';
+    }
+  }
+
+  return record.side;
+};
+
 const renderDirectionTag = (value: string): ReactNode => {
   const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
   const color = value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue';
@@ -49,11 +65,11 @@ const desktopColumns: ColumnsType<PositionItem> = [
     ellipsis: true
   },
   {
-    title: '方向',
+    title: '多/空',
     dataIndex: 'side',
     key: 'side',
     width: 120,
-    render: (value: string) => renderDirectionTag(value)
+    render: (_value: string, record) => renderDirectionTag(inferDirection(record))
   },
   {
     title: '数量',
@@ -79,6 +95,18 @@ const desktopColumns: ColumnsType<PositionItem> = [
     title: '当前价',
     dataIndex: 'markPx',
     key: 'markPx',
+    render: (value: number | undefined) => formatNumber(value)
+  },
+  {
+    title: '止盈',
+    dataIndex: 'takeProfitPx',
+    key: 'takeProfitPx',
+    render: (value: number | undefined) => formatNumber(value)
+  },
+  {
+    title: '止损',
+    dataIndex: 'stopLossPx',
+    key: 'stopLossPx',
     render: (value: number | undefined) => formatNumber(value)
   },
   {
@@ -108,11 +136,13 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
                   数量 {formatNumber(record.size, 4)}
                 </div>
               </div>
-              {renderDirectionTag(record.side)}
+              {renderDirectionTag(inferDirection(record))}
             </div>
             <div className="table-mobile-card__meta">
               <span>开仓 {formatNumber(record.avgPrice)}</span>
               <span>当前 {formatNumber(record.markPx)}</span>
+              <span>止盈 {formatNumber(record.takeProfitPx)}</span>
+              <span>止损 {formatNumber(record.stopLossPx)}</span>
             </div>
             <div className="table-mobile-card__footer">
               <span className="table-mobile-card__label">未实现盈亏</span>
@@ -141,7 +171,7 @@ const PositionsTable = ({ positions, loading, embedded }: Props) => {
       pagination={false}
       size="small"
       loading={loading}
-      scroll={isMobile ? undefined : { x: 820 }}
+      scroll={isMobile ? undefined : { x: 1020 }}
     />
   );
 

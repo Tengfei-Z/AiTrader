@@ -127,19 +127,19 @@ LLM 若在特定合约上下文中工作，应显式传入 `inst_id`，以免拉
 | `instId` | 交易产品 ID | `BTC-USDT-SWAP` |
 | `tdMode` | 交易模式，`cross`/`isolated`/`cash` | `cross` |
 | `side` | 买卖方向，`buy` 表示做多、`sell` 表示做空 | `buy` |
-| `posSide` | 持仓方向（`long` 或 `short`），`SWAP` 合约必填 | `long` |
-| `ordType` | 订单类型，如 `market`、`limit` | `market` |
+| `posSide` | 持仓方向，当前工具会强制使用净持仓 `net` | `net` |
+| `ordType` | 订单类型：`market` 市价、`limit` 限价、`opponent` 对手价（工具会查盘口并转为限价单；未成交会撤单重试，最后可降级市价成交剩余数量） | `opponent` |
 | `sz` | 下单张数/数量（字符串） | `0.1` |
 | `lever` | 杠杆倍数；传入时工具会先调用 `/account/set-leverage` 将该合约调整到对应倍数 | `5` |
 | `px` | 限价单价格，仅限价单需填写 | `106000` |
-| `attachAlgoOrds` | 可选一组算法单（如止盈/止损），每个元素需包含 `algoSide`/`algoOrdType`/`triggerPx`/`px`/`ordType` 等字段 | `[{"algoSide":"tp","algoOrdType":"conditional","triggerPx":"108000","px":"108000","ordType":"limit"}]` |
+| `attachAlgoOrds` | 可选一组附带止盈/止损，OKX 字段为 `tpTriggerPx`/`tpOrdPx` 或 `slTriggerPx`/`slOrdPx`；工具兼容 `triggerPx`/`px` 并会自动归一化 | `[{"tpTriggerPx":"108000","tpOrdPx":"108000","slTriggerPx":"104000","slOrdPx":"104000"}]` |
 | `reduceOnly` | 是否纯减仓（`true`/`false`） | `false` |
 
 工具 schema 会自动将这些字段暴露给 DeepSeek，LLM 在请求 `place_order` 前应：
 1. 先用 `get_positions` 确认当前持仓方向与数量。
-2. 决定方向后填写 `side` 与对应 `posSide` (`buy`→`long`、`sell`→`short`)。
-3. 附上 `sz`、`tdMode`，若为限价单再提供 `px`。
-4. 若需要止盈止损，可手动指定 `attachAlgoOrds`；否则将只是单纯的市价/限价主单。
+2. 决定方向后填写 `side`；`posSide` 会由工具固定为 `net`。
+3. 附上 `sz`、`tdMode`；若为目标价限价单则提供 `px`；若为对手价单使用 `ordType: "opponent"`，工具会自动填入买入卖一价或卖出买一价，并返回 `aitraderConfirmation` 说明重试/成交状态。
+4. 若需要止盈止损，可手动指定 `attachAlgoOrds`，优先使用 `tpTriggerPx`/`tpOrdPx` 和 `slTriggerPx`/`slOrdPx`；否则将只是单纯的市价/限价主单。
 5. 添加 `reduceOnly: true` 表示只减仓，默认可省略。
 
 示例：
@@ -150,7 +150,7 @@ LLM 若在特定合约上下文中工作，应显式传入 `inst_id`，以免拉
     "instId": "BTC-USDT-SWAP",
     "tdMode": "cross",
     "side": "buy",
-    "posSide": "long",
+    "posSide": "net",
     "ordType": "market",
     "sz": "0.1"
   }

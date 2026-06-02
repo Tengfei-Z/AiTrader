@@ -86,7 +86,10 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         order_sync::run_periodic_position_sync().await;
     });
-    if CONFIG.strategy_schedule_enabled() || CONFIG.strategy_vol_trigger_enabled() {
+    if CONFIG.strategy_schedule_enabled()
+        || CONFIG.strategy_vol_trigger_enabled()
+        || CONFIG.strategy_smart_money_trigger_enabled()
+    {
         let interval = Duration::from_secs(CONFIG.strategy_schedule_interval_secs());
         let scheduler_client = app_state.okx_client.clone();
         tokio::spawn(async move {
@@ -155,14 +158,25 @@ const VOLATILITY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxRestClient>) {
     let schedule_enabled = CONFIG.strategy_schedule_enabled();
     let volatility_enabled = CONFIG.strategy_vol_trigger_enabled();
+    let smart_money_enabled = CONFIG.strategy_smart_money_trigger_enabled();
     info!(
         seconds = interval.as_secs(),
         vol_trigger_enabled = volatility_enabled,
+        smart_money_enabled,
         schedule_enabled,
         "strategy scheduler loop enabled"
     );
 
-    strategy_trigger::sync_symbol_states(CONFIG.okx_inst_ids()).await;
+    let initial_schedule_delay = if schedule_enabled {
+        interval
+    } else {
+        Duration::from_secs(0)
+    };
+    strategy_trigger::sync_symbol_states_with_initial_delay(
+        CONFIG.okx_inst_ids(),
+        initial_schedule_delay,
+    )
+    .await;
     let wake_signal = Arc::new(Notify::new());
 
     if volatility_enabled {
@@ -187,19 +201,22 @@ async fn run_strategy_scheduler_loop(interval: Duration, okx_client: Option<OkxR
         }
     }
 
-    // Always start smart money trigger if OKX client is available
-    if let Some(client) = okx_client.clone() {
-        let notify = wake_signal.clone();
-        let sm_config = smart_money_trigger::SmartMoneyTriggerConfig {
-            symbols: CONFIG.okx_inst_ids().to_vec(),
-            poll_interval: Duration::from_secs(60), // 检查一次 K 线的时间间隔 (1分钟)
-            signal_cooldown: Duration::from_secs(15 * 60),
-            max_attempts: CONFIG.okx_http_max_retries().max(1) as u32,
-            retry_backoff: duration_from_secs(CONFIG.okx_http_retry_backoff_secs()),
-            bar: "15m".to_string(),
-            limit: 100,
-        };
-        smart_money_trigger::spawn_smart_money_trigger(client, notify, sm_config);
+    if smart_money_enabled {
+        if let Some(client) = okx_client.clone() {
+            let notify = wake_signal.clone();
+            let sm_config = smart_money_trigger::SmartMoneyTriggerConfig {
+                symbols: CONFIG.okx_inst_ids().to_vec(),
+                poll_interval: Duration::from_secs(60), // 检查一次 K 线的时间间隔 (1分钟)
+                signal_cooldown: Duration::from_secs(15 * 60),
+                max_attempts: CONFIG.okx_http_max_retries().max(1) as u32,
+                retry_backoff: duration_from_secs(CONFIG.okx_http_retry_backoff_secs()),
+                bar: "15m".to_string(),
+                limit: 100,
+            };
+            smart_money_trigger::spawn_smart_money_trigger(client, notify, sm_config);
+        } else {
+            warn!("smart money trigger enabled but OKX client is unavailable");
+        }
     }
 
     loop {
@@ -267,7 +284,13 @@ async fn run_strategy_analysis_for_symbol(
 ) -> AnalysisRunResult {
     let mut attempts = 0;
     loop {
-        match trigger_analysis(Some(symbol), trigger_context).await {
+        match trigger_analysis(
+            Some(symbol),
+            trigger_context,
+            Some(trigger_source_name(source)),
+        )
+        .await
+        {
             Ok(result) => {
                 return AnalysisRunResult::Success {
                     response_symbol: result.symbol,
@@ -314,6 +337,15 @@ fn duration_from_secs(secs: f64) -> Duration {
         Duration::from_secs(0)
     } else {
         Duration::from_secs_f64(secs)
+    }
+}
+
+fn trigger_source_name(source: TriggerSource) -> &'static str {
+    match source {
+        TriggerSource::Scheduled => "scheduled",
+        TriggerSource::Manual => "manual",
+        TriggerSource::Volatility => "volatility",
+        TriggerSource::SmartMoney => "smart_money",
     }
 }
 

@@ -1,6 +1,7 @@
-import { Card, Typography } from 'antd';
+import { Card, Segmented, Typography } from 'antd';
 import { CaretUpOutlined, CaretDownOutlined } from '@ant-design/icons';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -17,16 +18,27 @@ import type { EquityPoint } from '@utils/pnl';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
+type ChartView = 'equity' | 'kline';
+
 interface Props {
   data: EquityPoint[];
   loading?: boolean;
   className?: string;
+  klineContent?: ReactNode;
 }
+
+const VIEW_STORAGE_KEY = 'ai-trader.chart-view';
 
 const formatNumber = (value?: number) =>
   value !== undefined ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--';
 
-const EquityCurveCard = ({ data, loading, className }: Props) => {
+const readStoredView = (): ChartView => {
+  const value = window.localStorage.getItem(VIEW_STORAGE_KEY);
+  return value === 'kline' || value === 'equity' ? value : 'equity';
+};
+
+const EquityCurveCard = ({ data, loading, className, klineContent }: Props) => {
+  const [activeView, setActiveView] = useState<ChartView>(readStoredView);
   const sortedPoints = useMemo(() => [...data].sort((a, b) => a.time - b.time), [data]);
   const latestPoint = sortedPoints[sortedPoints.length - 1];
   const firstPoint = sortedPoints[0];
@@ -107,11 +119,32 @@ const EquityCurveCard = ({ data, loading, className }: Props) => {
     }
   };
 
+  const handleViewChange = (value: string | number) => {
+    const nextView = value === 'kline' ? 'kline' : 'equity';
+    setActiveView(nextView);
+    window.localStorage.setItem(VIEW_STORAGE_KEY, nextView);
+  };
+
   return (
-    <Card bordered={false} loading={loading} className={className}>
+    <Card bordered={false} loading={activeView === 'equity' ? loading : false} className={className}>
       <div className="equity-header">
-        <Typography.Text className="equity-label">收益</Typography.Text>
-        {latestPoint && firstPoint && (
+        <div className="equity-title-row">
+          <Typography.Text className="equity-label">
+            {activeView === 'equity' ? '收益' : '实时K线图'}
+          </Typography.Text>
+          {klineContent && (
+            <Segmented
+              size="small"
+              value={activeView}
+              onChange={handleViewChange}
+              options={[
+                { label: '收益', value: 'equity' },
+                { label: '实时K线', value: 'kline' }
+              ]}
+            />
+          )}
+        </div>
+        {activeView === 'equity' && latestPoint && firstPoint && (
           latestPoint.equity - firstPoint.equity >= 0 ? (
             <CaretUpOutlined className="equity-icon positive" />
           ) : (
@@ -120,7 +153,7 @@ const EquityCurveCard = ({ data, loading, className }: Props) => {
         )}
       </div>
       <div className="chart-container">
-        <Line data={chartData} options={options} />
+        {activeView === 'kline' && klineContent ? klineContent : <Line data={chartData} options={options} />}
       </div>
     </Card>
   );

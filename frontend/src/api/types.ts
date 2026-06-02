@@ -18,6 +18,22 @@ export interface Ticker {
   timestamp: string;
 }
 
+export interface Kline {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  volumeCcy: number;
+}
+
+export interface KlinePayload {
+  symbol: string;
+  bar: string;
+  candles: Kline[];
+}
+
 export interface OrderBook {
   bids: [string, string][];
   asks: [string, string][];
@@ -66,6 +82,8 @@ export interface PositionSnapshot {
   markPx?: number;
   margin?: number;
   unrealizedPnl?: number;
+  takeProfitPx?: number;
+  stopLossPx?: number;
   lastTradeAt?: string;
   closedAt?: string;
   actionKind?: string;
@@ -86,8 +104,15 @@ export interface StrategyMessage {
   createdAt: string;
 }
 
+export interface ModelBudget {
+  remaining: number;
+  limit: number;
+  used: number;
+}
+
 export interface StrategyChatPayload {
   allowManualTrigger: boolean;
+  modelBudget?: ModelBudget;
   messages: StrategyMessage[];
 }
 
@@ -102,12 +127,20 @@ export interface OrderItem {
   orderId: string;
   symbol: string;
   side: 'buy' | 'sell';
-  type: 'limit' | 'market';
+  posSide?: string;
+  orderType: string;
+  type?: 'limit' | 'market';
   price?: string;
+  triggerPx?: string;
+  takeProfitPx?: string;
+  stopLossPx?: string;
   size: string;
   filledSize: string;
-  status: OrderStatus;
+  status: OrderStatus | string;
+  reduceOnly?: boolean;
+  closeOnTrigger?: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface FillItem {

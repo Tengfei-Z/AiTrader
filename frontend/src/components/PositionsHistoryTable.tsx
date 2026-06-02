@@ -43,6 +43,22 @@ const readMetadataNumber = (metadata: PositionHistoryItem['metadata'], key: stri
   return undefined;
 };
 
+const inferDirection = (record: PositionHistoryItem) => {
+  const metadataSize = readMetadataNumber(record.metadata, 'pos');
+  const effectiveSize = Math.abs(record.size) > 1e-9 ? record.size : metadataSize;
+
+  if (effectiveSize !== undefined) {
+    if (effectiveSize > 0) {
+      return 'long';
+    }
+    if (effectiveSize < 0) {
+      return 'short';
+    }
+  }
+
+  return record.side;
+};
+
 const renderSideTag = (value: string) => {
   const label = value === 'long' ? '做多' : value === 'short' ? '做空' : '净持仓';
   const color = value === 'long' ? 'green' : value === 'short' ? 'volcano' : 'blue';
@@ -62,11 +78,11 @@ const desktopColumns: ColumnsType<PositionHistoryItem> = [
     ellipsis: true
   },
   {
-    title: '方向',
+    title: '多/空',
     dataIndex: 'side',
     key: 'side',
     width: 120,
-    render: (value: string) => renderSideTag(value)
+    render: (_value: string, record) => renderSideTag(inferDirection(record))
   },
   {
     title: '开仓价',
@@ -152,7 +168,7 @@ const PositionsHistoryTable = ({ history, loading, embedded }: Props) => {
               <div>
                 <span className="table-mobile-card__title">{record.instId}</span>
               </div>
-              {renderSideTag(record.side)}
+              {renderSideTag(inferDirection(record))}
             </div>
             <div className="table-mobile-card__meta">
               <span>开仓 {formatNumber(record.avgPrice)}</span>

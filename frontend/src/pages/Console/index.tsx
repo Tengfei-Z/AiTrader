@@ -1,8 +1,10 @@
 import { Col, Flex, Row, message } from 'antd';
+import { useMutation } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import EquityCurveCard from '@components/EquityCurveCard';
 import MarketStrip from '@components/MarketStrip';
 import PositionsHistoryCard from '@components/PositionsHistoryCard';
+import RealtimeKlineChart from '@components/RealtimeKlineChart';
 import { useBalanceSnapshots } from '@hooks/useBalanceSnapshots';
 import { useLatestBalanceSnapshot } from '@hooks/useLatestBalanceSnapshot';
 import { useInitialEquity } from '@hooks/useInitialEquity';
@@ -10,6 +12,7 @@ import { usePositionHistory } from '@hooks/usePositionHistory';
 import { useStrategyChat } from '@hooks/useStrategyChat';
 import { useStrategyRunner } from '@hooks/useStrategyRunner';
 import { usePositions } from '@hooks/usePositions';
+import { updateModelBudgetLimit } from '@api/model';
 import type { BalanceSnapshotItem } from '@api/types';
 import type { EquityPoint } from '@utils/pnl';
 
@@ -28,6 +31,12 @@ const AiConsolePage = () => {
     mutateAsync: triggerStrategy,
     isPending: strategyRunning
   } = useStrategyRunner();
+  const {
+    mutateAsync: updateBudgetLimit,
+    isPending: budgetLimitUpdating
+  } = useMutation({
+    mutationFn: updateModelBudgetLimit
+  });
 
   const initialAmount = initialEquityRecord ? Number(initialEquityRecord.amount) : undefined;
 
@@ -97,6 +106,10 @@ const AiConsolePage = () => {
       ? ((resolvedCurrentEquity - initialAmount) / initialAmount) * 100
       : undefined;
   const chartLoading = snapshotsLoading && !snapshotCurve.length;
+  const activeSymbol = useMemo(() => {
+    const activePosition = positions?.find((position) => Math.abs(position.size) > 0);
+    return activePosition?.instId ?? positions?.[0]?.instId ?? 'BTC-USDT-SWAP';
+  }, [positions]);
 
   const handleStrategyStart = async () => {
     const startedAt = new Date().toISOString();
@@ -117,6 +130,18 @@ const AiConsolePage = () => {
     }
   };
 
+  const handleBudgetLimitChange = async (limit: number) => {
+    try {
+      await updateBudgetLimit(limit);
+      message.success('最大 AI 请求次数已更新');
+      await refetchStrategyChat();
+    } catch (error) {
+      console.error('[Strategy] Failed to update model budget limit', error);
+      message.error(error instanceof Error ? error.message : '更新最大 AI 请求次数失败');
+      throw error;
+    }
+  };
+
   return (
     <Flex vertical gap={24}>
       <MarketStrip
@@ -131,6 +156,13 @@ const AiConsolePage = () => {
             data={equityCurve}
             loading={chartLoading}
             className="full-height-card"
+            klineContent={
+              <RealtimeKlineChart
+                strategyMessages={strategyChat?.messages}
+                positions={positions}
+                defaultSymbol={activeSymbol}
+              />
+            }
           />
         </Col>
         <Col xs={24} xl={11} style={{ display: 'flex' }}>
@@ -140,10 +172,13 @@ const AiConsolePage = () => {
             history={positionHistory}
             historyLoading={positionHistoryLoading}
             strategyMessages={strategyChat?.messages}
+            modelBudget={strategyChat?.modelBudget}
             strategyLoading={strategyLoading}
             manualTriggerEnabled={strategyChat?.allowManualTrigger}
             onStrategyStart={handleStrategyStart}
+            onBudgetLimitChange={handleBudgetLimitChange}
             strategyRunning={strategyRunning}
+            budgetLimitUpdating={budgetLimitUpdating}
             className="full-height-card"
           />
         </Col>

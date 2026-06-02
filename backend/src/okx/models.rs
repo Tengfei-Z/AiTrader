@@ -127,6 +127,8 @@ pub struct PositionDetail {
     pub sl_trigger_px_type: Option<String>,
     #[serde(default)]
     pub sl_ord_px: Option<String>,
+    #[serde(default)]
+    pub close_order_algo: Vec<AlgoOrderDetail>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -258,6 +260,21 @@ pub struct OrderHistoryEntry {
     #[serde(rename = "px")]
     #[serde(default)]
     pub px: Option<String>,
+    #[serde(rename = "triggerPx")]
+    #[serde(default)]
+    pub trigger_px: Option<String>,
+    #[serde(rename = "tpTriggerPx")]
+    #[serde(default)]
+    pub tp_trigger_px: Option<String>,
+    #[serde(rename = "tpOrdPx")]
+    #[serde(default)]
+    pub tp_ord_px: Option<String>,
+    #[serde(rename = "slTriggerPx")]
+    #[serde(default)]
+    pub sl_trigger_px: Option<String>,
+    #[serde(rename = "slOrdPx")]
+    #[serde(default)]
+    pub sl_ord_px: Option<String>,
     pub state: String,
     #[serde(rename = "lever")]
     #[serde(default)]
@@ -291,9 +308,63 @@ pub struct OrderHistoryEntry {
     pub created_at: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlgoOrderDetail {
+    #[serde(default)]
+    pub inst_type: Option<String>,
+    #[serde(default)]
+    pub inst_id: Option<String>,
+    #[serde(default)]
+    pub algo_id: Option<String>,
+    #[serde(default)]
+    pub algo_cl_ord_id: Option<String>,
+    #[serde(default)]
+    pub cl_ord_id: Option<String>,
+    #[serde(default)]
+    pub tag: Option<String>,
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub pos_side: Option<String>,
+    #[serde(default)]
+    pub ord_type: Option<String>,
+    #[serde(default)]
+    pub td_mode: Option<String>,
+    #[serde(default)]
+    pub sz: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub trigger_px: Option<String>,
+    #[serde(default)]
+    pub order_px: Option<String>,
+    #[serde(default)]
+    pub ord_px: Option<String>,
+    #[serde(default)]
+    pub tp_trigger_px: Option<String>,
+    #[serde(default)]
+    pub tp_ord_px: Option<String>,
+    #[serde(default)]
+    pub sl_trigger_px: Option<String>,
+    #[serde(default)]
+    pub sl_ord_px: Option<String>,
+    #[serde(rename = "cTime")]
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(rename = "uTime")]
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OrderHistoryResponse {
     pub data: Vec<OrderHistoryEntry>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AlgoOrderResponse {
+    pub data: Vec<AlgoOrderDetail>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

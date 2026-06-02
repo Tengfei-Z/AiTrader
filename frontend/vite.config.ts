@@ -17,6 +17,7 @@ export default defineConfig({
     }
   },
   server: {
+    allowedHosts: ['.lhr.life'],
     port: 5173,
     proxy: {
       '/api': {

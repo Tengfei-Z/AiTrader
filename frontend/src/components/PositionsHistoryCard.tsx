@@ -1,5 +1,5 @@
 import { Card, Tabs } from 'antd';
-import type { PositionHistoryItem, PositionItem, StrategyMessage } from '@api/types';
+import type { ModelBudget, PositionHistoryItem, PositionItem, StrategyMessage } from '@api/types';
 import PositionsTable from '@components/PositionsTable';
 import PositionsHistoryTable from '@components/PositionsHistoryTable';
 import StrategyChatCard from '@components/StrategyChatCard';
@@ -9,11 +9,14 @@ interface Props {
   positions?: PositionItem[];
   history?: PositionHistoryItem[];
   strategyMessages?: StrategyMessage[];
+  modelBudget?: ModelBudget;
   positionsLoading?: boolean;
   historyLoading?: boolean;
   strategyLoading?: boolean;
   onStrategyStart?: () => void;
+  onBudgetLimitChange?: (limit: number) => Promise<void> | void;
   strategyRunning?: boolean;
+  budgetLimitUpdating?: boolean;
   manualTriggerEnabled?: boolean;
   className?: string;
 }
@@ -22,11 +25,14 @@ const PositionsHistoryCard = ({
   positions,
   history,
   strategyMessages,
+  modelBudget,
   positionsLoading,
   historyLoading,
   strategyLoading,
   onStrategyStart,
+  onBudgetLimitChange,
   strategyRunning,
+  budgetLimitUpdating,
   manualTriggerEnabled,
   className
 }: Props) => {
@@ -70,9 +76,12 @@ const PositionsHistoryCard = ({
       <Card bordered={false} className="positions-history-card__block positions-history-card__block--strategy">
         <StrategyChatCard
           messages={strategyMessages}
+          modelBudget={modelBudget}
           loading={strategyLoading}
           onStart={onStrategyStart}
+          onBudgetLimitChange={onBudgetLimitChange}
           starting={strategyRunning}
+          budgetLimitUpdating={budgetLimitUpdating}
           manualTriggerEnabled={manualTriggerEnabled}
           embedded
         />

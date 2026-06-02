@@ -34,6 +34,15 @@ class AgentSettings(BaseSettings):
     deepseek_api_base: AnyHttpUrl = Field(
         "https://api.deepseek.com/", description="DeepSeek API endpoint"
     )
+    deepseek_daily_request_limit: int = Field(
+        120,
+        ge=0,
+        description="Daily hard cap for DeepSeek chat completion requests; 0 disables the cap",
+    )
+    deepseek_request_budget_file: str = Field(
+        str(_REPO_ROOT / "log" / "deepseek_request_budget.json"),
+        description="Persistent state file used to keep the daily DeepSeek request cap across restarts",
+    )
 
     okx_api_key: SecretStr = Field(..., description="OKX API key")
     okx_secret_key: SecretStr = Field(..., description="OKX secret key")

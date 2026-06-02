@@ -258,6 +258,38 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
+    /// 获取当前未完成委托
+    pub async fn get_open_orders(
+        &self,
+        inst_type: Option<&str>,
+        inst_id: Option<&str>,
+        ord_type: Option<&str>,
+    ) -> Result<Vec<super::models::OrderHistoryEntry>> {
+        let mut path = format!("{API_PREFIX}/trade/orders-pending");
+        append_query_param_if_some(&mut path, "instType", inst_type);
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        append_query_param_if_some(&mut path, "ordType", ord_type);
+
+        let response: super::models::OrderHistoryResponse = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
+    /// 获取当前未触发算法委托（止盈/止损、条件单、OCO 等）
+    pub async fn get_algo_pending_orders(
+        &self,
+        inst_type: Option<&str>,
+        inst_id: Option<&str>,
+        ord_type: Option<&str>,
+    ) -> Result<Vec<super::models::AlgoOrderDetail>> {
+        let mut path = format!("{API_PREFIX}/trade/orders-algo-pending");
+        append_query_param_if_some(&mut path, "instType", inst_type);
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        append_query_param_if_some(&mut path, "ordType", ord_type);
+
+        let response: super::models::AlgoOrderResponse = self.get(&path, None).await?;
+        Ok(response.data)
+    }
+
     /// 获取成交回报（fills）
     pub async fn get_fills(
         &self,

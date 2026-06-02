@@ -1,5 +1,4 @@
 use anyhow::{ensure, Context, Result};
-use dotenvy::dotenv;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -25,6 +24,10 @@ pub struct AgentConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default = "default_deepseek_daily_request_limit")]
+    pub deepseek_daily_request_limit: u64,
+    #[serde(default = "default_deepseek_request_budget_file")]
+    pub deepseek_request_budget_file: String,
     #[serde(default = "default_okx_http_max_retries")]
     pub okx_http_max_retries: usize,
     #[serde(default = "default_okx_http_retry_backoff_secs")]
@@ -59,6 +62,8 @@ pub struct AppConfig {
     pub strategy_vol_threshold_bps: u64,
     #[serde(default = "default_strategy_vol_window_secs")]
     pub strategy_vol_window_secs: u64,
+    #[serde(default = "default_strategy_smart_money_trigger_enabled")]
+    pub strategy_smart_money_trigger_enabled: bool,
 }
 
 impl AppConfig {
@@ -69,6 +74,12 @@ impl AppConfig {
         let okx_credentials =
             load_okx_credentials("OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE");
 
+        let deepseek_daily_request_limit = env::var("DEEPSEEK_DAILY_REQUEST_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_else(default_deepseek_daily_request_limit);
+        let deepseek_request_budget_file = env::var("DEEPSEEK_REQUEST_BUDGET_FILE")
+            .unwrap_or_else(|_| default_deepseek_request_budget_file());
         let okx_http_max_retries = env::var("OKX_HTTP_MAX_RETRIES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
@@ -127,8 +138,12 @@ impl AppConfig {
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|value| *value > 0)
             .unwrap_or_else(default_strategy_vol_window_secs);
+        let strategy_smart_money_trigger_enabled =
+            env_bool("STRATEGY_SMART_MONEY_TRIGGER_ENABLED", false);
 
         Ok(Self {
+            deepseek_daily_request_limit,
+            deepseek_request_budget_file,
             okx_http_max_retries,
             okx_http_retry_backoff_secs,
             okx_base_url,
@@ -147,6 +162,7 @@ impl AppConfig {
             strategy_vol_trigger_enabled,
             strategy_vol_threshold_bps,
             strategy_vol_window_secs,
+            strategy_smart_money_trigger_enabled,
         })
     }
 
@@ -167,6 +183,14 @@ impl AppConfig {
 
     pub fn agent_base_url(&self) -> Option<&str> {
         self.agent.as_ref().map(|cfg| cfg.base_url.as_str())
+    }
+
+    pub fn deepseek_daily_request_limit(&self) -> u64 {
+        self.deepseek_daily_request_limit
+    }
+
+    pub fn deepseek_request_budget_file(&self) -> &str {
+        &self.deepseek_request_budget_file
     }
 
     pub fn okx_use_simulated(&self) -> bool {
@@ -213,6 +237,10 @@ impl AppConfig {
         self.strategy_vol_window_secs
     }
 
+    pub fn strategy_smart_money_trigger_enabled(&self) -> bool {
+        self.strategy_smart_money_trigger_enabled
+    }
+
     pub fn initial_equity_env_override(&self) -> Option<f64> {
         self.initial_equity_override
     }
@@ -228,6 +256,19 @@ fn env_var_non_empty(key: &str) -> Result<String, env::VarError> {
 
 fn default_okx_base_url() -> String {
     "https://www.okx.com".to_string()
+}
+
+fn default_deepseek_daily_request_limit() -> u64 {
+    120
+}
+
+fn default_deepseek_request_budget_file() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|path| path.join("log/deepseek_request_budget.json"))
+        .unwrap_or_else(|| PathBuf::from("log/deepseek_request_budget.json"))
+        .display()
+        .to_string()
 }
 
 fn default_okx_http_max_retries() -> usize {
@@ -267,7 +308,7 @@ fn default_strategy_schedule_enabled() -> bool {
 }
 
 fn default_strategy_schedule_interval_secs() -> u64 {
-    300
+    900
 }
 
 fn default_strategy_manual_trigger_enabled() -> bool {
@@ -286,6 +327,10 @@ fn default_strategy_vol_window_secs() -> u64 {
     60
 }
 
+fn default_strategy_smart_money_trigger_enabled() -> bool {
+    false
+}
+
 fn env_bool(key: &str, default: bool) -> bool {
     match env::var(key) {
         Ok(value) => {
@@ -299,7 +344,7 @@ fn env_bool(key: &str, default: bool) -> bool {
 fn preload_env_files() {
     // 自动加载当前目录或上层目录中的 .env 文件（如果存在）
     let mut loaded_paths = Vec::new();
-    if dotenv().is_ok() {
+    if dotenvy::dotenv_override().is_ok() {
         loaded_paths.push(".env".to_string());
     }
 
@@ -307,7 +352,7 @@ fn preload_env_files() {
     let candidate_files = [manifest_dir.join(".env"), manifest_dir.join("../.env")];
 
     for path in candidate_files {
-        if path.exists() && dotenvy::from_path(&path).is_ok() {
+        if path.exists() && dotenvy::from_path_override(&path).is_ok() {
             loaded_paths.push(path.display().to_string());
         }
     }

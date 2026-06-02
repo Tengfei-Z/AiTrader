@@ -32,9 +32,9 @@ pub struct SymbolTriggerState {
 }
 
 impl SymbolTriggerState {
-    fn new(now: Instant) -> Self {
+    fn new(now: Instant, initial_delay: Duration) -> Self {
         Self {
-            next_scheduled_at: now,
+            next_scheduled_at: now + initial_delay,
             last_trigger_at: None,
             last_trigger_source: None,
             last_trigger_price: None,
@@ -50,6 +50,11 @@ static SYMBOL_STATES: Lazy<RwLock<HashMap<String, SymbolTriggerState>>> =
 
 /// 确保每个配置中的 symbol 都存在状态，未出现的状态会被移除。
 pub async fn sync_symbol_states(symbols: &[String]) {
+    sync_symbol_states_with_initial_delay(symbols, Duration::from_secs(0)).await;
+}
+
+/// 确保每个配置中的 symbol 都存在状态，新状态会等待 initial_delay 后才首次定时触发。
+pub async fn sync_symbol_states_with_initial_delay(symbols: &[String], initial_delay: Duration) {
     let mut states = SYMBOL_STATES.write().await;
     let now = Instant::now();
 
@@ -62,7 +67,7 @@ pub async fn sync_symbol_states(symbols: &[String]) {
     for symbol in symbols {
         states
             .entry(symbol.clone())
-            .or_insert_with(|| SymbolTriggerState::new(now));
+            .or_insert_with(|| SymbolTriggerState::new(now, initial_delay));
     }
 }
 

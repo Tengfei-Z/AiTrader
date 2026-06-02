@@ -321,17 +321,38 @@ class OKXClient:
             params = None
         return await self._request("GET", "/api/v5/account/positions", params=params)
 
-    async def get_open_orders(self, inst_type: str | None = None) -> Any:
+    async def get_open_orders(
+        self,
+        inst_type: str | None = None,
+        inst_id: str | None = None,
+        order_id: str | None = None,
+    ) -> Any:
         """Fetch open orders."""
 
-        params = {"instType": inst_type} if inst_type else None
+        params: dict[str, Any] = {}
+        if inst_type:
+            params["instType"] = inst_type
+        if inst_id:
+            params["instId"] = inst_id
+        if order_id:
+            params["ordId"] = order_id
         return await self._request("GET", "/api/v5/trade/orders-pending", params=params)
+
+    async def get_order_details(self, *, inst_id: str, order_id: str) -> Any:
+        """Fetch details for a specific order."""
+
+        return await self._request(
+            "GET",
+            "/api/v5/trade/order",
+            params={"instId": inst_id, "ordId": order_id},
+        )
 
     async def get_order_history(
         self,
         *,
         inst_type: str | None = None,
         inst_id: str | None = None,
+        order_id: str | None = None,
         state: str | None = None,
         limit: int | None = None,
     ) -> Any:
@@ -342,6 +363,8 @@ class OKXClient:
             params["instType"] = inst_type
         if inst_id:
             params["instId"] = inst_id
+        if order_id:
+            params["ordId"] = order_id
         if state:
             params["state"] = state
         if limit:

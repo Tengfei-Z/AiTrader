@@ -49,6 +49,10 @@ enum OutgoingMessage {
     TriggerAnalysis {
         symbol: Option<String>,
         trigger_context: Option<String>,
+        trigger_source: Option<String>,
+    },
+    UpdateModelBudgetLimit {
+        limit: u64,
     },
 }
 
@@ -157,6 +161,7 @@ pub async fn run_agent_events_listener() {
 pub async fn trigger_analysis(
     symbol: Option<&str>,
     trigger_context: Option<&str>,
+    trigger_source: Option<&str>,
 ) -> Result<AnalysisResult, String> {
     let semaphore = Lazy::force(&ANALYSIS_PERMIT).clone();
     let permit = match semaphore.try_acquire_owned() {
@@ -170,6 +175,7 @@ pub async fn trigger_analysis(
     let result = trigger_analysis_inner(
         symbol.map(|s| s.to_string()),
         trigger_context.map(|value| value.to_string()),
+        trigger_source.map(|value| value.to_string()),
     )
     .await;
     drop(permit);
@@ -177,9 +183,17 @@ pub async fn trigger_analysis(
     result
 }
 
+pub fn update_model_budget_limit(limit: u64) -> Result<(), String> {
+    let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
+    sender
+        .send(OutgoingMessage::UpdateModelBudgetLimit { limit })
+        .map_err(|_| "failed to send model budget update message".to_string())
+}
+
 async fn trigger_analysis_inner(
     symbol: Option<String>,
     trigger_context: Option<String>,
+    trigger_source: Option<String>,
 ) -> Result<AnalysisResult, String> {
     let sender = WS_SENDER.get().ok_or("WebSocket not initialized")?;
     let pending = PENDING_ANALYSES
@@ -201,6 +215,7 @@ async fn trigger_analysis_inner(
     if let Err(_) = sender.send(OutgoingMessage::TriggerAnalysis {
         symbol,
         trigger_context,
+        trigger_source,
     }) {
         remove_pending_by_id(pending.clone(), request_id).await;
         return Err("failed to send trigger message".to_string());

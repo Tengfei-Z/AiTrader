@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ...core.event_manager import event_manager
 from ..schemas.analysis import AnalysisRequest
+from ..services.deepseek_client import deepseek_client
 from ..services.strategy_analyzer import StrategyAnalyzer
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -30,6 +31,7 @@ async def agent_event_socket(websocket: WebSocket) -> None:
                     logger.info("收到策略分析请求")
                     symbol = data.get("symbol")
                     trigger_context = data.get("trigger_context") or data.get("triggerContext")
+                    trigger_source = data.get("trigger_source") or data.get("triggerSource")
                     
                     # 执行分析
                     try:
@@ -37,6 +39,7 @@ async def agent_event_socket(websocket: WebSocket) -> None:
                             AnalysisRequest(
                                 symbol=symbol,
                                 trigger_context=trigger_context,
+                                trigger_source=trigger_source,
                             )
                         )
                         
@@ -58,6 +61,12 @@ async def agent_event_socket(websocket: WebSocket) -> None:
                             "error": str(e)
                         }
                         await websocket.send_json(error_response)
+                elif message_type == "update_model_budget_limit":
+                    limit = int(data.get("limit"))
+                    if limit < 0:
+                        raise ValueError("limit must be greater than or equal to 0")
+                    await deepseek_client.update_daily_request_limit(limit)
+                    logger.info("大模型每日请求上限已更新: %s", limit)
                 else:
                     logger.warning(f"未知消息类型: {message_type}")
                     

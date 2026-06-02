@@ -6,6 +6,7 @@ import type {
   BalanceSnapshotListPayload,
   FillItem,
   InitialEquityRecord,
+  OrderItem,
   PositionHistoryItem,
   PositionItem
 } from './types';
@@ -104,6 +105,13 @@ export const fetchPositionHistory = async (params: { symbol?: string; limit?: nu
 
 export const fetchFills = async (params: { symbol?: string; limit?: number }) => {
   const { data } = await client.get<ApiResponse<FillItem[]>>('/account/fills', {
+    params
+  });
+  return data.data;
+};
+
+export const fetchOpenOrders = async (params: { symbol?: string; limit?: number } = {}) => {
+  const { data } = await client.get<ApiResponse<OrderItem[]>>('/account/orders/open', {
     params
   });
   return data.data;

@@ -286,12 +286,13 @@ fn position_snapshot_from_detail(detail: &okx::models::PositionDetail) -> Result
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "net".to_string());
+    let side = infer_position_side(size, &pos_side);
 
     Ok(PositionSnapshot {
         inst_id: detail.inst_id.clone(),
         pos_side,
         td_mode: detail.inst_type.clone(),
-        side: detail.pos_side.clone().unwrap_or_else(|| "net".to_string()),
+        side,
         size,
         avg_price,
         mark_px,
@@ -304,6 +305,18 @@ fn position_snapshot_from_detail(detail: &okx::models::PositionDetail) -> Result
         exit_ord_id: None,
         metadata: serde_json::to_value(detail)?,
     })
+}
+
+fn infer_position_side(size: f64, fallback: &str) -> String {
+    if size > 1e-9 {
+        "long".to_string()
+    } else if size < -1e-9 {
+        "short".to_string()
+    } else if fallback == "long" || fallback == "short" {
+        fallback.to_string()
+    } else {
+        "net".to_string()
+    }
 }
 
 fn parse_number(value: Option<&str>) -> Option<f64> {

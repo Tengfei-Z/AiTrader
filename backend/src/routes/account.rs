@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::{
@@ -6,7 +7,7 @@ use axum::{
     routing::get,
     Router,
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::sleep;
@@ -15,7 +16,7 @@ use crate::db;
 use crate::db::{
     fetch_balance_snapshots, fetch_initial_equity, fetch_latest_balance_snapshot,
     fetch_position_snapshots, insert_balance_snapshot, insert_initial_equity,
-    BalanceSnapshotInsert,
+    BalanceSnapshotInsert, PositionSnapshot,
 };
 use crate::okx::{self, OkxRestClient};
 use crate::settings::CONFIG;
@@ -37,6 +38,8 @@ const BALANCE_SNAPSHOT_TOLERANCE: f64 = 1e-6;
 const BALANCE_SNAPSHOT_INTERVAL_SECS: u64 = 30 * 60;
 /// 初始资金同步时的容差
 const INITIAL_EQUITY_TOLERANCE: f64 = 1e-6;
+/// DB fallback for current positions should not surface stale open rows forever.
+const CURRENT_POSITION_STALE_AFTER_SECS: i64 = 5 * 60;
 
 /// 账户余额信息（返回给前端的格式）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +210,8 @@ struct PositionSnapshotResponse {
     mark_px: Option<f64>,
     margin: Option<f64>,
     unrealized_pnl: Option<f64>,
+    take_profit_px: Option<f64>,
+    stop_loss_px: Option<f64>,
     last_trade_at: Option<String>,
     closed_at: Option<String>,
     action_kind: Option<String>,
@@ -214,6 +219,41 @@ struct PositionSnapshotResponse {
     exit_ord_id: Option<String>,
     metadata: Value,
     updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrderResponse {
+    order_id: String,
+    symbol: String,
+    side: String,
+    pos_side: Option<String>,
+    order_type: String,
+    price: Option<String>,
+    trigger_px: Option<String>,
+    take_profit_px: Option<String>,
+    stop_loss_px: Option<String>,
+    size: String,
+    filled_size: String,
+    status: String,
+    reduce_only: Option<bool>,
+    close_on_trigger: Option<bool>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FillResponse {
+    fill_id: String,
+    order_id: String,
+    symbol: String,
+    side: String,
+    price: String,
+    size: String,
+    fee: String,
+    pnl: Option<String>,
+    timestamp: String,
 }
 
 /// 交易对查询参数（可选）
@@ -237,6 +277,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/positions", get(get_positions)) // 获取当前持仓
         .route("/positions/history", get(get_positions_history)) // 获取历史持仓
+        .route("/orders/open", get(get_open_orders)) // 获取当前未完成委托
+        .route("/fills", get(get_fills)) // 获取历史成交
 }
 
 /// 获取当前账户余额
@@ -404,13 +446,61 @@ async fn set_initial_equity(
 
 /// 获取当前持仓列表
 ///
-/// 从本地 `positions` 表返回当前持仓快照（`closed_at IS NULL`）
+/// 优先从 OKX 实时返回当前持仓；DB 仅作为 OKX 不可用时的降级来源。
 #[axum::debug_handler]
-async fn get_positions() -> Json<ApiResponse<Vec<PositionSnapshotResponse>>> {
+async fn get_positions(
+    State(state): State<AppState>,
+) -> Json<ApiResponse<Vec<PositionSnapshotResponse>>> {
+    if let Some(client) = state.okx_client.as_ref() {
+        match client.get_positions(Some("SWAP")).await {
+            Ok(details) => {
+                let allowed_inst_ids = CONFIG.okx_inst_ids();
+                let algo_orders = fetch_algo_pending_orders(client, None).await;
+                let algo_orders_by_inst = group_algo_orders_by_inst(algo_orders);
+                let mut snapshots = Vec::new();
+
+                for detail in details
+                    .into_iter()
+                    .filter(|detail| allowed_inst_ids.contains(&detail.inst_id))
+                {
+                    let db_snapshot = position_snapshot_from_okx_detail(&detail);
+                    if let Err(err) = db::upsert_position_snapshot(db_snapshot).await {
+                        tracing::warn!(
+                            error = ?err,
+                            inst_id = %detail.inst_id,
+                            "failed to refresh position snapshot from okx"
+                        );
+                    }
+
+                    if okx_position_size(&detail).abs() > 1e-9 {
+                        let related_algo_orders = algo_orders_by_inst
+                            .get(&detail.inst_id)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]);
+                        snapshots.push(convert_okx_position_detail(detail, related_algo_orders));
+                    }
+                }
+
+                return Json(ApiResponse::ok(snapshots));
+            }
+            Err(err) => {
+                tracing::warn!(error = ?err, "failed to fetch current positions from okx, falling back to database");
+            }
+        }
+    }
+
     match fetch_position_snapshots(false, None, None).await {
         Ok(records) => {
-            let snapshots: Vec<PositionSnapshotResponse> =
-                records.into_iter().map(convert_position_snapshot).collect();
+            let snapshots: Vec<PositionSnapshotResponse> = records
+                .into_iter()
+                .filter(|record| {
+                    record.size.abs() > 1e-9
+                        && record.updated_at
+                            >= Utc::now()
+                                - ChronoDuration::seconds(CURRENT_POSITION_STALE_AFTER_SECS)
+                })
+                .map(convert_position_snapshot)
+                .collect();
             Json(ApiResponse::ok(snapshots))
         }
         Err(err) => {
@@ -418,6 +508,82 @@ async fn get_positions() -> Json<ApiResponse<Vec<PositionSnapshotResponse>>> {
             Json(ApiResponse::ok(Vec::<PositionSnapshotResponse>::new()))
         }
     }
+}
+
+fn convert_okx_position_detail(
+    detail: okx::models::PositionDetail,
+    algo_orders: &[okx::models::AlgoOrderDetail],
+) -> PositionSnapshotResponse {
+    let size = okx_position_size(&detail);
+    let pos_side = detail
+        .pos_side
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "net".to_string());
+    let side = infer_position_side(size, &pos_side, &Value::Null);
+
+    PositionSnapshotResponse {
+        inst_id: detail.inst_id.clone(),
+        pos_side: pos_side.clone(),
+        td_mode: detail.inst_type.clone(),
+        side,
+        size,
+        avg_price: parse_optional_number(detail.avg_px.clone()),
+        mark_px: parse_optional_number(detail.mark_px.clone()),
+        margin: parse_optional_number(detail.margin.clone()),
+        unrealized_pnl: parse_optional_number(detail.upl.clone()),
+        take_profit_px: position_take_profit_px(&detail, algo_orders),
+        stop_loss_px: position_stop_loss_px(&detail, algo_orders),
+        last_trade_at: parse_okx_timestamp_ms(detail.c_time.as_deref()).map(|dt| dt.to_rfc3339()),
+        closed_at: None,
+        action_kind: None,
+        entry_ord_id: None,
+        exit_ord_id: None,
+        metadata: serde_json::to_value(&detail).unwrap_or(Value::Null),
+        updated_at: Utc::now().to_rfc3339(),
+    }
+}
+
+fn position_snapshot_from_okx_detail(detail: &okx::models::PositionDetail) -> PositionSnapshot {
+    let size = okx_position_size(detail);
+    let pos_side = detail
+        .pos_side
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "net".to_string());
+    let side = infer_position_side(size, &pos_side, &Value::Null);
+
+    PositionSnapshot {
+        inst_id: detail.inst_id.clone(),
+        pos_side: pos_side.clone(),
+        td_mode: detail.inst_type.clone(),
+        side,
+        size,
+        avg_price: parse_optional_number(detail.avg_px.clone()),
+        mark_px: parse_optional_number(detail.mark_px.clone()),
+        margin: parse_optional_number(detail.margin.clone()),
+        unrealized_pnl: parse_optional_number(detail.upl.clone()),
+        last_trade_at: parse_okx_timestamp_ms(detail.c_time.as_deref()),
+        closed_at: if size.abs() <= 1e-9 {
+            Some(Utc::now())
+        } else {
+            None
+        },
+        action_kind: None,
+        entry_ord_id: None,
+        exit_ord_id: None,
+        metadata: serde_json::to_value(detail).unwrap_or(Value::Null),
+    }
+}
+
+fn okx_position_size(detail: &okx::models::PositionDetail) -> f64 {
+    parse_optional_number(detail.pos.clone()).unwrap_or(0.0)
+}
+
+fn parse_okx_timestamp_ms(value: Option<&str>) -> Option<DateTime<Utc>> {
+    let text = value?.trim();
+    let ms = text.parse::<i64>().ok()?;
+    chrono::TimeZone::timestamp_millis_opt(&Utc, ms).single()
 }
 
 /// 获取历史持仓记录
@@ -445,17 +611,340 @@ async fn get_positions_history(
     }
 }
 
+/// 获取当前未完成委托
+#[axum::debug_handler]
+async fn get_open_orders(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolOptionalQuery>,
+) -> Json<ApiResponse<Vec<OrderResponse>>> {
+    let symbol_filter = params.symbol.as_deref();
+
+    let Some(client) = state.okx_client.as_ref() else {
+        return Json(ApiResponse::ok(Vec::new()));
+    };
+
+    let allowed_inst_ids = CONFIG.okx_inst_ids();
+    let mut converted: Vec<OrderResponse> = match client
+        .get_open_orders(Some("SWAP"), symbol_filter, None)
+        .await
+    {
+        Ok(orders) => orders
+            .into_iter()
+            .filter(|order| allowed_inst_ids.contains(&order.inst_id))
+            .map(convert_order)
+            .collect(),
+        Err(err) => {
+            tracing::warn!(error = ?err, "failed to fetch open orders");
+            Vec::new()
+        }
+    };
+
+    converted.extend(
+        fetch_algo_pending_orders(client, symbol_filter)
+            .await
+            .into_iter()
+            .filter(|order| {
+                order
+                    .inst_id
+                    .as_ref()
+                    .is_some_and(|inst_id| allowed_inst_ids.contains(inst_id))
+            })
+            .map(convert_algo_order),
+    );
+
+    Json(ApiResponse::ok(converted))
+}
+
+/// 获取历史成交
+#[axum::debug_handler]
+async fn get_fills(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolOptionalQuery>,
+) -> Json<ApiResponse<Vec<FillResponse>>> {
+    let symbol_filter = params.symbol.as_deref();
+    let limit = params.limit.map(|value| value as i64);
+
+    let Some(client) = state.okx_client.as_ref() else {
+        return Json(ApiResponse::ok(Vec::new()));
+    };
+
+    match client.get_fills(symbol_filter, None, limit).await {
+        Ok(fills) => {
+            let allowed_inst_ids = CONFIG.okx_inst_ids();
+            let converted = fills
+                .into_iter()
+                .filter(|fill| allowed_inst_ids.contains(&fill.inst_id))
+                .map(convert_fill)
+                .collect();
+            Json(ApiResponse::ok(converted))
+        }
+        Err(err) => {
+            tracing::warn!(error = ?err, "failed to fetch fills");
+            Json(ApiResponse::ok(Vec::new()))
+        }
+    }
+}
+
+fn convert_order(order: okx::models::OrderHistoryEntry) -> OrderResponse {
+    let trigger_px = optional_string(order.trigger_px.clone());
+    let take_profit_px = optional_string(order.tp_trigger_px.clone())
+        .or_else(|| trigger_px.clone().filter(|_| is_take_profit_order(&order)));
+    let stop_loss_px = optional_string(order.sl_trigger_px.clone())
+        .or_else(|| trigger_px.clone().filter(|_| is_stop_loss_order(&order)));
+
+    OrderResponse {
+        order_id: order.ord_id,
+        symbol: order.inst_id,
+        side: order.side,
+        pos_side: order.pos_side,
+        order_type: order.ord_type,
+        price: optional_string(order.px),
+        trigger_px,
+        take_profit_px,
+        stop_loss_px,
+        size: order.sz,
+        filled_size: if order.acc_fill_sz.trim().is_empty() {
+            "0".to_string()
+        } else {
+            order.acc_fill_sz
+        },
+        status: order.state,
+        reduce_only: order.reduce_only,
+        close_on_trigger: order.close_on_trigger,
+        created_at: optional_string(order.created_at).unwrap_or_default(),
+        updated_at: optional_string(order.updated_at).unwrap_or_default(),
+    }
+}
+
+fn convert_algo_order(order: okx::models::AlgoOrderDetail) -> OrderResponse {
+    let trigger_px = optional_string(order.trigger_px.clone());
+    let take_profit_px = optional_string(order.tp_trigger_px.clone()).or_else(|| {
+        trigger_px
+            .clone()
+            .filter(|_| is_take_profit_algo_order(&order))
+    });
+    let stop_loss_px = optional_string(order.sl_trigger_px.clone()).or_else(|| {
+        trigger_px
+            .clone()
+            .filter(|_| is_stop_loss_algo_order(&order))
+    });
+    let order_id = optional_string(order.algo_id.clone())
+        .or_else(|| optional_string(order.algo_cl_ord_id.clone()))
+        .unwrap_or_else(|| {
+            format!(
+                "{}-{}-{}",
+                order.inst_id.as_deref().unwrap_or("algo"),
+                order.ord_type.as_deref().unwrap_or("order"),
+                order.created_at.as_deref().unwrap_or("pending")
+            )
+        });
+
+    OrderResponse {
+        order_id,
+        symbol: optional_string(order.inst_id).unwrap_or_default(),
+        side: optional_string(order.side).unwrap_or_else(|| "sell".to_string()),
+        pos_side: optional_string(order.pos_side),
+        order_type: optional_string(order.ord_type).unwrap_or_else(|| "algo".to_string()),
+        price: optional_string(order.ord_px).or_else(|| optional_string(order.order_px)),
+        trigger_px,
+        take_profit_px,
+        stop_loss_px,
+        size: optional_string(order.sz).unwrap_or_else(|| "0".to_string()),
+        filled_size: "0".to_string(),
+        status: optional_string(order.state).unwrap_or_else(|| "live".to_string()),
+        reduce_only: None,
+        close_on_trigger: None,
+        created_at: optional_string(order.created_at).unwrap_or_default(),
+        updated_at: optional_string(order.updated_at).unwrap_or_default(),
+    }
+}
+
+fn convert_fill(fill: okx::models::FillDetail) -> FillResponse {
+    let timestamp =
+        optional_string(fill.ts).unwrap_or_else(|| Utc::now().timestamp_millis().to_string());
+    let order_id = optional_string(fill.ord_id).unwrap_or_default();
+    let fill_id = optional_string(fill.trade_id)
+        .unwrap_or_else(|| format!("{}-{}-{}", order_id, fill.inst_id, timestamp));
+
+    FillResponse {
+        fill_id,
+        order_id,
+        symbol: fill.inst_id,
+        side: optional_string(fill.side).unwrap_or_else(|| "buy".to_string()),
+        price: optional_string(fill.fill_px).unwrap_or_else(|| "0".to_string()),
+        size: optional_string(fill.fill_sz).unwrap_or_else(|| "0".to_string()),
+        fee: optional_string(fill.fee).unwrap_or_else(|| "0".to_string()),
+        pnl: optional_string(fill.fill_pnl),
+        timestamp,
+    }
+}
+
+async fn fetch_algo_pending_orders(
+    client: &OkxRestClient,
+    symbol_filter: Option<&str>,
+) -> Vec<okx::models::AlgoOrderDetail> {
+    const ALGO_ORDER_TYPES: [&str; 3] = ["conditional", "oco", "trigger"];
+
+    match client
+        .get_algo_pending_orders(Some("SWAP"), symbol_filter, None)
+        .await
+    {
+        Ok(orders) => return orders,
+        Err(err) => {
+            tracing::debug!(error = ?err, "failed to fetch all algo pending orders, retrying by ordType");
+        }
+    }
+
+    let mut orders = Vec::new();
+    for ord_type in ALGO_ORDER_TYPES {
+        match client
+            .get_algo_pending_orders(Some("SWAP"), symbol_filter, Some(ord_type))
+            .await
+        {
+            Ok(mut page) => orders.append(&mut page),
+            Err(err) => tracing::warn!(
+                error = ?err,
+                ord_type,
+                "failed to fetch algo pending orders"
+            ),
+        }
+    }
+    orders
+}
+
+fn group_algo_orders_by_inst(
+    orders: Vec<okx::models::AlgoOrderDetail>,
+) -> HashMap<String, Vec<okx::models::AlgoOrderDetail>> {
+    let mut grouped: HashMap<String, Vec<okx::models::AlgoOrderDetail>> = HashMap::new();
+    for order in orders {
+        if let Some(inst_id) = optional_string(order.inst_id.clone()) {
+            grouped.entry(inst_id).or_default().push(order);
+        }
+    }
+    grouped
+}
+
+fn position_take_profit_px(
+    detail: &okx::models::PositionDetail,
+    algo_orders: &[okx::models::AlgoOrderDetail],
+) -> Option<f64> {
+    parse_optional_number(detail.tp_trigger_px.clone())
+        .or_else(|| {
+            detail
+                .close_order_algo
+                .iter()
+                .find_map(|order| parse_optional_number(order.tp_trigger_px.clone()))
+        })
+        .or_else(|| {
+            algo_orders
+                .iter()
+                .find_map(|order| parse_optional_number(order.tp_trigger_px.clone()))
+        })
+        .or_else(|| infer_trigger_level_from_algo_orders(detail, algo_orders, true))
+}
+
+fn position_stop_loss_px(
+    detail: &okx::models::PositionDetail,
+    algo_orders: &[okx::models::AlgoOrderDetail],
+) -> Option<f64> {
+    parse_optional_number(detail.sl_trigger_px.clone())
+        .or_else(|| {
+            detail
+                .close_order_algo
+                .iter()
+                .find_map(|order| parse_optional_number(order.sl_trigger_px.clone()))
+        })
+        .or_else(|| {
+            algo_orders
+                .iter()
+                .find_map(|order| parse_optional_number(order.sl_trigger_px.clone()))
+        })
+        .or_else(|| infer_trigger_level_from_algo_orders(detail, algo_orders, false))
+}
+
+fn infer_trigger_level_from_algo_orders(
+    detail: &okx::models::PositionDetail,
+    algo_orders: &[okx::models::AlgoOrderDetail],
+    want_take_profit: bool,
+) -> Option<f64> {
+    let avg_price = parse_optional_number(detail.avg_px.clone())?;
+    let direction = infer_position_side(okx_position_size(detail), "net", &Value::Null);
+
+    detail
+        .close_order_algo
+        .iter()
+        .chain(algo_orders.iter())
+        .find_map(|order| {
+            let trigger = parse_optional_number(order.trigger_px.clone())?;
+            let is_take_profit = match direction.as_str() {
+                "long" => trigger >= avg_price,
+                "short" => trigger <= avg_price,
+                _ => is_take_profit_algo_order(order),
+            };
+            (is_take_profit == want_take_profit).then_some(trigger)
+        })
+}
+
+fn is_take_profit_order(order: &okx::models::OrderHistoryEntry) -> bool {
+    order_label(order).contains("tp")
+        || order_label(order).contains("take")
+        || order_label(order).contains("profit")
+}
+
+fn is_stop_loss_order(order: &okx::models::OrderHistoryEntry) -> bool {
+    order_label(order).contains("sl")
+        || order_label(order).contains("stop")
+        || order_label(order).contains("loss")
+}
+
+fn is_take_profit_algo_order(order: &okx::models::AlgoOrderDetail) -> bool {
+    algo_order_label(order).contains("tp")
+        || algo_order_label(order).contains("take")
+        || algo_order_label(order).contains("profit")
+}
+
+fn is_stop_loss_algo_order(order: &okx::models::AlgoOrderDetail) -> bool {
+    algo_order_label(order).contains("sl")
+        || algo_order_label(order).contains("stop")
+        || algo_order_label(order).contains("loss")
+}
+
+fn order_label(order: &okx::models::OrderHistoryEntry) -> String {
+    format!(
+        "{} {} {}",
+        order.cl_ord_id.as_deref().unwrap_or_default(),
+        order.tag.as_deref().unwrap_or_default(),
+        order.ord_type
+    )
+    .to_ascii_lowercase()
+}
+
+fn algo_order_label(order: &okx::models::AlgoOrderDetail) -> String {
+    format!(
+        "{} {} {} {}",
+        order.algo_cl_ord_id.as_deref().unwrap_or_default(),
+        order.cl_ord_id.as_deref().unwrap_or_default(),
+        order.tag.as_deref().unwrap_or_default(),
+        order.ord_type.as_deref().unwrap_or_default()
+    )
+    .to_ascii_lowercase()
+}
+
 fn convert_position_snapshot(record: db::PositionSnapshotRecord) -> PositionSnapshotResponse {
+    let side = infer_position_side(record.size, &record.side, &record.metadata);
+
     PositionSnapshotResponse {
         inst_id: record.inst_id,
         pos_side: record.pos_side,
         td_mode: record.td_mode,
-        side: record.side,
+        side,
         size: record.size,
         avg_price: record.avg_price,
         mark_px: record.mark_px,
         margin: record.margin,
         unrealized_pnl: record.unrealized_pnl,
+        take_profit_px: read_metadata_number(&record.metadata, "tpTriggerPx"),
+        stop_loss_px: read_metadata_number(&record.metadata, "slTriggerPx"),
         last_trade_at: format_datetime(record.last_trade_at),
         closed_at: format_datetime(record.closed_at),
         action_kind: record.action_kind,
@@ -468,6 +957,33 @@ fn convert_position_snapshot(record: db::PositionSnapshotRecord) -> PositionSnap
 
 fn format_datetime(value: Option<DateTime<Utc>>) -> Option<String> {
     value.map(|dt| dt.to_rfc3339())
+}
+
+fn infer_position_side(size: f64, fallback: &str, metadata: &Value) -> String {
+    let effective_size = if size.abs() > 1e-9 {
+        Some(size)
+    } else {
+        read_metadata_number(metadata, "pos")
+    };
+
+    match effective_size {
+        Some(value) if value > 0.0 => "long".to_string(),
+        Some(value) if value < 0.0 => "short".to_string(),
+        _ if fallback == "long" || fallback == "short" => fallback.to_string(),
+        _ => "net".to_string(),
+    }
+}
+
+fn read_metadata_number(metadata: &Value, key: &str) -> Option<f64> {
+    match metadata.get(key)? {
+        Value::Number(value) => value.as_f64().filter(|num| num.is_finite()),
+        Value::String(value) => value
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|num| num.is_finite()),
+        _ => None,
+    }
 }
 
 async fn seed_initial_equity_from_config() -> Option<InitialEquityRecord> {
