@@ -1,9 +1,11 @@
-import type { FillItem } from '@api/types';
+import type { FillItem, OrderItem } from '@api/types';
 import { Card, Table, Tag } from 'antd';
 import dayjs from 'dayjs';
+import { inferFillActionColor, inferFillActionLabel } from '@utils/tradeLabels';
 
 interface Props {
   fills?: FillItem[];
+  openOrders?: OrderItem[];
   loading?: boolean;
   embedded?: boolean;
 }
@@ -11,7 +13,7 @@ interface Props {
 const formatNumber = (value: string, fractionDigits = 2) =>
   Number(value).toLocaleString(undefined, { maximumFractionDigits: fractionDigits });
 
-const columns = [
+const buildColumns = (openOrders?: OrderItem[]) => [
   {
     title: '时间',
     dataIndex: 'timestamp',
@@ -27,7 +29,9 @@ const columns = [
     title: '方向',
     dataIndex: 'side',
     key: 'side',
-    render: (value: string) => <Tag color={value === 'buy' ? 'green' : 'volcano'}>{value}</Tag>
+    render: (_value: string, record: FillItem) => (
+      <Tag color={inferFillActionColor(record, openOrders)}>{inferFillActionLabel(record, openOrders)}</Tag>
+    )
   },
   {
     title: '价格',
@@ -62,7 +66,8 @@ const columns = [
   }
 ];
 
-const FillsTable = ({ fills, loading, embedded }: Props) => {
+const FillsTable = ({ fills, openOrders, loading, embedded }: Props) => {
+  const columns = buildColumns(openOrders);
   const table = (
     <Table
       rowKey="fillId"

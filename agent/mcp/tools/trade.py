@@ -74,6 +74,41 @@ class CancelOrderInput(BaseModel):
         return self
 
 
+class CancelOpenOrdersInput(BaseModel):
+    """批量撤销指定合约当前未成交普通挂单。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    inst_id: str = Field(..., alias="instId", description="交易产品 ID")
+    inst_type: str | None = Field("SWAP", alias="instType", description="产品类型，默认 SWAP")
+
+
+class SetPositionTpslInput(BaseModel):
+    """为已有净持仓设置平仓止盈/止损算法单。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    inst_id: str = Field(..., alias="instId", description="交易产品 ID")
+    side: Literal["buy", "sell"] = Field(
+        ...,
+        description="平仓方向。当前净多仓用 sell，当前净空仓用 buy。",
+    )
+    take_profit_px: str | None = Field(None, alias="tpTriggerPx", description="止盈触发价格")
+    stop_loss_px: str | None = Field(None, alias="slTriggerPx", description="止损触发价格")
+    tp_order_px: str | None = Field(None, alias="tpOrdPx", description="止盈委托价格，默认 -1 市价")
+    sl_order_px: str | None = Field(None, alias="slOrdPx", description="止损委托价格，默认 -1 市价")
+    trigger_px_type: str = Field("last", alias="triggerPxType", description="触发价格类型")
+    close_fraction: str = Field("1", alias="closeFraction", description="平仓比例，默认 1 表示全仓")
+    tag: str | None = Field(None, description="订单标签；默认不传，避免 OKX tag 格式限制")
+
+    @model_validator(mode="after")
+    def ensure_trigger(self) -> "SetPositionTpslInput":
+        if not self.take_profit_px and not self.stop_loss_px:
+            msg = "必须提供 tpTriggerPx 或 slTriggerPx 至少一个。"
+            raise ValueError(msg)
+        return self
+
+
 @mcp.tool(name="place_order")
 async def place_order_tool(order: PlaceOrderInput) -> dict[str, Any]:
     """
@@ -347,15 +382,57 @@ def _okx_order_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if not str(key).startswith("_aitrader")}
 
 
+def _position_tpsl_payload(order: SetPositionTpslInput) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "instId": order.inst_id,
+        "tdMode": "cross",
+        "posSide": "net",
+        "side": order.side,
+        "ordType": "oco" if order.take_profit_px and order.stop_loss_px else "conditional",
+        "reduceOnly": "true",
+        "closeFraction": order.close_fraction,
+    }
+    if order.tag:
+        payload["tag"] = order.tag
+
+    if order.take_profit_px:
+        payload["tpTriggerPx"] = order.take_profit_px
+        payload["tpOrdPx"] = order.tp_order_px or "-1"
+        payload["tpTriggerPxType"] = order.trigger_px_type
+    if order.stop_loss_px:
+        payload["slTriggerPx"] = order.stop_loss_px
+        payload["slOrdPx"] = order.sl_order_px or "-1"
+        payload["slTriggerPxType"] = order.trigger_px_type
+
+    return payload
+
+
 def _with_opponent_confirmation(
     response: dict[str, Any],
     attempts: list[dict[str, Any]],
     status: str,
 ) -> dict[str, Any]:
     enriched = dict(response)
+    canceled_order_ids = [
+        str(attempt["ordId"])
+        for attempt in attempts
+        if attempt.get("ordId") and attempt.get("cancelResponse")
+    ]
+    final_order_id = _extract_ord_id(_first_response_entry(enriched))
+    total_filled = sum(
+        (
+            filled
+            for attempt in attempts
+            if (filled := _to_decimal(attempt.get("filledSz"))) is not None
+        ),
+        DECIMAL_ZERO,
+    )
     enriched["aitraderConfirmation"] = {
         "type": "opponent_order_retry",
         "status": status,
+        "finalOrdId": final_order_id,
+        "canceledOrdIds": canceled_order_ids,
+        "totalFilledSz": _format_decimal(total_filled),
         "attempts": attempts,
     }
     return enriched
@@ -673,3 +750,109 @@ async def cancel_order_tool(order: CancelOrderInput) -> dict[str, Any]:
     except ExternalServiceError as exc:
         return wrap_external_error("cancel_order", exc)
     return wrap_response(response)
+
+
+@mcp.tool(name="set_position_tpsl")
+async def set_position_tpsl_tool(order: SetPositionTpslInput) -> dict[str, Any]:
+    """
+    为已有净持仓设置平仓止盈/止损算法单。
+
+    这个工具用于已有持仓的保护单，不用于新开仓。新开仓附带止盈止损仍可使用
+    `place_order.attachAlgoOrds`；已有持仓必须使用本工具调用 OKX `/trade/order-algo`。
+    当前策略固定全仓净持仓模式，工具会强制 `tdMode=cross`、`posSide=net`、
+    `reduceOnly=true`，并默认 `closeFraction=1` 覆盖全部当前持仓。净多仓平仓方向
+    传 `side=sell`，净空仓传 `side=buy`。同时提供止盈和止损时使用 OCO；
+    只提供一个价格时使用 conditional。
+    `tpOrdPx`/`slOrdPx` 默认 `-1`，表示触发后市价平仓。
+
+    示例：
+    ```json
+    {
+      "order": {
+        "instId": "BTC-USDT-SWAP",
+        "side": "sell",
+        "tpTriggerPx": "71500",
+        "slTriggerPx": "70500"
+      }
+    }
+    ```
+    """
+
+    payload = _position_tpsl_payload(order)
+    try:
+        response = await okx_client.place_algo_order(payload)
+    except ExternalServiceError as exc:
+        return wrap_external_error("set_position_tpsl", exc)
+    return wrap_response(response)
+
+
+@mcp.tool(name="cancel_open_orders")
+async def cancel_open_orders_tool(order: CancelOpenOrdersInput) -> dict[str, Any]:
+    """
+    批量撤销指定合约当前未成交普通挂单。
+
+    用于 Smart Money、波动触发或定时分析前清理已经失效的遗留普通挂单。
+    参数 `instId` 必填，工具会先查询 OKX `/trade/orders-pending`，再逐笔调用
+    `/trade/cancel-order`。该工具只处理普通挂单，不处理条件单/OCO/止盈止损算法单。
+
+    示例：
+    ```json
+    {
+      "order": {
+        "instId": "BTC-USDT-SWAP"
+      }
+    }
+    ```
+    """
+
+    try:
+        pending_response = await okx_client.get_open_orders(
+            inst_type=order.inst_type,
+            inst_id=order.inst_id,
+        )
+    except ExternalServiceError as exc:
+        return wrap_external_error("cancel_open_orders", exc)
+
+    cancel_results: list[dict[str, Any]] = []
+    for entry in _response_data(pending_response):
+        if not isinstance(entry, dict):
+            continue
+        ord_id = _extract_ord_id(entry)
+        if not ord_id:
+            continue
+        try:
+            cancel_response = await okx_client.cancel_order(
+                inst_id=order.inst_id,
+                order_id=ord_id,
+            )
+            cancel_results.append(
+                {
+                    "ordId": ord_id,
+                    "ok": True,
+                    "response": cancel_response,
+                }
+            )
+        except ExternalServiceError as exc:
+            cancel_results.append(
+                {
+                    "ordId": ord_id,
+                    "ok": False,
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                }
+            )
+
+    failed_count = sum(1 for result in cancel_results if not result.get("ok"))
+    return {
+        "ok": failed_count == 0,
+        "code": "0" if failed_count == 0 else "1",
+        "data": cancel_results,
+        "summary": {
+            "instId": order.inst_id,
+            "checked": len(_response_data(pending_response)),
+            "canceled": len(cancel_results) - failed_count,
+            "failed": failed_count,
+        },
+    }

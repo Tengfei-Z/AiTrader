@@ -105,6 +105,20 @@ const AiConsolePage = () => {
     initialAmount && resolvedCurrentEquity !== undefined
       ? ((resolvedCurrentEquity - initialAmount) / initialAmount) * 100
       : undefined;
+  const dailyProfitPercent = useMemo(() => {
+    if (resolvedCurrentEquity === undefined || equityCurve.length === 0) {
+      return undefined;
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const baseline = equityCurve.find((point) => point.time >= todayStart.getTime())?.equity;
+    if (baseline === undefined || baseline <= 0) {
+      return undefined;
+    }
+
+    return ((resolvedCurrentEquity - baseline) / baseline) * 100;
+  }, [equityCurve, resolvedCurrentEquity]);
   const chartLoading = snapshotsLoading && !snapshotCurve.length;
   const activeSymbol = useMemo(() => {
     const activePosition = positions?.find((position) => Math.abs(position.size) > 0);
@@ -148,6 +162,7 @@ const AiConsolePage = () => {
         initialAmount={initialAmount}
         currentAmount={resolvedCurrentEquity}
         profitPercent={profitPercent}
+        dailyProfitPercent={dailyProfitPercent}
       />
 
       <Row gutter={[24, 24]} align="stretch">

@@ -166,21 +166,51 @@ pub struct FillDetail {
 pub struct PositionHistoryDetail {
     pub inst_id: String,
     #[serde(default)]
+    pub inst_type: Option<String>,
+    #[serde(default)]
+    pub mgn_mode: Option<String>,
+    #[serde(default, rename = "type")]
+    pub position_type: Option<String>,
+    #[serde(default)]
     pub pos_side: Option<String>,
     #[serde(default)]
     pub close_pos: Option<String>,
+    #[serde(default)]
+    pub close_total_pos: Option<String>,
+    #[serde(default)]
+    pub open_max_pos: Option<String>,
     #[serde(default)]
     pub open_avg_px: Option<String>,
     #[serde(default)]
     pub close_avg_px: Option<String>,
     #[serde(default)]
+    pub pos_id: Option<String>,
+    #[serde(default)]
     pub lever: Option<String>,
     #[serde(default)]
     pub margin: Option<String>,
     #[serde(default)]
+    pub realized_pnl: Option<String>,
+    #[serde(default)]
+    pub settled_pnl: Option<String>,
+    #[serde(default)]
     pub pnl: Option<String>,
     #[serde(default)]
     pub pnl_ratio: Option<String>,
+    #[serde(default)]
+    pub fee: Option<String>,
+    #[serde(default)]
+    pub funding_fee: Option<String>,
+    #[serde(default)]
+    pub liq_penalty: Option<String>,
+    #[serde(default)]
+    pub direction: Option<String>,
+    #[serde(default)]
+    pub trigger_px: Option<String>,
+    #[serde(default)]
+    pub uly: Option<String>,
+    #[serde(default)]
+    pub ccy: Option<String>,
     #[serde(default)]
     pub c_time: Option<String>,
     #[serde(default)]

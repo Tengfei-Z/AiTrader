@@ -588,15 +588,36 @@ fn parse_okx_timestamp_ms(value: Option<&str>) -> Option<DateTime<Utc>> {
 
 /// 获取历史持仓记录
 ///
-/// 从本地 `positions` 表读取已平仓仓位，支持按交易对过滤
+/// 优先从 OKX 官方历史持仓接口读取；DB 仅作为 OKX 不可用时的降级来源。
 #[axum::debug_handler]
 async fn get_positions_history(
+    State(state): State<AppState>,
     Query(params): Query<SymbolOptionalQuery>,
 ) -> Json<ApiResponse<Vec<PositionSnapshotResponse>>> {
     let limit = params.limit.map(|v| v as i64);
     let symbol_filter = params.symbol.as_deref();
 
     tracing::info!(?symbol_filter, limit, "received positions history request");
+
+    if let Some(client) = state.okx_client.as_ref() {
+        match client
+            .get_positions_history(Some("SWAP"), symbol_filter, limit)
+            .await
+        {
+            Ok(details) => {
+                let allowed_inst_ids = CONFIG.okx_inst_ids();
+                let history = details
+                    .into_iter()
+                    .filter(|detail| allowed_inst_ids.contains(&detail.inst_id))
+                    .map(convert_okx_position_history_detail)
+                    .collect();
+                return Json(ApiResponse::ok(history));
+            }
+            Err(err) => {
+                tracing::warn!(error = ?err, "failed to fetch historical positions from okx, falling back to database");
+            }
+        }
+    }
 
     match fetch_position_snapshots(true, symbol_filter, limit).await {
         Ok(records) => {
@@ -608,6 +629,70 @@ async fn get_positions_history(
             tracing::warn!(error = %err, "failed to fetch historical positions from database");
             Json(ApiResponse::ok(Vec::<PositionSnapshotResponse>::new()))
         }
+    }
+}
+
+fn convert_okx_position_history_detail(
+    detail: okx::models::PositionHistoryDetail,
+) -> PositionSnapshotResponse {
+    let pos_side = detail
+        .pos_side
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "net".to_string());
+    let direction = detail
+        .direction
+        .clone()
+        .filter(|value| value == "long" || value == "short");
+    let close_size = parse_optional_number(
+        detail
+            .close_total_pos
+            .clone()
+            .or_else(|| detail.close_pos.clone())
+            .or_else(|| detail.open_max_pos.clone()),
+    )
+    .unwrap_or(0.0)
+    .abs();
+    let side = direction
+        .clone()
+        .or_else(|| {
+            if pos_side == "long" || pos_side == "short" {
+                Some(pos_side.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "net".to_string());
+    let signed_size = match side.as_str() {
+        "short" => -close_size,
+        "long" => close_size,
+        _ => close_size,
+    };
+    let created_at = parse_okx_timestamp_ms(detail.c_time.as_deref()).map(|dt| dt.to_rfc3339());
+    let updated_at = parse_okx_timestamp_ms(detail.u_time.as_deref())
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339();
+
+    PositionSnapshotResponse {
+        inst_id: detail.inst_id.clone(),
+        pos_side,
+        td_mode: detail.inst_type.clone(),
+        side,
+        size: signed_size,
+        avg_price: parse_optional_number(detail.open_avg_px.clone()),
+        mark_px: parse_optional_number(detail.close_avg_px.clone()),
+        margin: parse_optional_number(detail.margin.clone()),
+        unrealized_pnl: parse_optional_number(detail.pnl.clone())
+            .or_else(|| parse_optional_number(detail.realized_pnl.clone())),
+        take_profit_px: None,
+        stop_loss_px: None,
+        last_trade_at: created_at,
+        closed_at: parse_okx_timestamp_ms(detail.u_time.as_deref()).map(|dt| dt.to_rfc3339()),
+        action_kind: detail.position_type.clone(),
+        entry_ord_id: None,
+        exit_ord_id: None,
+        metadata: serde_json::to_value(&detail).unwrap_or(Value::Null),
+        updated_at,
     }
 }
 

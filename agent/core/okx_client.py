@@ -377,6 +377,11 @@ class OKXClient:
 
         return await self._request("POST", "/api/v5/trade/order", body=order)
 
+    async def place_algo_order(self, order: dict[str, Any]) -> Any:
+        """Submit an algo order payload to OKX."""
+
+        return await self._request("POST", "/api/v5/trade/order-algo", body=order)
+
     async def set_leverage(
         self,
         *,

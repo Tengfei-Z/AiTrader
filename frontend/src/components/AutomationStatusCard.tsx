@@ -1,6 +1,7 @@
 import type { FillItem, OrderItem } from '@api/types';
 import { Badge, Card, Col, Flex, Row, Statistic, Typography } from 'antd';
 import dayjs from 'dayjs';
+import { inferFillActionLabel } from '@utils/tradeLabels';
 import { useMemo } from 'react';
 
 interface Props {
@@ -38,14 +39,14 @@ const AutomationStatusCard = ({ symbol, fills, openOrders, loading }: Props) => 
 
     return {
       lastFillText: `${dayjs(Number(lastFill.timestamp)).format('MM-DD HH:mm')} · ${
-        lastFill.side === 'buy' ? '买入' : '卖出'
+        inferFillActionLabel(lastFill, openOrders)
       } ${Number(lastFill.size).toLocaleString()} @ ${Number(lastFill.price).toLocaleString()}`,
       totalTrades24h: recent.length,
       totalVolume24h,
       netVolume24h: buyVolume24h - sellVolume24h,
       avgPrice24h: totalVolume24h > 0 ? grossNotional24h / totalVolume24h : undefined
     };
-  }, [fills]);
+  }, [fills, openOrders]);
 
   return (
     <Card title="AI 执行状态" bordered={false} loading={loading}>

@@ -294,11 +294,32 @@ body {
   font-weight: 600;
 }
 
+.market-strip-summary-percent-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.market-strip-summary-daily {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .market-strip-summary-percent.positive {
   color: #15803d;
 }
 
 .market-strip-summary-percent.negative {
+  color: #b91c1c;
+}
+
+.market-strip-summary-daily.positive {
+  color: #15803d;
+}
+
+.market-strip-summary-daily.negative {
   color: #b91c1c;
 }
 

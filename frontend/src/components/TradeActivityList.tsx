@@ -1,13 +1,15 @@
-import type { FillItem } from '@api/types';
+import type { FillItem, OrderItem } from '@api/types';
 import { Card, List, Tag, Typography } from 'antd';
 import dayjs from 'dayjs';
+import { inferFillActionColor, inferFillActionLabel } from '@utils/tradeLabels';
 
 interface Props {
   fills?: FillItem[];
+  openOrders?: OrderItem[];
   loading?: boolean;
 }
 
-const TradeActivityList = ({ fills, loading }: Props) => {
+const TradeActivityList = ({ fills, openOrders, loading }: Props) => {
   const data = fills ? [...fills].sort((a, b) => Number(b.timestamp) - Number(a.timestamp)).slice(0, 50) : [];
 
   return (
@@ -16,8 +18,8 @@ const TradeActivityList = ({ fills, loading }: Props) => {
         dataSource={data}
         split={false}
         renderItem={(item) => {
-          const sideLabel = item.side === 'buy' ? '买入' : '卖出';
-          const sideColor = item.side === 'buy' ? 'green' : 'red';
+          const sideLabel = inferFillActionLabel(item, openOrders);
+          const sideColor = inferFillActionColor(item, openOrders);
           const price = Number(item.price);
           const size = Number(item.size);
           const notional = price * size;

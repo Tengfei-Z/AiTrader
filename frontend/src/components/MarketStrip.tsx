@@ -48,12 +48,14 @@ interface MarketStripProps {
   initialAmount?: number;
   currentAmount?: number;
   profitPercent?: number;
+  dailyProfitPercent?: number;
 }
 
 const MarketStrip = ({
   initialAmount,
   currentAmount,
-  profitPercent
+  profitPercent,
+  dailyProfitPercent
 }: MarketStripProps) => {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -66,6 +68,24 @@ const MarketStrip = ({
     profitPercent !== undefined ? `${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(2)}%` : '--';
   const profitClass =
     profitPercent === undefined ? '' : profitPercent >= 0 ? 'positive' : 'negative';
+  const dailyProfitPercentLabel =
+    dailyProfitPercent !== undefined
+      ? `${dailyProfitPercent >= 0 ? '+' : ''}${dailyProfitPercent.toFixed(2)}%`
+      : '--';
+  const dailyProfitClass =
+    dailyProfitPercent === undefined ? '' : dailyProfitPercent >= 0 ? 'positive' : 'negative';
+  const profitBlock = (
+    <div className="market-strip-summary-percent-stack">
+      <Typography.Text className={`market-strip-summary-percent market-strip-number ${profitClass}`}>
+        {profitPercentLabel}
+      </Typography.Text>
+      <Typography.Text
+        className={`market-strip-summary-daily market-strip-number ${dailyProfitClass}`}
+      >
+        当日收益率 {dailyProfitPercentLabel}
+      </Typography.Text>
+    </div>
+  );
 
   if (isLoading) {
     return (
@@ -91,14 +111,10 @@ const MarketStrip = ({
               {currentAmountLabel}
             </Typography.Text>
           </div>
-          {profitPercent !== undefined && (
+          {(profitPercent !== undefined || dailyProfitPercent !== undefined) && (
             <div className="market-strip-metrics-item">
               <Typography.Text className="market-strip-summary-label">涨跌幅</Typography.Text>
-              <Typography.Text
-                className={`market-strip-summary-percent market-strip-number ${profitClass}`}
-              >
-                {profitPercentLabel}
-              </Typography.Text>
+              {profitBlock}
             </div>
           )}
         </div>
@@ -119,16 +135,12 @@ const MarketStrip = ({
               </Typography.Text>
             </div>
           </div>
-          {profitPercent !== undefined && (
+          {(profitPercent !== undefined || dailyProfitPercent !== undefined) && (
             <>
               <span className="market-strip-summary-divider" aria-hidden />
               <div className="market-strip-summary-block market-strip-summary-block--narrow">
                 <Typography.Text className="market-strip-summary-label">涨跌幅</Typography.Text>
-                <Typography.Text
-                  className={`market-strip-summary-percent market-strip-number ${profitClass}`}
-                >
-                  {profitPercentLabel}
-                </Typography.Text>
+                {profitBlock}
               </div>
             </>
           )}

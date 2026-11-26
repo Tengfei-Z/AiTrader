@@ -77,14 +77,39 @@ class InstrumentSpecRequest(BaseModel):
 
 
 @mcp.tool(name="get_instrument_specs")
-async def get_instrument_specs(query: InstrumentSpecRequest) -> dict[str, Any]:
+async def get_instrument_specs(
+    query: InstrumentSpecRequest | None = None,
+    inst_id: str | None = None,
+    inst_type: str | None = None,
+    instId: str | None = None,
+    instType: str | None = None,
+) -> dict[str, Any]:
     """
     查询合约规格（最小交易单位、面值、tick 等）。
 
     Parameters:
     - `instId`: 交易产品 ID，必填。
     - `instType`: 产品类型，默认根据 `instId` 的结尾推断（例如 `BTC-USDT-SWAP` → `SWAP`）。
+    - 兼容两种调用格式：`{"query": {"instId": "BTC-USDT-SWAP"}}` 或 `{"instId": "BTC-USDT-SWAP"}`。
     """
+
+    if query is None:
+        resolved_inst_id = inst_id or instId
+        if not resolved_inst_id:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "validation_error",
+                    "tool": "get_instrument_specs",
+                    "type": "ValueError",
+                    "message": "必须提供 instId。",
+                    "retryable": False,
+                },
+            }
+        query = InstrumentSpecRequest(
+            instId=resolved_inst_id,
+            instType=inst_type or instType,
+        )
 
     inst_type = query.resolve_inst_type()
     try:

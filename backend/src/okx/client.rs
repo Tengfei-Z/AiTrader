@@ -236,6 +236,30 @@ impl OkxRestClient {
         Ok(response.data)
     }
 
+    /// 获取历史持仓
+    pub async fn get_positions_history(
+        &self,
+        inst_type: Option<&str>,
+        inst_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<super::models::PositionHistoryDetail>> {
+        #[derive(serde::Deserialize)]
+        struct ResponseWrapper {
+            data: Vec<super::models::PositionHistoryDetail>,
+        }
+
+        let mut path = format!("{API_PREFIX}/account/positions-history");
+        append_query_param_if_some(&mut path, "instType", inst_type);
+        append_query_param_if_some(&mut path, "instId", inst_id);
+        if let Some(limit_value) = limit {
+            append_query_param(&mut path, "limit", &limit_value.to_string());
+        }
+
+        let response: ResponseWrapper = self.get(&path, None).await?;
+        tracing::info!("获取到 {} 条历史持仓记录", response.data.len());
+        Ok(response.data)
+    }
+
     /// 获取订单历史
     pub async fn get_order_history(
         &self,

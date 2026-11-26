@@ -346,3 +346,166 @@ async def test_opponent_order_refreshes_fill_after_cancel(
 
     assert response["aitraderConfirmation"]["status"] == "filled"
     assert fake_client.placed[1]["sz"] == "0.6"
+
+
+@pytest.mark.asyncio
+async def test_cancel_open_orders_cancels_each_pending_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeOkxClient:
+        def __init__(self) -> None:
+            self.open_order_calls: list[dict[str, str | None]] = []
+            self.canceled: list[dict[str, str]] = []
+
+        async def get_open_orders(
+            self,
+            inst_type: str | None = None,
+            inst_id: str | None = None,
+            order_id: str | None = None,
+        ) -> dict[str, object]:
+            self.open_order_calls.append(
+                {
+                    "inst_type": inst_type,
+                    "inst_id": inst_id,
+                    "order_id": order_id,
+                }
+            )
+            return {
+                "code": "0",
+                "data": [
+                    {"ordId": "ord-1", "instId": inst_id},
+                    {"ordId": "ord-2", "instId": inst_id},
+                    {"instId": inst_id},
+                ],
+            }
+
+        async def cancel_order(self, *, inst_id: str, order_id: str) -> dict[str, object]:
+            self.canceled.append({"inst_id": inst_id, "order_id": order_id})
+            return {"code": "0", "data": [{"ordId": order_id, "sCode": "0"}]}
+
+    fake_client = FakeOkxClient()
+    monkeypatch.setattr(trade, "okx_client", fake_client)
+
+    response = await trade.cancel_open_orders_tool.fn(
+        trade.CancelOpenOrdersInput(instId="BTC-USDT-SWAP")
+    )
+
+    assert fake_client.open_order_calls == [
+        {
+            "inst_type": "SWAP",
+            "inst_id": "BTC-USDT-SWAP",
+            "order_id": None,
+        }
+    ]
+    assert fake_client.canceled == [
+        {"inst_id": "BTC-USDT-SWAP", "order_id": "ord-1"},
+        {"inst_id": "BTC-USDT-SWAP", "order_id": "ord-2"},
+    ]
+    assert response["ok"] is True
+    assert response["code"] == "0"
+    assert response["summary"] == {
+        "instId": "BTC-USDT-SWAP",
+        "checked": 3,
+        "canceled": 2,
+        "failed": 0,
+    }
+
+
+def test_position_tpsl_payload_uses_close_fraction_oco() -> None:
+    payload = trade._position_tpsl_payload(
+        trade.SetPositionTpslInput(
+            instId="BTC-USDT-SWAP",
+            side="sell",
+            tpTriggerPx="71500",
+            slTriggerPx="70500",
+        )
+    )
+
+    assert payload == {
+        "instId": "BTC-USDT-SWAP",
+        "tdMode": "cross",
+        "posSide": "net",
+        "side": "sell",
+        "ordType": "oco",
+        "reduceOnly": "true",
+        "closeFraction": "1",
+        "tpTriggerPx": "71500",
+        "tpOrdPx": "-1",
+        "tpTriggerPxType": "last",
+        "slTriggerPx": "70500",
+        "slOrdPx": "-1",
+        "slTriggerPxType": "last",
+    }
+
+
+@pytest.mark.asyncio
+async def test_set_position_tpsl_places_algo_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeOkxClient:
+        def __init__(self) -> None:
+            self.placed_algo: list[dict[str, object]] = []
+
+        async def place_algo_order(self, payload: dict[str, object]) -> dict[str, object]:
+            self.placed_algo.append(payload)
+            return {"code": "0", "data": [{"algoId": "algo-1", "sCode": "0"}]}
+
+    fake_client = FakeOkxClient()
+    monkeypatch.setattr(trade, "okx_client", fake_client)
+
+    response = await trade.set_position_tpsl_tool.fn(
+        trade.SetPositionTpslInput(
+            instId="BTC-USDT-SWAP",
+            side="sell",
+            tpTriggerPx="71500",
+            slTriggerPx="70500",
+        )
+    )
+
+    assert response == {"code": "0", "data": [{"algoId": "algo-1", "sCode": "0"}]}
+    assert fake_client.placed_algo == [
+        {
+            "instId": "BTC-USDT-SWAP",
+            "tdMode": "cross",
+            "posSide": "net",
+            "side": "sell",
+            "ordType": "oco",
+            "reduceOnly": "true",
+            "closeFraction": "1",
+            "tpTriggerPx": "71500",
+            "tpOrdPx": "-1",
+            "tpTriggerPxType": "last",
+            "slTriggerPx": "70500",
+            "slOrdPx": "-1",
+            "slTriggerPxType": "last",
+        }
+    ]
+
+
+def test_opponent_confirmation_marks_final_and_canceled_orders() -> None:
+    response = trade._with_opponent_confirmation(
+        {"code": "0", "data": [{"ordId": "ord-2"}]},
+        [
+            {
+                "attempt": 1,
+                "action": "place_opponent_limit",
+                "ordId": "ord-1",
+                "state": "live",
+                "filledSz": "0",
+                "cancelResponse": {"code": "0"},
+            },
+            {
+                "attempt": 2,
+                "action": "place_opponent_limit",
+                "ordId": "ord-2",
+                "state": "filled",
+                "filledSz": "1",
+            },
+        ],
+        "filled",
+    )
+
+    confirmation = response["aitraderConfirmation"]
+    assert confirmation["finalOrdId"] == "ord-2"
+    assert confirmation["canceledOrdIds"] == ["ord-1"]
+    assert confirmation["totalFilledSz"] == "1"

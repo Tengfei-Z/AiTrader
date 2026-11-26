@@ -56,9 +56,9 @@ const BAR_OPTIONS = [
 const BAR_STORAGE_KEY = 'ai-trader.kline-bar';
 const ZOOM_STORAGE_KEY = 'ai-trader.kline-zoom';
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 4;
+const MAX_ZOOM = 24;
 const ZOOM_STEP = 0.25;
-const MIN_VISIBLE_CANDLES = 24;
+const MIN_VISIBLE_CANDLES = 8;
 
 const directionMeta: Record<StrategyDirection, { label: string; color: string }> = {
   bullish: { label: '看涨', color: '#16a34a' },
@@ -391,7 +391,7 @@ const drawChart = (
   const priceRange = highBound - lowBound || 1;
   const volumeMax = Math.max(...candles.map((candle) => candle.volume), 1);
   const step = chartWidth / Math.max(candles.length, 1);
-  const candleWidth = Math.min(12, Math.max(3, step * 0.58));
+  const candleWidth = Math.min(28, Math.max(3, step * 0.58));
 
   const xFor = (index: number) => chartLeft + step * index + step / 2;
   const yFor = (price: number) => chartBottom - ((price - lowBound) / priceRange) * chartHeight;
@@ -673,7 +673,7 @@ const RealtimeKlineChart = ({ strategyMessages, positions, defaultSymbol }: Prop
             className="kline-symbol-select"
           />
           <Select value={bar} onChange={handleBarChange} options={BAR_OPTIONS} className="kline-bar-select" />
-          <Tooltip title="开启后每 15 秒刷新一次最新 K 线">
+          <Tooltip title="开启后每 10 秒刷新一次最新 K 线">
             <Switch checked={live} checkedChildren="实时" unCheckedChildren="暂停" onChange={setLive} />
           </Tooltip>
           <Flex align="center" gap={8} className="kline-zoom-control">
